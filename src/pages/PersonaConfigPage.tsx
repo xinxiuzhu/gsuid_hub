@@ -196,6 +196,7 @@ export default function PersonaConfigPage() {
   const [editingScope, setEditingScope] = useState<PersonaScope>('disabled');
   const [editingInspectInterval, setEditingInspectInterval] = useState<number>(10);
   const [editingKeywords, setEditingKeywords] = useState<string[]>([]);
+  const [editingPokeResponseEnabled, setEditingPokeResponseEnabled] = useState(false);
   const [editingToolPacks, setEditingToolPacks] = useState<string[]>(['dynamic']);
   const [editingToolNames, setEditingToolNames] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState('markdown');
@@ -487,6 +488,7 @@ export default function PersonaConfigPage() {
     setEditingScope(persona.config?.scope || 'disabled');
     setEditingInspectInterval(persona.config?.inspect_interval || 10);
     setEditingKeywords(persona.config?.keywords || []);
+    setEditingPokeResponseEnabled(persona.config?.poke_response_enabled ?? false);
     setEditingToolPacks(persona.config?.tool_packs || ['dynamic']);
     setEditingToolNames(persona.config?.tool_names || []);
     setActiveTab('markdown');
@@ -635,6 +637,7 @@ export default function PersonaConfigPage() {
         target_groups: editingGroups,
         inspect_interval: editingInspectInterval,
         keywords: editingKeywords,
+        poke_response_enabled: editingPokeResponseEnabled,
         tool_packs: editingToolPacks,
         tool_names: editingToolNames,
       });
@@ -649,6 +652,7 @@ export default function PersonaConfigPage() {
       setEditingGroups([]);
       setEditingAIModes([]);
       setEditingScope('disabled');
+      setEditingPokeResponseEnabled(false);
       await loadData();
     } catch (error) {
       console.error('Failed to save persona:', error);
@@ -1375,6 +1379,23 @@ export default function PersonaConfigPage() {
                       </button>
                     ))}
                   </div>
+                </div>
+                {/* 戳一戳回应 */}
+                <div className="flex items-center justify-between gap-4 rounded-lg border border-border/60 p-4">
+                  <div className="min-w-0">
+                    <Label className="flex items-center gap-2 text-base">
+                      <MessageSquare className="h-4 w-4" />
+                      {t('personaConfig.pokeResponse')}
+                    </Label>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {t('personaConfig.pokeResponseDesc')}
+                    </p>
+                  </div>
+                  <Switch
+                    checked={editingPokeResponseEnabled}
+                    onCheckedChange={setEditingPokeResponseEnabled}
+                    aria-label={t('personaConfig.pokeResponse')}
+                  />
                 </div>
                 {/* 关联群聊 - 仅在 specific 模式下显示 */}
                 {editingScope === 'specific' && (

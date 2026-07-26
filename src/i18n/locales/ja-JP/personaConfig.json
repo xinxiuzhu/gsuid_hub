@@ -74,6 +74,8 @@
   "supportedAudioFormats": "対応の形式: MP3, OGG, WAV, M4A, FLAC",
   "config": "設定",
   "aiModes": "AI 行动モード",
+  "pokeResponse": "つつきへの応答",
+  "pokeResponseDesc": "ボットがつつかれたときに、短い返答や専用スタンプ、つつき返しを試みます。",
   "enableScope": "有効範囲",
   "scopeDisabled": "不有効",
   "scopeGlobal": "全体有効",

@@ -2028,6 +2028,7 @@ export interface PersonaConfig {
   target_groups: string[];
   inspect_interval?: number; // 定时巡检间隔（分钟）�?, 10, 15, 30, 60
   keywords?: string[]; // 触发关键词列表（用于提及应答模式�?
+  poke_response_enabled?: boolean;
   tool_packs?: string[]; // 工具能力族（dynamic / task_basics / capability_domain 族名）
   tool_names?: string[]; // 显式工具白名单（并入保底池）
 }
@@ -2044,6 +2045,7 @@ export interface PersonaConfigUpdateRequest {
   target_groups?: string[];
   inspect_interval?: number;
   keywords?: string[];
+  poke_response_enabled?: boolean;
   tool_packs?: string[];
   tool_names?: string[];
 }

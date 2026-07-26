@@ -74,6 +74,8 @@
   "supportedAudioFormats": "支持的格式：MP3, OGG, WAV, M4A, FLAC",
   "config": "配置",
   "aiModes": "AI 行动模式",
+  "pokeResponse": "戳一戳回应",
+  "pokeResponseDesc": "允许该人格在机器人被戳一戳时生成简短回应、专属表情或尝试回戳",
   "enableScope": "启用范围",
   "scopeDisabled": "不启用",
   "scopeGlobal": "全局启用",

@@ -74,6 +74,8 @@
   "supportedAudioFormats": "Supported formats: MP3, OGG, WAV, M4A, FLAC",
   "config": "Configuration",
   "aiModes": "AI Action Modes",
+  "pokeResponse": "Poke responses",
+  "pokeResponseDesc": "Allows this persona to reply briefly, send a persona meme, or try to poke back when the bot is poked.",
   "enableScope": "Enable Scope",
   "scopeDisabled": "Disabled",
   "scopeGlobal": "Global",
