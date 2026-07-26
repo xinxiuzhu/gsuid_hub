@@ -83,12 +83,14 @@
     },
     "scopeTypes": {
       "global": "Global",
+      "group_each": "Per Group (Global)",
       "group": "Group",
       "member": "Group Member",
       "user": "Private User"
     },
     "scopeTypeDesc": {
       "global": "Global total budget, sum of all sessions",
+      "group_each": "Apply one quota to every group, tracked separately per group",
       "group": "Shared quota for all members in a group",
       "member": "Individual quota for a member in a group",
       "user": "Individual quota for a private chat user"
@@ -147,6 +149,10 @@
       "over": "Over Limit",
       "resetAt": "Reset At",
       "noUsage": "No usage data",
+      "topGroup": "Top Group",
+      "activeGroups": "Active Groups",
+      "blockedGroups": "Blocked Groups",
+      "noActiveGroups": "No active groups",
       "progressLabel": "{used} / {limit}"
     }
   },

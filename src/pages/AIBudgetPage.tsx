@@ -73,6 +73,10 @@ import {
   AIBudgetOverview,
   AIBudgetCheckResult,
   AIBudgetWindowUsage,
+  AIBudgetBlockedRule,
+  AIBudgetScopeType,
+  AIBudgetConcreteScopeType,
+  AIBudgetRuleUsageSummary,
 } from '@/lib/api';
 import { PinnedPage } from '@/components/layout/PinnedPage';
 
@@ -263,7 +267,7 @@ function OverviewTab() {
           ) : (
             <div className="space-y-3">
               {overview.blocked_rules.map((br) => (
-                <BlockedRuleItem key={br.rule_id} rule={br} />
+                <BlockedRuleItem key={'rule_id' in br ? br.rule_id : br.id} rule={br} />
               ))}
             </div>
           )}
@@ -348,20 +352,33 @@ function StatCard({ icon, title, value, valueSuffix = '' }: {
   );
 }
 
-function BlockedRuleItem({ rule }: { rule: { rule_id: number; scope_label: string; blocked: boolean; windows: AIBudgetWindowUsage[] } }) {
+function BlockedRuleItem({ rule }: { rule: AIBudgetBlockedRule }) {
   const { t } = useLanguage();
+  const isGroupEach = 'scope_type' in rule && rule.scope_type === 'group_each';
+  const label = isGroupEach
+    ? rule.name || t('aiBudget.rules.scopeTypes.group_each')
+    : 'scope_label' in rule
+      ? rule.scope_label
+      : t('aiBudget.rules.scopeTypes.group_each');
+  const windows = 'windows' in rule ? rule.windows : [];
+  const usageSummary = isGroupEach ? rule.usage_summary : undefined;
+
   return (
     <div className={cn("rounded-lg p-3 border glass-card border-red-500/30")}>
       <div className="flex items-center gap-2 mb-2">
         <XCircle className="w-4 h-4 text-red-500" />
-        <span className="font-medium text-sm">{rule.scope_label}</span>
+        <span className="font-medium text-sm">{label}</span>
         <Badge variant="destructive" className="text-xs">{t('aiBudget.rules.usage.over')}</Badge>
       </div>
-      <div className="space-y-2">
-        {rule.windows.filter(w => w.over).map(w => (
-          <WindowProgressBar key={w.window} window={w} />
-        ))}
-      </div>
+      {usageSummary ? (
+        <GroupEachUsageSummary summary={usageSummary} />
+      ) : (
+        <div className="space-y-2">
+          {windows.filter(w => w.over).map(w => (
+            <WindowProgressBar key={w.window} window={w} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -758,6 +775,7 @@ function RulesTab() {
   const scopeTypeOptions = useMemo(() => [
     { value: '__all__', label: t('aiBudget.rules.all') },
     { value: 'global', label: t('aiBudget.rules.scopeTypes.global') },
+    { value: 'group_each', label: t('aiBudget.rules.scopeTypes.group_each') },
     { value: 'group', label: t('aiBudget.rules.scopeTypes.group') },
     { value: 'member', label: t('aiBudget.rules.scopeTypes.member') },
     { value: 'user', label: t('aiBudget.rules.scopeTypes.user') },
@@ -904,15 +922,19 @@ function RulesTab() {
           </DialogHeader>
           {detailLoading ? (
             <div className="py-8 text-center"><Loader2 className="w-6 h-6 animate-spin mx-auto" /></div>
-          ) : detailRule && detailRule.usage ? (
+          ) : detailRule && (detailRule.usage || detailRule.usage_summary) ? (
             <div className="space-y-4">
               <RuleInfoSection rule={detailRule} />
               <Separator />
               <div className="space-y-3">
                 <h4 className="font-medium text-sm">{t('aiBudget.rules.columns.usage')}</h4>
-                {detailRule.usage.windows.map(w => (
-                  <WindowProgressBar key={w.window} window={w} />
-                ))}
+                {detailRule.usage_summary ? (
+                  <GroupEachUsageSummary summary={detailRule.usage_summary} />
+                ) : detailRule.usage ? (
+                  detailRule.usage.windows.map(w => (
+                    <WindowProgressBar key={w.window} window={w} />
+                  ))
+                ) : null}
               </div>
             </div>
           ) : (
@@ -967,16 +989,59 @@ function RuleCard({ rule, onToggle, onEdit, onDelete, onViewDetail }: {
             </Button>
           </div>
         </div>
-        {/* Full-width usage bars aligned with toolbar right edge */}
-        {rule.usage && rule.usage.windows.length > 0 && (
+        {/* Full-width usage area aligned with toolbar right edge */}
+        {rule.scope_type === 'group_each' && rule.usage_summary ? (
+          <div className="mt-4">
+            <GroupEachUsageSummary summary={rule.usage_summary} />
+          </div>
+        ) : rule.usage && rule.usage.windows.length > 0 ? (
           <div className="mt-4 space-y-2">
             {rule.usage.windows.map(w => (
               <WindowProgressBar key={w.window} window={w} />
             ))}
           </div>
-        )}
+        ) : null}
       </CardContent>
     </Card>
+  );
+}
+
+function GroupEachUsageSummary({ summary }: { summary: AIBudgetRuleUsageSummary }) {
+  const { t } = useLanguage();
+  const topGroup = summary.top_group_id || t('aiBudget.rules.usage.noActiveGroups');
+  const utilization = Number.isFinite(summary.top_utilization)
+    ? `${Math.round(summary.top_utilization * 100)}%`
+    : '-';
+
+  return (
+    <div className="space-y-3 rounded-lg border border-border/70 bg-muted/20 p-3">
+      <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-3">
+        <div>
+          <span className="text-muted-foreground">{t('aiBudget.rules.usage.topGroup')}:</span>{' '}
+          <span className="font-mono font-medium">{topGroup}</span>
+          {summary.top_group_id && <span className="ml-2 text-muted-foreground">{utilization}</span>}
+        </div>
+        <div>
+          <span className="text-muted-foreground">{t('aiBudget.rules.usage.activeGroups')}:</span>{' '}
+          <span className="font-medium">{summary.active_group_count}</span>
+        </div>
+        <div>
+          <span className="text-muted-foreground">{t('aiBudget.rules.usage.blockedGroups')}:</span>{' '}
+          <span className={cn("font-medium", summary.blocked_group_count > 0 && "text-red-500")}>
+            {summary.blocked_group_count}
+          </span>
+        </div>
+      </div>
+      {summary.top_status?.windows?.length ? (
+        <div className="space-y-2">
+          {summary.top_status.windows.map(w => (
+            <WindowProgressBar key={w.window} window={w} />
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">{t('aiBudget.rules.usage.noUsage')}</p>
+      )}
+    </div>
   );
 }
 
@@ -1006,7 +1071,7 @@ function RuleFormDialog({ open, onOpenChange, mode, rule, onSuccess }: {
   const [saving, setSaving] = useState(false);
 
   const [name, setName] = useState('');
-  const [scopeType, setScopeType] = useState<'global' | 'group' | 'member' | 'user'>('group');
+  const [scopeType, setScopeType] = useState<AIBudgetScopeType>('group');
   const [scopeId, setScopeId] = useState('');
   const [memberId, setMemberId] = useState('');
   const [botId, setBotId] = useState('');
@@ -1053,6 +1118,7 @@ function RuleFormDialog({ open, onOpenChange, mode, rule, onSuccess }: {
 
   const scopeTypeOptions = [
     { value: 'global', label: t('aiBudget.rules.scopeTypes.global'), desc: t('aiBudget.rules.scopeTypeDesc.global') },
+    { value: 'group_each', label: t('aiBudget.rules.scopeTypes.group_each'), desc: t('aiBudget.rules.scopeTypeDesc.group_each') },
     { value: 'group', label: t('aiBudget.rules.scopeTypes.group'), desc: t('aiBudget.rules.scopeTypeDesc.group') },
     { value: 'member', label: t('aiBudget.rules.scopeTypes.member'), desc: t('aiBudget.rules.scopeTypeDesc.member') },
     { value: 'user', label: t('aiBudget.rules.scopeTypes.user'), desc: t('aiBudget.rules.scopeTypeDesc.user') },
@@ -1070,7 +1136,7 @@ function RuleFormDialog({ open, onOpenChange, mode, rule, onSuccess }: {
       return;
     }
     // Validate scope_id for group/member/user
-    if (scopeType !== 'global' && !scopeId) {
+    if (!['global', 'group_each'].includes(scopeType) && !scopeId) {
       toast.error(t('aiBudget.rules.form.scopeIdPlaceholder'));
       return;
     }
@@ -1085,7 +1151,7 @@ function RuleFormDialog({ open, onOpenChange, mode, rule, onSuccess }: {
       const data: Partial<AIBudgetRule> = {
         name,
         scope_type: scopeType,
-        scope_id: scopeType === 'global' ? '' : scopeId,
+        scope_id: scopeType === 'global' || scopeType === 'group_each' ? '' : scopeId,
         member_id: scopeType === 'member' ? memberId : '',
         bot_id: botId,
         enabled,
@@ -1149,7 +1215,7 @@ function RuleFormDialog({ open, onOpenChange, mode, rule, onSuccess }: {
 
           {/* Scope ID / Member ID */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {scopeType !== 'global' && (
+            {scopeType !== 'global' && scopeType !== 'group_each' && (
               <div className="space-y-2">
                 <Label>{t('aiBudget.rules.form.scopeId')}</Label>
                 <Input value={scopeId} onChange={e => setScopeId(e.target.value)} placeholder={t('aiBudget.rules.form.scopeIdPlaceholder')} />
@@ -1554,7 +1620,7 @@ function DiagnosticTab() {
   const [checkError, setCheckError] = useState<string | null>(null);
 
   // Reset state
-  const [resetScopeType, setResetScopeType] = useState('group');
+  const [resetScopeType, setResetScopeType] = useState<AIBudgetConcreteScopeType>('group');
   const [resetScopeId, setResetScopeId] = useState('');
   const [resetMemberId, setResetMemberId] = useState('');
   const [resetBotId, setResetBotId] = useState('');
@@ -1769,7 +1835,7 @@ function DiagnosticTab() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="space-y-2">
               <Label>{t('aiBudget.diagnostic.resetScopeType')}</Label>
-              <Select value={resetScopeType} onValueChange={setResetScopeType}>
+              <Select value={resetScopeType} onValueChange={value => setResetScopeType(value as AIBudgetConcreteScopeType)}>
                 <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {scopeTypeOptions.map(opt => (

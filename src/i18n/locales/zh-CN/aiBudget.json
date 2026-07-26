@@ -83,12 +83,14 @@
     },
     "scopeTypes": {
       "global": "全局",
+      "group_each": "全局单群",
       "group": "群聊",
       "member": "群内成员",
       "user": "私聊用户"
     },
     "scopeTypeDesc": {
       "global": "兜底全局总额，对所有会话求和",
+      "group_each": "所有群使用相同额度，但每个群分别统计",
       "group": "某群全员共享额度",
       "member": "某群内某个人的额度",
       "user": "某人的私聊额度"
@@ -147,6 +149,10 @@
       "over": "已超限",
       "resetAt": "预计恢复",
       "noUsage": "暂无用量数据",
+      "topGroup": "最高使用群",
+      "activeGroups": "活跃群数",
+      "blockedGroups": "超限群数",
+      "noActiveGroups": "暂无活跃群",
       "progressLabel": "{used} / {limit}"
     }
   },

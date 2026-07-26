@@ -3368,6 +3368,11 @@ export interface MemeListResponse {
   total: number;
   page: number;
   page_size: number;
+  selection?: {
+    canonical_filter: MemeMatchFilter;
+    select_all_supported: boolean;
+    reason: string | null;
+  };
 }
 
 export interface MemeStatsData {
@@ -3389,14 +3394,84 @@ export interface MemePersona {
   folder: string;
 }
 
-export interface MemeListParams {
+export interface MemeMatchFilter {
   folder?: string;
   status?: string;
+  q?: string;
+  persona_hint?: string;
+}
+
+export interface MemeListParams extends MemeMatchFilter {
   sort?: string;
   page?: number;
   page_size?: number;
-  q?: string;
-  persona_hint?: string;
+}
+
+export type MemeDeleteSelection =
+  | { mode: 'ids'; meme_ids: string[] }
+  | { mode: 'filter'; filter: MemeMatchFilter; exclude_ids: string[] };
+
+export interface MemeDeletePreviewRequest {
+  selection: MemeDeleteSelection;
+  action: 'delete';
+}
+
+export interface MemeDeletePreview {
+  preview_id: string;
+  matched_count: number;
+  sample_ids: string[];
+  status_counts: Record<string, number>;
+  file_bytes: number;
+  expires_at: string;
+  requires_confirmation: boolean;
+  confirmation_phrase?: string;
+  backup_supported?: boolean;
+  backup_path?: string | null;
+}
+
+export interface MemeDeleteExecuteRequest {
+  preview_id: string;
+  confirmation: string;
+  create_backup?: boolean;
+}
+
+export interface MemeDeleteStartResult {
+  operation_id: string;
+  status: MemeDeleteOperationStatus;
+  matched_count: number;
+}
+
+export type MemeDeleteOperationStatus =
+  | 'queued'
+  | 'running'
+  | 'succeeded'
+  | 'partial'
+  | 'failed'
+  | 'cancelled'
+  | 'interrupted';
+
+export interface MemeDeleteFailure {
+  meme_id: string;
+  phase: string;
+  reason: string;
+}
+
+export interface MemeDeleteOperation {
+  operation_id: string;
+  kind?: string;
+  status: MemeDeleteOperationStatus;
+  phase?: string;
+  matched: number;
+  processed: number;
+  succeeded: number;
+  failed: number;
+  progress: number;
+  failures: MemeDeleteFailure[];
+  backup_path?: string | null;
+  error_summary?: string | null;
+  created_at?: string;
+  started_at?: string | null;
+  finished_at?: string | null;
 }
 
 export interface MemeUpdateData {
@@ -3506,6 +3581,20 @@ export const memeApi = {
     api.post<{ success_count: number; failed: Array<{ meme_id: string; reason: string }> }>(
       '/api/meme/batch_delete',
       { meme_ids: memeIds }
+    ),
+
+  previewDelete: (request: MemeDeletePreviewRequest) =>
+    api.post<MemeDeletePreview>('/api/meme/delete-operations/preview', request),
+
+  executeDelete: (request: MemeDeleteExecuteRequest) =>
+    api.post<MemeDeleteStartResult>('/api/meme/delete-operations', request),
+
+  getDeleteOperation: (operationId: string) =>
+    api.get<MemeDeleteOperation>(`/api/meme/delete-operations/${encodeURIComponent(operationId)}`),
+
+  retryDeleteOperation: (operationId: string) =>
+    api.post<MemeDeleteOperation>(
+      `/api/meme/delete-operations/${encodeURIComponent(operationId)}/retry`,
     ),
 
   // 批量导出�?.meme 格式
@@ -4674,10 +4763,13 @@ export interface AIBudgetConfig {
   block_message: string;
 }
 
+export type AIBudgetScopeType = 'global' | 'group_each' | 'group' | 'member' | 'user';
+export type AIBudgetConcreteScopeType = Exclude<AIBudgetScopeType, 'group_each'>;
+
 export interface AIBudgetRule {
   id: number;
   name: string;
-  scope_type: 'global' | 'group' | 'member' | 'user';
+  scope_type: AIBudgetScopeType;
   scope_id: string;
   member_id: string;
   bot_id: string;
@@ -4692,6 +4784,7 @@ export interface AIBudgetRule {
   created_at: number;
   updated_at: number;
   usage?: AIBudgetRuleUsage;
+  usage_summary?: AIBudgetRuleUsageSummary;
 }
 
 export interface AIBudgetWindowUsage {
@@ -4711,7 +4804,16 @@ export interface AIBudgetRuleUsage {
   scope_label: string;
   period_mode: string;
   blocked: boolean;
+  effective_group_id?: string;
   windows: AIBudgetWindowUsage[];
+}
+
+export interface AIBudgetRuleUsageSummary {
+  active_group_count: number;
+  blocked_group_count: number;
+  top_group_id: string;
+  top_utilization: number;
+  top_status: AIBudgetRuleUsage | null;
 }
 
 export interface AIBudgetWhitelistEntry {
@@ -4724,13 +4826,17 @@ export interface AIBudgetWhitelistEntry {
   created_at: number;
 }
 
+export type AIBudgetBlockedRule =
+  | { rule_id: number; scope_label: string; blocked: boolean; windows: AIBudgetWindowUsage[] }
+  | Pick<AIBudgetRule, 'id' | 'name' | 'scope_type' | 'usage_summary'>;
+
 export interface AIBudgetOverview {
   enabled: boolean;
   rule_count: number;
   enabled_rule_count: number;
   whitelist_count: number;
   total_tokens_24h: number;
-  blocked_rules: { rule_id: number; scope_label: string; blocked: boolean; windows: AIBudgetWindowUsage[] }[];
+  blocked_rules: AIBudgetBlockedRule[];
   top_groups_24h: { group_id: string; total_tokens: number }[];
   top_users_24h: { user_id: string; total_tokens: number }[];
 }
@@ -4852,7 +4958,7 @@ export const aiBudgetApi = {
   },
 
   // 41.13 查看 scope 逐窗口用量
-  getScopeUsage: (params: { scope_type: string; scope_id: string; member_id?: string; bot_id?: string }) => {
+  getScopeUsage: (params: { scope_type: AIBudgetConcreteScopeType; scope_id: string; member_id?: string; bot_id?: string }) => {
     const query = new URLSearchParams();
     query.set('scope_type', params.scope_type);
     query.set('scope_id', params.scope_id);
@@ -4866,7 +4972,7 @@ export const aiBudgetApi = {
     api.post<AIBudgetCheckResult>('/api/ai/budget/check', data),
 
   // 41.15 手动放行
-  reset: (data: { scope_type: string; scope_id: string; member_id?: string; bot_id?: string; window?: string }) =>
+  reset: (data: { scope_type: AIBudgetConcreteScopeType; scope_id: string; member_id?: string; bot_id?: string; window?: string }) =>
     api.post<{ deleted: number }>('/api/ai/budget/reset', data),
 
   // 41.16 看板汇总

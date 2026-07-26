@@ -83,12 +83,14 @@
     },
     "scopeTypes": {
       "global": "グローバル",
+      "group_each": "全グループ個別",
       "group": "グループ",
       "member": "グループメンバー",
       "user": "プライベートユーザー"
     },
     "scopeTypeDesc": {
       "global": "全セッションの合算グローバル予算",
+      "group_each": "全グループに同じ上限を適用し、グループごとに個別集計",
       "group": "グループ全メンバー共有枠",
       "member": "グループ内個人の枠",
       "user": "プライベートチャットユーザーの枠"
@@ -147,6 +149,10 @@
       "over": "制限超過",
       "resetAt": "リセット予定",
       "noUsage": "使用量データなし",
+      "topGroup": "使用率トップのグループ",
+      "activeGroups": "アクティブグループ数",
+      "blockedGroups": "制限超過グループ数",
+      "noActiveGroups": "アクティブグループなし",
       "progressLabel": "{used} / {limit}"
     }
   },

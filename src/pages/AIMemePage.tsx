@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, memo } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { cn } from '@/lib/utils';
@@ -12,6 +12,8 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Progress } from '@/components/ui/progress';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
   Select,
@@ -64,8 +66,36 @@ import {
   FileUp,
   Eraser,
   RotateCw,
+  ListChecks,
+  AlertTriangle,
 } from 'lucide-react';
-import { memeApi, MemeRecord, MemeStatsData, MemeListParams, MemePersona } from '@/lib/api';
+import {
+  memeApi,
+  MemeRecord,
+  MemeStatsData,
+  MemeListParams,
+  MemePersona,
+  MemeDeletePreview,
+  MemeDeleteOperation,
+  MemeMatchFilter,
+  getApiErrorMessage,
+} from '@/lib/api';
+import {
+  canSelectAllMatching,
+  emptyMemeSelection,
+  getPageSelectionState,
+  isFullLibraryFilter,
+  isMemeSelected,
+  memeDeleteConfirmation,
+  memeFilterKey,
+  memeSelectionToApi,
+  normalizeMemeFilter,
+  selectAllMatching,
+  selectedMemeCount,
+  setPageSelection,
+  toggleMemeSelection,
+  type MemeSelectionState,
+} from '@/lib/memeSelection';
 import { PinnedPage } from '@/components/layout/PinnedPage';
 import { toast } from 'sonner';
 
@@ -74,6 +104,56 @@ import { toast } from 'sonner';
 // ============================================================================
 
 type SortOption = 'created_at_desc' | 'use_count_desc' | 'use_count_asc';
+
+type MemeDeleteFlow =
+  | { phase: 'closed' }
+  | { phase: 'previewing'; selection: MemeSelectionState; isFullLibrary: boolean }
+  | {
+      phase: 'review';
+      selection: MemeSelectionState;
+      preview: MemeDeletePreview;
+      isFullLibrary: boolean;
+      filter: MemeMatchFilter;
+    }
+  | {
+      phase: 'confirm';
+      selection: MemeSelectionState;
+      preview: MemeDeletePreview;
+      isFullLibrary: boolean;
+      filter: MemeMatchFilter;
+      input: string;
+    }
+  | {
+      phase: 'executing';
+      selection: MemeSelectionState;
+      preview: MemeDeletePreview;
+      isFullLibrary: boolean;
+      filter: MemeMatchFilter;
+    }
+  | {
+      phase: 'running';
+      selection: MemeSelectionState;
+      preview: MemeDeletePreview;
+      isFullLibrary: boolean;
+      filter: MemeMatchFilter;
+      operation: MemeDeleteOperation;
+    }
+  | {
+      phase: 'result';
+      selection: MemeSelectionState;
+      preview: MemeDeletePreview;
+      isFullLibrary: boolean;
+      filter: MemeMatchFilter;
+      operation: MemeDeleteOperation;
+    };
+
+const TERMINAL_DELETE_STATUSES = new Set<MemeDeleteOperation['status']>([
+  'succeeded',
+  'partial',
+  'failed',
+  'cancelled',
+  'interrupted',
+]);
 
 // ============================================================================
 // Helper: format file size
@@ -160,12 +240,14 @@ const MemeCard = memo(function MemeCard({
   onClick,
   isGlass,
   selected,
+  selectionMode,
   onToggleSelect,
 }: {
   meme: MemeRecord;
   onClick: (meme: MemeRecord) => void;
   isGlass: boolean;
   selected?: boolean;
+  selectionMode: boolean;
   onToggleSelect?: (memeId: string) => void;
 }) {
   const { t } = useLanguage();
@@ -316,7 +398,10 @@ const MemeCard = memo(function MemeCard({
         isGlass && "glass-card-flat",
         selected && "ring-2 ring-primary shadow-lg"
       )}
-      onClick={() => onClick(meme)}
+      onClick={() => {
+        if (selectionMode) onToggleSelect?.(meme.meme_id);
+        else onClick(meme);
+      }}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
@@ -376,27 +461,20 @@ const MemeCard = memo(function MemeCard({
             {t(`aiMeme.status.${meme.status}`)}
           </Badge>
         </div>
-        {/* Selection checkbox - always visible, click stops propagation */}
-        <div
-          className="absolute top-2 right-2 z-10"
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleSelect?.(meme.meme_id);
-          }}
-        >
-          <div className={cn(
-            "w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all duration-200 cursor-pointer",
-            selected
-              ? "bg-primary border-primary shadow-sm"
-              : "bg-white/80 dark:bg-black/60 border-white/50 dark:border-white/25 opacity-0 group-hover:opacity-100 hover:border-primary/60"
-          )}>
-            {selected && (
-              <svg className="w-3 h-3 text-primary-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-              </svg>
-            )}
+        {/* Selection checkbox */}
+        {(selectionMode || selected) && (
+          <div
+            className="absolute top-2 right-2 z-10"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Checkbox
+              checked={selected}
+              onCheckedChange={() => onToggleSelect?.(meme.meme_id)}
+              aria-label={t('aiMeme.selection.toggleItem', { id: meme.meme_id })}
+              className="h-5 w-5 border-2 bg-white/90 shadow-sm dark:bg-black/70"
+            />
           </div>
-        </div>
+        )}
         {/* Use count overlay - bottom right when not selected */}
         {meme.use_count > 0 && (
           <div className="absolute bottom-2 right-2">
@@ -1191,11 +1269,12 @@ export default function AIMemePage() {
   const [detailOpen, setDetailOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
 
-  // Selection
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [isBatchDeleting, setIsBatchDeleting] = useState(false);
+  // Selection and destructive operation flow
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selection, setSelection] = useState<MemeSelectionState>(emptyMemeSelection);
   const [isExporting, setIsExporting] = useState(false);
-  const [showBatchDeleteDialog, setShowBatchDeleteDialog] = useState(false);
+  const [deleteFlow, setDeleteFlow] = useState<MemeDeleteFlow>({ phase: 'closed' });
+  const deletePollTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
   // Purge / Retag
   const [isPurging, setIsPurging] = useState(false);
@@ -1206,6 +1285,43 @@ export default function AIMemePage() {
   // Search debounce
   const searchTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
+  const matchFilter = useMemo(
+    () => normalizeMemeFilter({
+      folder: filterFolder,
+      status: filterStatus,
+      q: searchQuery,
+      personaHint: filterPersona === PERSONA_ALL ? undefined : filterPersona,
+    }),
+    [filterFolder, filterStatus, searchQuery, filterPersona],
+  );
+  const activeMatchFilter = useMemo(
+    () => normalizeMemeFilter({
+      folder: filterFolder,
+      status: filterStatus,
+      q: searchInput,
+      personaHint: filterPersona === PERSONA_ALL ? undefined : filterPersona,
+    }),
+    [filterFolder, filterStatus, searchInput, filterPersona],
+  );
+  const currentFilterKey = useMemo(
+    () => memeFilterKey(matchFilter, sortBy),
+    [matchFilter, sortBy],
+  );
+  const pageIds = useMemo(() => memes.map((meme) => meme.meme_id), [memes]);
+  const selectedCount = selectedMemeCount(selection);
+  const pageSelectionState = getPageSelectionState(selection, pageIds);
+  const fullLibrarySelected = selection.mode === 'allMatching' && isFullLibraryFilter(selection.filter);
+  const searchIsSettled = searchInput.trim() === searchQuery;
+
+  const resetSelectionForQueryChange = useCallback(() => {
+    setSelection(emptyMemeSelection());
+    setDeleteFlow((flow) =>
+      flow.phase === 'executing' || flow.phase === 'running' || flow.phase === 'result'
+        ? flow
+        : { phase: 'closed' },
+    );
+  }, []);
+
   // ============================================================================
   // Data Fetching
   // ============================================================================
@@ -1214,14 +1330,11 @@ export default function AIMemePage() {
     try {
       setIsLoading(true);
       const params: MemeListParams = {
+        ...matchFilter,
         page,
         page_size: pageSize,
         sort: sortBy,
       };
-      if (filterFolder) params.folder = filterFolder;
-      if (filterStatus) params.status = filterStatus;
-      if (searchQuery) params.q = searchQuery;
-      if (filterPersona && filterPersona !== PERSONA_ALL) params.persona_hint = filterPersona;
 
       const data = await memeApi.getList(params);
       setMemes(data.records);
@@ -1232,7 +1345,7 @@ export default function AIMemePage() {
     } finally {
       setIsLoading(false);
     }
-  }, [page, pageSize, sortBy, filterFolder, filterStatus, searchQuery, filterPersona, t]);
+  }, [page, pageSize, sortBy, matchFilter, t]);
 
   const fetchStats = useCallback(async () => {
     try {
@@ -1289,24 +1402,32 @@ export default function AIMemePage() {
       filterPersona !== PERSONA_ALL &&
       !personas.some((p) => p.persona_hint === filterPersona)
     ) {
+      resetSelectionForQueryChange();
       setFilterPersona(PERSONA_ALL);
     }
-  }, [personas, filterPersona]);
+  }, [personas, filterPersona, resetSelectionForQueryChange]);
 
-  // Debounce search
+  // Query-shaping changes clear selection immediately; pagination deliberately does not.
   const handleSearchChange = (value: string) => {
     setSearchInput(value);
+    resetSelectionForQueryChange();
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     searchTimerRef.current = setTimeout(() => {
-      setSearchQuery(value);
+      setSearchQuery(value.trim());
       setPage(1);
     }, 500);
   };
 
-  // Reset page when filters change
-  useEffect(() => {
+  const updateStructuredQuery = (update: () => void) => {
+    resetSelectionForQueryChange();
+    update();
     setPage(1);
-  }, [filterFolder, filterStatus, filterPersona, sortBy]);
+  };
+
+  useEffect(() => () => {
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    if (deletePollTimerRef.current) clearTimeout(deletePollTimerRef.current);
+  }, []);
 
   // ============================================================================
   // Handlers
@@ -1348,59 +1469,158 @@ export default function AIMemePage() {
 
   // Selection handlers
   const toggleSelectMeme = useCallback((memeId: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(memeId)) next.delete(memeId);
-      else next.add(memeId);
-      return next;
-    });
+    setSelection((current) => toggleMemeSelection(current, memeId));
   }, []);
 
-  const selectAllOnPage = () => {
-    setSelectedIds(new Set(memes.map((m) => m.meme_id)));
+  const setCurrentPageSelected = (selected: boolean) => {
+    setSelection((current) => setPageSelection(current, pageIds, selected));
   };
 
-  const deselectAll = () => {
-    setSelectedIds(new Set());
+  const clearSelection = () => setSelection(emptyMemeSelection());
+
+  const closeDeleteFlow = () => {
+    if (deleteFlow.phase === 'executing' || deleteFlow.phase === 'running') return;
+    setDeleteFlow({ phase: 'closed' });
   };
 
-  // Batch delete
-  const handleBatchDelete = async () => {
-    if (selectedIds.size === 0) return;
+  const refreshAfterDelete = useCallback(() => {
+    setPage(1);
+    fetchMemes();
+    fetchStats();
+    fetchPersonas();
+  }, [fetchMemes, fetchStats, fetchPersonas]);
+
+  const applyTerminalDeleteResult = useCallback((operation: MemeDeleteOperation) => {
+    refreshAfterDelete();
+    if (operation.status === 'succeeded') setSelection(emptyMemeSelection());
+    else if (operation.failures.length > 0) {
+      setSelection({ mode: 'explicit', ids: new Set(operation.failures.map((item) => item.meme_id)) });
+    }
+  }, [refreshAfterDelete]);
+
+  const pollDeleteOperation = useCallback(async (
+    operationId: string,
+    context: Extract<MemeDeleteFlow, { phase: 'review' | 'confirm' }>,
+  ) => {
     try {
-      setIsBatchDeleting(true);
-      const result = await memeApi.batchDelete(Array.from(selectedIds));
-      if (result.failed.length === 0) {
-        toast.success(t('aiMeme.batchDeleteSuccess', { count: result.success_count }));
-      } else {
-        toast.warning(
-          t('aiMeme.batchDeletePartial', {
-            success: result.success_count,
-            failed: result.failed.length,
-          })
-        );
+      const operation = await memeApi.getDeleteOperation(operationId);
+      const terminal = TERMINAL_DELETE_STATUSES.has(operation.status);
+      setDeleteFlow({ ...context, phase: terminal ? 'result' : 'running', operation });
+      if (terminal) {
+        applyTerminalDeleteResult(operation);
+        return;
       }
-      setSelectedIds(new Set());
-      setShowBatchDeleteDialog(false);
-      fetchMemes();
-      fetchStats();
-      fetchPersonas();
+      deletePollTimerRef.current = setTimeout(
+        () => void pollDeleteOperation(operationId, context),
+        1000,
+      );
     } catch (error) {
-      toast.error(t('aiMeme.batchDeleteFailed'));
-    } finally {
-      setIsBatchDeleting(false);
+      toast.error(getApiErrorMessage(error, t('aiMeme.deleteFlow.statusFailed')));
+      deletePollTimerRef.current = setTimeout(
+        () => void pollDeleteOperation(operationId, context),
+        2000,
+      );
+    }
+  }, [applyTerminalDeleteResult, t]);
+
+  const openDeleteReview = async () => {
+    if (selectedCount === 0) return;
+    const selectionSnapshot = selection;
+    const filter = selection.mode === 'allMatching' ? selection.filter : matchFilter;
+    const fullLibrary = isFullLibraryFilter(filter)
+      && (selection.mode === 'allMatching' || selectedCount === total);
+    setDeleteFlow({ phase: 'previewing', selection: selectionSnapshot, isFullLibrary: fullLibrary });
+    try {
+      const preview = await memeApi.previewDelete({
+        selection: memeSelectionToApi(selectionSnapshot),
+        action: 'delete',
+      });
+      if (preview.matched_count === 0) {
+        toast.info(t('aiMeme.deleteFlow.noMatches'));
+        setDeleteFlow({ phase: 'closed' });
+        return;
+      }
+      setDeleteFlow({ phase: 'review', selection: selectionSnapshot, preview, isFullLibrary: fullLibrary, filter });
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, t('aiMeme.deleteFlow.previewFailed')));
+      setDeleteFlow({ phase: 'closed' });
     }
   };
 
-  // Batch export
+  const executeDelete = async (
+    flow: Extract<MemeDeleteFlow, { phase: 'confirm' }>,
+  ) => {
+    const confirmation = memeDeleteConfirmation(flow.preview.matched_count);
+    if (flow.input !== confirmation) return;
+    setDeleteFlow({
+      phase: 'executing',
+      selection: flow.selection,
+      preview: flow.preview,
+      isFullLibrary: flow.isFullLibrary,
+      filter: flow.filter,
+    });
+    try {
+      const started = await memeApi.executeDelete({
+        preview_id: flow.preview.preview_id,
+        confirmation,
+        create_backup: flow.isFullLibrary ? true : undefined,
+      });
+      const context: Extract<MemeDeleteFlow, { phase: 'review' }> = {
+        phase: 'review',
+        selection: flow.selection,
+        preview: flow.preview,
+        isFullLibrary: flow.isFullLibrary,
+        filter: flow.filter,
+      };
+      const initialOperation = await memeApi.getDeleteOperation(started.operation_id);
+      const terminal = TERMINAL_DELETE_STATUSES.has(initialOperation.status);
+      setDeleteFlow({ ...context, phase: terminal ? 'result' : 'running', operation: initialOperation });
+      if (terminal) applyTerminalDeleteResult(initialOperation);
+      else deletePollTimerRef.current = setTimeout(
+        () => void pollDeleteOperation(started.operation_id, context),
+        1000,
+      );
+    } catch (error) {
+      setDeleteFlow(flow);
+      toast.error(getApiErrorMessage(error, t('aiMeme.deleteFlow.executeFailed')));
+    }
+  };
+
+  const retryDelete = async (flow: Extract<MemeDeleteFlow, { phase: 'result' }>) => {
+    try {
+      const started = await memeApi.retryDeleteOperation(flow.operation.operation_id);
+      const operationId = started.operation_id || flow.operation.operation_id;
+      const context: Extract<MemeDeleteFlow, { phase: 'review' }> = {
+        phase: 'review',
+        selection: flow.selection,
+        preview: flow.preview,
+        isFullLibrary: flow.isFullLibrary,
+        filter: flow.filter,
+      };
+      const operation = await memeApi.getDeleteOperation(operationId);
+      setDeleteFlow({ ...context, phase: 'running', operation });
+      deletePollTimerRef.current = setTimeout(
+        () => void pollDeleteOperation(operationId, context),
+        1000,
+      );
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, t('aiMeme.deleteFlow.retryFailedMessage')));
+    }
+  };
+
+  // Batch export is intentionally limited to explicit IDs.
   const handleBatchExport = async () => {
-    if (selectedIds.size === 0) {
+    if (selection.mode !== 'explicit') {
+      toast.info(t('aiMeme.selection.exportExplicitOnly'));
+      return;
+    }
+    if (selection.ids.size === 0) {
       toast.warning(t('aiMeme.batchExportNoSelection'));
       return;
     }
     try {
       setIsExporting(true);
-      const blob = await memeApi.exportMemes(Array.from(selectedIds));
+      const blob = await memeApi.exportMemes(Array.from(selection.ids));
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -1510,6 +1730,19 @@ export default function AIMemePage() {
               </Button>
             )}
             <Button
+              variant={selectionMode ? 'secondary' : 'outline'}
+              size="sm"
+              onClick={() => {
+                setSelectionMode((current) => !current);
+                clearSelection();
+                setDeleteFlow({ phase: 'closed' });
+              }}
+              className="gap-1.5 whitespace-nowrap"
+            >
+              <ListChecks className="w-4 h-4" />
+              {t(selectionMode ? 'aiMeme.selection.exit' : 'aiMeme.selection.enter')}
+            </Button>
+            <Button
               variant="outline"
               size="sm"
               onClick={() => { fetchMemes(); fetchStats(); fetchPersonas(); }}
@@ -1530,66 +1763,113 @@ export default function AIMemePage() {
         </div>
       }
     >
-      {/* Batch Action Bar - shown when any items are selected */}
-      {selectedIds.size > 0 && (
+      {/* Batch Action Bar */}
+      {selectionMode && (
         <Card className={cn(
           "border-primary/30 bg-primary/5",
           isGlass && "glass-card"
         )}>
-          <CardContent className="py-2.5 px-4 flex items-center gap-3 flex-wrap">
-            <div className="flex items-center gap-2">
-              <Checkbox
-                checked={selectedIds.size === memes.length && memes.length > 0}
-                onCheckedChange={(checked) => {
-                  if (checked) selectAllOnPage();
-                  else deselectAll();
-                }}
-              />
-              <span className="text-sm font-medium">
-                {t('aiMeme.selectedCount', { count: selectedIds.size })}
-              </span>
+          <CardContent className="py-2.5 px-4 space-y-2">
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  checked={pageSelectionState}
+                  onCheckedChange={(checked) => setCurrentPageSelected(checked === true)}
+                  aria-label={t('aiMeme.selection.togglePage')}
+                />
+                <span className="text-sm font-medium">
+                  {t('aiMeme.selectedCount', { count: selectedCount })}
+                </span>
+              </div>
+              <Separator orientation="vertical" className="h-5" />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPageSelected(true)}
+                disabled={memes.length === 0 || pageSelectionState === true}
+                className="h-7 text-xs gap-1"
+              >
+                {t('aiMeme.selectAll')}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={clearSelection}
+                disabled={selectedCount === 0}
+                className="h-7 text-xs gap-1"
+              >
+                {t('aiMeme.deselectAll')}
+              </Button>
+              <div className="flex-1" />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleBatchExport}
+                disabled={isExporting || selectedCount === 0 || selection.mode === 'allMatching'}
+                title={selection.mode === 'allMatching' ? t('aiMeme.selection.exportExplicitOnly') : undefined}
+                className="h-7 text-xs gap-1"
+              >
+                {isExporting ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Download className="w-3.5 h-3.5" />
+                )}
+                {t('aiMeme.batchExport')}
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => void openDeleteReview()}
+                disabled={selectedCount === 0 || deleteFlow.phase === 'previewing'}
+                className="h-7 text-xs gap-1"
+              >
+                {deleteFlow.phase === 'previewing' ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="w-3.5 h-3.5" />
+                )}
+                {t('aiMeme.batchDelete')}
+              </Button>
             </div>
-            <Separator orientation="vertical" className="h-5" />
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={selectAllOnPage}
-              className="h-7 text-xs gap-1"
-            >
-              {t('aiMeme.selectAll')}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={deselectAll}
-              className="h-7 text-xs gap-1"
-            >
-              {t('aiMeme.deselectAll')}
-            </Button>
-            <div className="flex-1" />
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleBatchExport}
-              disabled={isExporting}
-              className="h-7 text-xs gap-1"
-            >
-              {isExporting ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Download className="w-3.5 h-3.5" />
-              )}
-              {t('aiMeme.batchExport')}
-            </Button>
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={() => setShowBatchDeleteDialog(true)}
-              className="h-7 text-xs gap-1"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              {t('aiMeme.batchDelete')}
-            </Button>
+
+            {pageSelectionState === true && selection.mode === 'explicit' && total > selectedCount && (
+              <div className="text-xs text-muted-foreground">
+                {t('aiMeme.selection.pageSelected', { count: memes.length })}{' '}
+                {searchIsSettled && canSelectAllMatching(activeMatchFilter) ? (
+                  <button
+                    type="button"
+                    className="font-medium text-primary hover:underline"
+                    onClick={() => setSelection(selectAllMatching(matchFilter, currentFilterKey, total))}
+                  >
+                    {t(
+                      isFullLibraryFilter(matchFilter)
+                        ? 'aiMeme.selection.selectAllLibrary'
+                        : 'aiMeme.selection.selectAllMatching',
+                      { count: total },
+                    )}
+                  </button>
+                ) : (
+                  <span>{t('aiMeme.selection.semanticSelectAllUnsupported')}</span>
+                )}
+              </div>
+            )}
+
+            {selection.mode === 'allMatching' && (
+              <div className="text-xs text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span className="font-medium text-foreground">
+                  {t(
+                    fullLibrarySelected
+                      ? 'aiMeme.selection.allLibrarySelected'
+                      : 'aiMeme.selection.allMatchingSelected',
+                    { count: selectedCount },
+                  )}
+                </span>
+                {selection.excludedIds.size > 0 && (
+                  <span>{t('aiMeme.selection.excludedCount', { count: selection.excludedIds.size })}</span>
+                )}
+                <span>{t('aiMeme.selection.exportExplicitOnly')}</span>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
@@ -1664,7 +1944,7 @@ export default function AIMemePage() {
         {/* Status Tab Filter */}
         <TabButtonGroup
           value={filterStatus}
-          onValueChange={(v) => setFilterStatus(v)}
+          onValueChange={(v) => updateStructuredQuery(() => setFilterStatus(v))}
           className="shrink-0"
           options={[
             { value: 'tagged', label: t('aiMeme.status.tagged'), icon: <CheckCircle2 className="w-4 h-4" /> },
@@ -1690,7 +1970,13 @@ export default function AIMemePage() {
           />
           {searchInput && (
             <button
-              onClick={() => { setSearchInput(''); setSearchQuery(''); setPage(1); }}
+              onClick={() => {
+                if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+                resetSelectionForQueryChange();
+                setSearchInput('');
+                setSearchQuery('');
+                setPage(1);
+              }}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground z-10"
             >
               <X className="w-4 h-4" />
@@ -1706,7 +1992,7 @@ export default function AIMemePage() {
         )}>
           <Select
             value={filterPersona}
-            onValueChange={(v) => setFilterPersona(v)}
+            onValueChange={(v) => updateStructuredQuery(() => setFilterPersona(v))}
           >
             <SelectTrigger className="w-auto min-w-[180px] max-w-[260px] h-11 text-sm whitespace-nowrap bg-transparent border-0 rounded-none shadow-none focus:ring-0 focus:ring-offset-0">
               <div className="flex items-center gap-1.5 min-w-0">
@@ -1737,7 +2023,7 @@ export default function AIMemePage() {
         )}>
           <Select
             value={sortBy}
-            onValueChange={(v) => setSortBy(v as SortOption)}
+            onValueChange={(v) => updateStructuredQuery(() => setSortBy(v as SortOption))}
           >
             <SelectTrigger className="w-auto min-w-[160px] h-11 text-sm whitespace-nowrap bg-transparent border-0 rounded-none shadow-none focus:ring-0 focus:ring-offset-0">
               <div className="flex items-center gap-1.5">
@@ -1799,7 +2085,8 @@ export default function AIMemePage() {
                 meme={meme}
                 onClick={handleMemeClick}
                 isGlass={isGlass}
-                selected={selectedIds.has(meme.meme_id)}
+                selected={isMemeSelected(selection, meme.meme_id)}
+                selectionMode={selectionMode}
                 onToggleSelect={toggleSelectMeme}
               />
             ))}
@@ -1872,28 +2159,255 @@ export default function AIMemePage() {
         personas={personas}
       />
 
-      {/* Batch Delete Confirm Dialog */}
-      <AlertDialog open={showBatchDeleteDialog} onOpenChange={setShowBatchDeleteDialog}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t('aiMeme.batchDeleteConfirm')}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t('aiMeme.batchDeleteConfirmDesc', { count: selectedIds.size })}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleBatchDelete}
-              disabled={isBatchDeleting}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {isBatchDeleting && <Loader2 className="w-4 h-4 animate-spin mr-1.5" />}
-              {t('common.delete')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {/* Batch delete: preview, review, typed confirmation, progress and result */}
+      <Dialog
+        open={deleteFlow.phase !== 'closed'}
+        onOpenChange={(open) => { if (!open) closeDeleteFlow(); }}
+      >
+        <DialogContent className="max-w-xl max-h-[85vh] overflow-hidden">
+          {(deleteFlow.phase === 'previewing' || deleteFlow.phase === 'executing') && (
+            <div className="py-12 flex flex-col items-center gap-3 text-center">
+              <Loader2 className="w-7 h-7 animate-spin text-primary" />
+              <p className="text-sm font-medium">
+                {t(deleteFlow.phase === 'previewing'
+                  ? 'aiMeme.deleteFlow.previewing'
+                  : 'aiMeme.deleteFlow.executing')}
+              </p>
+            </div>
+          )}
+
+          {(deleteFlow.phase === 'review' || deleteFlow.phase === 'confirm') && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <AlertTriangle className="w-5 h-5 text-destructive" />
+                  {t(
+                    deleteFlow.phase === 'review'
+                      ? 'aiMeme.deleteFlow.reviewTitle'
+                      : 'aiMeme.deleteFlow.confirmTitle',
+                  )}
+                </DialogTitle>
+                <DialogDescription>
+                  {t('aiMeme.deleteFlow.matchedSummary', {
+                    count: deleteFlow.preview.matched_count,
+                    size: formatFileSize(deleteFlow.preview.file_bytes),
+                  })}
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-3 min-h-0 overflow-y-auto py-1">
+                <div className="rounded-md border bg-muted/30 p-3 text-sm space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-muted-foreground">{t('aiMeme.deleteFlow.scope')}</span>
+                    <span className="font-medium text-right">
+                      {t(
+                        deleteFlow.isFullLibrary
+                          ? 'aiMeme.deleteFlow.scopeLibrary'
+                          : deleteFlow.selection.mode === 'allMatching'
+                            ? 'aiMeme.deleteFlow.scopeFilter'
+                            : 'aiMeme.deleteFlow.scopeExplicit',
+                      )}
+                    </span>
+                  </div>
+                  {Object.entries(deleteFlow.filter).map(([key, value]) => (
+                    <div key={key} className="flex items-center justify-between gap-3 text-xs">
+                      <span className="text-muted-foreground">{t(`aiMeme.deleteFlow.filter.${key}`)}</span>
+                      <span className="font-mono truncate max-w-[320px]">{value}</span>
+                    </div>
+                  ))}
+                  {deleteFlow.selection.mode === 'allMatching' && deleteFlow.selection.excludedIds.size > 0 && (
+                    <div className="flex items-center justify-between gap-3 text-xs">
+                      <span className="text-muted-foreground">{t('aiMeme.deleteFlow.exclusions')}</span>
+                      <span>{deleteFlow.selection.excludedIds.size}</span>
+                    </div>
+                  )}
+                </div>
+
+                {deleteFlow.isFullLibrary ? (
+                  <Alert variant="destructive">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertTitle>{t('aiMeme.deleteFlow.fullLibraryTitle')}</AlertTitle>
+                    <AlertDescription className="space-y-2">
+                      <p>{t('aiMeme.deleteFlow.fullLibraryWarning')}</p>
+                      <ul className="list-disc pl-4 space-y-1">
+                        <li>{t('aiMeme.deleteFlow.dangerFiles')}</li>
+                        <li>{t('aiMeme.deleteFlow.dangerDatabase')}</li>
+                        <li>{t('aiMeme.deleteFlow.dangerVector')}</li>
+                        <li>
+                          {t('aiMeme.deleteFlow.backupPath')}:{' '}
+                          <span className="font-mono break-all">
+                            {deleteFlow.preview.backup_path || t('aiMeme.deleteFlow.backupPathPending')}
+                          </span>
+                        </li>
+                      </ul>
+                    </AlertDescription>
+                  </Alert>
+                ) : (
+                  <Alert variant="destructive">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertTitle>{t('aiMeme.deleteFlow.irreversibleTitle')}</AlertTitle>
+                    <AlertDescription>{t('aiMeme.deleteFlow.irreversibleDescription')}</AlertDescription>
+                  </Alert>
+                )}
+
+                {deleteFlow.preview.sample_ids.length > 0 && (
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">{t('aiMeme.deleteFlow.sampleIds')}</Label>
+                    <p className="rounded-md bg-muted/40 p-2 font-mono text-[11px] break-all">
+                      {deleteFlow.preview.sample_ids.join(', ')}
+                    </p>
+                  </div>
+                )}
+
+                {deleteFlow.phase === 'confirm' && (
+                  <div className="space-y-2">
+                    <Label htmlFor="meme-delete-confirmation">
+                      {t('aiMeme.deleteFlow.confirmInstruction', {
+                        phrase: memeDeleteConfirmation(deleteFlow.preview.matched_count),
+                      })}
+                    </Label>
+                    <Input
+                      id="meme-delete-confirmation"
+                      value={deleteFlow.input}
+                      onChange={(event) => setDeleteFlow({ ...deleteFlow, input: event.target.value })}
+                      placeholder={memeDeleteConfirmation(deleteFlow.preview.matched_count)}
+                      autoComplete="off"
+                      spellCheck={false}
+                      className="font-mono"
+                    />
+                  </div>
+                )}
+              </div>
+
+              <DialogFooter>
+                <Button variant="outline" onClick={closeDeleteFlow}>{t('common.cancel')}</Button>
+                {deleteFlow.phase === 'review' ? (
+                  <Button
+                    variant="destructive"
+                    onClick={() => setDeleteFlow({ ...deleteFlow, phase: 'confirm', input: '' })}
+                  >
+                    {t('aiMeme.deleteFlow.continueReview')}
+                  </Button>
+                ) : (
+                  <Button
+                    variant="destructive"
+                    disabled={deleteFlow.input !== memeDeleteConfirmation(deleteFlow.preview.matched_count)}
+                    onClick={() => void executeDelete(deleteFlow)}
+                  >
+                    <Trash2 className="w-4 h-4 mr-1.5" />
+                    {t('aiMeme.deleteFlow.execute')}
+                  </Button>
+                )}
+              </DialogFooter>
+            </>
+          )}
+
+          {(deleteFlow.phase === 'running' || deleteFlow.phase === 'result') && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  {deleteFlow.phase === 'running' ? (
+                    <Loader2 className="w-5 h-5 animate-spin text-primary" />
+                  ) : deleteFlow.operation.status === 'succeeded' ? (
+                    <CheckCircle2 className="w-5 h-5 text-green-600" />
+                  ) : (
+                    <AlertTriangle className="w-5 h-5 text-destructive" />
+                  )}
+                  {t(
+                    deleteFlow.phase === 'running'
+                      ? 'aiMeme.deleteFlow.progressTitle'
+                      : deleteFlow.operation.status === 'succeeded'
+                        ? 'aiMeme.deleteFlow.successTitle'
+                        : 'aiMeme.deleteFlow.partialTitle',
+                  )}
+                </DialogTitle>
+                <DialogDescription>
+                  {t('aiMeme.deleteFlow.operationId', { id: deleteFlow.operation.operation_id })}
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-4 min-h-0 overflow-y-auto">
+                <Progress
+                  value={deleteFlow.operation.matched > 0
+                    ? (deleteFlow.operation.processed / deleteFlow.operation.matched) * 100
+                    : 0}
+                  className="h-2"
+                />
+                <div className="grid grid-cols-3 gap-3 text-center">
+                  <div className="rounded-md bg-muted/40 p-2">
+                    <p className="text-lg font-semibold tabular-nums">
+                      {deleteFlow.operation.processed}/{deleteFlow.operation.matched}
+                    </p>
+                    <p className="text-xs text-muted-foreground">{t('aiMeme.deleteFlow.processed')}</p>
+                  </div>
+                  <div className="rounded-md bg-green-500/10 p-2">
+                    <p className="text-lg font-semibold tabular-nums text-green-700 dark:text-green-400">
+                      {deleteFlow.operation.succeeded}
+                    </p>
+                    <p className="text-xs text-muted-foreground">{t('aiMeme.deleteFlow.succeeded')}</p>
+                  </div>
+                  <div className="rounded-md bg-destructive/10 p-2">
+                    <p className="text-lg font-semibold tabular-nums text-destructive">
+                      {deleteFlow.operation.failed}
+                    </p>
+                    <p className="text-xs text-muted-foreground">{t('aiMeme.deleteFlow.failed')}</p>
+                  </div>
+                </div>
+
+                {deleteFlow.operation.phase && (
+                  <p className="text-xs text-muted-foreground">
+                    {t('aiMeme.deleteFlow.currentPhase')}: {deleteFlow.operation.phase}
+                  </p>
+                )}
+                {deleteFlow.operation.backup_path && (
+                  <p className="text-xs text-muted-foreground break-all">
+                    {t('aiMeme.deleteFlow.backupPath')}: <span className="font-mono">{deleteFlow.operation.backup_path}</span>
+                  </p>
+                )}
+                {deleteFlow.operation.error_summary && (
+                  <Alert variant="destructive">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertDescription>{deleteFlow.operation.error_summary}</AlertDescription>
+                  </Alert>
+                )}
+
+                {deleteFlow.operation.failures.length > 0 && (
+                  <div className="space-y-2">
+                    <Label>{t('aiMeme.deleteFlow.failureDetails')}</Label>
+                    <ScrollArea className="h-44 rounded-md border">
+                      <div className="divide-y">
+                        {deleteFlow.operation.failures.map((failure, index) => (
+                          <div key={`${failure.meme_id}-${index}`} className="p-2.5 text-xs space-y-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-mono break-all">{failure.meme_id}</span>
+                              <Badge variant="outline">{failure.phase}</Badge>
+                            </div>
+                            <p className="text-destructive break-words">{failure.reason}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </ScrollArea>
+                  </div>
+                )}
+              </div>
+
+              <DialogFooter>
+                {deleteFlow.phase === 'result' && (
+                  <>
+                    {deleteFlow.operation.failures.length > 0 && (
+                      <Button variant="destructive" onClick={() => void retryDelete(deleteFlow)}>
+                        <RotateCw className="w-4 h-4 mr-1.5" />
+                        {t('aiMeme.deleteFlow.retryFailed')}
+                      </Button>
+                    )}
+                    <Button variant="outline" onClick={closeDeleteFlow}>{t('common.close')}</Button>
+                  </>
+                )}
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Purge Rejected Confirm Dialog */}
       <AlertDialog open={showPurgeDialog} onOpenChange={setShowPurgeDialog}>
