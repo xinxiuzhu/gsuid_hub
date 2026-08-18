@@ -1,6 +1,6 @@
 import { cn } from '@/lib/utils';
 import type { ConnectionState } from '@/lib/liveChat';
-import { Loader2, Wifi, WifiOff, RefreshCw, AlertTriangle } from 'lucide-react';
+import { Loader2, Wifi, WifiOff, AlertTriangle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 
 interface ConnectionBadgeProps {
@@ -40,8 +40,6 @@ export function ConnectionBadge({ state, label, className }: ConnectionBadgeProp
     >
       {spinning ? (
         <Loader2 className="w-3 h-3 shrink-0 animate-spin" />
-      ) : state === 'reconnecting' ? (
-        <RefreshCw className="w-3 h-3 shrink-0" />
       ) : (
         <Icon className="w-3 h-3 shrink-0" />
       )}
