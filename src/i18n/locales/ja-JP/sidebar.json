@@ -23,10 +23,16 @@
   "aiMemory": "AI メモリ",
   "aiMeme": "表情管理",
   "sessionManagement": "セッション管理",
+  "liveChat": "リアルタイムチャット",
   "aiHistory": "AI 履歴呼び出し",
   "aiKanban": "タスク看板",
   "aiApprovals": "承認センター",
   "aiBudget": "AI 予算",
+  "aiDebug": "Agent デバッガ",
+  "aiArtifacts": "AI 成果物",
+  "aiToolOutputs": "ツール落盤",
+  "batchPush": "一括プッシュ",
+  "brandSettings": "ブランド情報",
   "plugins": "プラグイン設定",
   "pluginStore": "プラグイン商城",
   "gitUpdate": "更新管理",
@@ -69,5 +75,9 @@
   "confirmPauseDesc": "クリックで钮後你の机器人停止実行",
   "confirmResumeTitle": "是否确定続行GsCore?",
   "confirmResumeDesc": "クリックで钮後你の机器人続行実行",
-  "settings": "設定"
+  "settings": "設定",
+  "stateStore": "状態ストア",
+  "groupProfile": "グループ像",
+  "aiOps": "AI 運用センター",
+  "aiRuntime": "Agent ランタイム"
 }

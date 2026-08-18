@@ -36,7 +36,6 @@ import {
   AlertTriangle,
   CheckCircle2,
   ChevronDown,
-  Package,
   MessageSquare,
   Link,
   Globe,
@@ -54,28 +53,12 @@ import {
   GitCommitInfo,
   GitCommitListResponse,
   GitPluginInfo,
-  getPluginIconUrl,
 } from '@/lib/api';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { PinnedPage } from '@/components/layout/PinnedPage';
+import { PluginIcon } from '@/components/ui/plugin-icon';
 
 const PAGE_SIZE = 20;
-
-// 带 fallback 的插件图标组件
-function PluginIcon({ pluginName, className = 'w-[18px] h-[18px]' }: { pluginName: string; className?: string }) {
-  const [imgError, setImgError] = useState(false);
-  if (imgError) {
-    return <Package className={`${className} text-muted-foreground/50`} />;
-  }
-  return (
-    <img
-      src={getPluginIconUrl(pluginName)}
-      className={`${className} rounded-sm object-contain`}
-      alt=""
-      onError={() => setImgError(true)}
-    />
-  );
-}
 
 // 缓存相关常量
 const GIT_STATUS_CACHE_KEY = 'gitUpdate_status_cache';
@@ -573,13 +556,16 @@ export default function GitUpdatePage() {
     setUpdateDialog(false);
     try {
       setIsForceUpdating(true);
+      // api.post 已解包：返回 GitForceUpdateResponse，不是 {status,msg,data}
       const result = await gitUpdateApi.update(selectedPlugin);
-      if (result.status === 0) {
-        toast.success(t('gitUpdate.updateSuccess', {
-            hash: result.data?.current_commit?.short_hash || '',
-          }));
+      if (result?.success) {
+        toast.success(
+          t('gitUpdate.updateSuccess', {
+            hash: result.current_commit?.short_hash || '',
+          }),
+        );
       } else {
-        toast.error(result.msg || t('gitUpdate.updateFailed'));
+        toast.error(result?.message || t('gitUpdate.updateFailed'));
       }
       // 清除缓存并刷新
       clearCommitsCache(selectedPlugin);
@@ -603,13 +589,16 @@ export default function GitUpdatePage() {
     if (!selectedPlugin) return;
     try {
       setIsForceUpdating(true);
+      // api.post 已解包：返回 GitForceUpdateResponse，不是 {status,msg,data}
       const result = await gitUpdateApi.forceUpdate(selectedPlugin);
-      if (result.status === 0) {
-        toast.success(t('gitUpdate.forceUpdateSuccess', {
-            hash: result.data?.current_commit?.short_hash || '',
-          }));
+      if (result?.success) {
+        toast.success(
+          t('gitUpdate.forceUpdateSuccess', {
+            hash: result.current_commit?.short_hash || '',
+          }),
+        );
       } else {
-        toast.error(result.msg || t('gitUpdate.forceUpdateFailed'));
+        toast.error(result?.message || t('gitUpdate.forceUpdateFailed'));
       }
       // 清除缓存并刷新
       clearCommitsCache(selectedPlugin);
@@ -684,19 +673,30 @@ export default function GitUpdatePage() {
         ));
         
         try {
+          // api.post 已解包：返回 GitForceUpdateResponse
           const result = await gitUpdateApi.update(plugin.name);
-          if (result.data?.success === true) {
+          if (result?.success) {
             setPluginUpdateList(prev => prev.map(p =>
-              p.name === plugin.name ? { ...p, status: 'success', message: result.data?.message || result.msg } : p
+              p.name === plugin.name
+                ? { ...p, status: 'success', message: result.message }
+                : p
             ));
           } else {
             setPluginUpdateList(prev => prev.map(p =>
-              p.name === plugin.name ? { ...p, status: 'failed', message: result.data?.message || result.msg } : p
+              p.name === plugin.name
+                ? { ...p, status: 'failed', message: result?.message || t('gitUpdate.updateFailed') }
+                : p
             ));
           }
         } catch (error) {
           setPluginUpdateList(prev => prev.map(p =>
-            p.name === plugin.name ? { ...p, status: 'failed', message: error instanceof Error ? error.message : String(error) } : p
+            p.name === plugin.name
+              ? {
+                  ...p,
+                  status: 'failed',
+                  message: error instanceof Error ? error.message : String(error),
+                }
+              : p
           ));
         }
       });
@@ -715,17 +715,19 @@ export default function GitUpdatePage() {
     setReloadDialogOpen(true);
   };
 
-  // 重载当前插件 - 确认执行
+  // 重载当前插件 - 确认执行（reloadPlugin 走 postRaw，看顶层 status/msg）
   const handleReloadPluginConfirm = async () => {
     if (!selectedPlugin) return;
     setReloadDialogOpen(false);
     setIsReloadingPlugin(true);
     try {
       const result = await pluginsApi.reloadPlugin(selectedPlugin);
-      if (result.status === 0) {
-        toast.success(t('plugins.reloadPluginSuccess', { name: selectedPlugin }));
+      if (result?.status === 0) {
+        toast.success(result.msg || t('plugins.reloadPluginSuccess', { name: selectedPlugin }));
       } else {
-        toast.error(result.msg);
+        toast.error(
+          result?.msg || t('plugins.reloadPluginFailed', { name: selectedPlugin, error: '' }),
+        );
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));

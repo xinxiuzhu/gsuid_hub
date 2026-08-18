@@ -368,8 +368,8 @@ const StateStoreViewer = forwardRef<StateStoreViewerHandle, StateStoreViewerProp
         </CardContent>
       </Card>
 
-      {/* Keys list - scrollable area with padding for shadow breathing room */}
-      <div className="min-h-0 flex-1 overflow-y-auto p-2">
+      {/* Keys list - scrollable area；仅竖直留 p-2 给阴影/间距，水平贴齐上方筛选卡外缘 */}
+      <div className="min-h-0 flex-1 overflow-y-auto py-2 px-0">
       {!selectedScope ? (
         <Card className="glass-card-flat shadow-none">
           <CardContent className="py-12 text-center text-muted-foreground">
@@ -522,7 +522,9 @@ const StateStoreViewer = forwardRef<StateStoreViewerHandle, StateStoreViewerProp
                             disabled={collectionOffset <= 0 || isLoadingRecords}
                             onClick={() => {
                               const newOffset = Math.max(0, collectionOffset - 50);
-                              keyItem.record_collection_name && loadRecords(keyItem.record_collection_name, newOffset);
+                              if (keyItem.record_collection_name) {
+                                loadRecords(keyItem.record_collection_name, newOffset);
+                              }
                             }}
                           >
                             {t('aiKanban.stateStore.prevPage')}
@@ -536,7 +538,9 @@ const StateStoreViewer = forwardRef<StateStoreViewerHandle, StateStoreViewerProp
                             disabled={collectionOffset + 50 >= collectionTotal || isLoadingRecords}
                             onClick={() => {
                               const newOffset = collectionOffset + 50;
-                              keyItem.record_collection_name && loadRecords(keyItem.record_collection_name, newOffset);
+                              if (keyItem.record_collection_name) {
+                                loadRecords(keyItem.record_collection_name, newOffset);
+                              }
                             }}
                           >
                             {t('aiKanban.stateStore.nextPage')}

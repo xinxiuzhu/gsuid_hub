@@ -23,10 +23,16 @@
   "aiMemory": "AI Memory",
   "aiMeme": "Meme Management",
   "sessionManagement": "Session Management",
+  "liveChat": "Live Chat",
   "aiHistory": "AI Call History",
   "aiKanban": "Task Kanban",
   "aiApprovals": "Approval Center",
   "aiBudget": "AI Budget",
+  "aiDebug": "Agent Debugger",
+  "aiArtifacts": "AI Artifacts",
+  "aiToolOutputs": "Tool Outputs",
+  "batchPush": "Batch Push",
+  "brandSettings": "Brand",
   "plugins": "Plugin Settings",
   "pluginStore": "Plugin Store",
   "gitUpdate": "Update Management",
@@ -69,5 +75,9 @@
   "confirmPauseDesc": "Your bot will stop running after clicking the button",
   "confirmResumeTitle": "Are you sure you want to resume GsCore?",
   "confirmResumeDesc": "Your bot will continue running after clicking the button",
-  "settings": "Settings"
+  "settings": "Settings",
+  "stateStore": "State Store",
+  "groupProfile": "Group Profile",
+  "aiOps": "AI Ops Center",
+  "aiRuntime": "Agent Runtime"
 }

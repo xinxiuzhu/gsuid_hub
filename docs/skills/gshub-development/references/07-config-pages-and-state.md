@@ -250,3 +250,124 @@ const EXCLUDED_KEYS: string[] = [
 备用配置的 i18n key 文案**不要再带"高级 / 低级"前缀**（如"高级任务（备用）"），
 因为它已经被包裹在"高级任务"区块内，加前缀会重复并显得累赘。
 直接用「备用配置 / Backup Config / 予備設定」即可。
+
+## 7.6a OpenAI Provider：远端 Web Search（`remote_web_search`）
+
+位置：`CreateConfigDialog` / `EditConfigDialog`。OpenAI 在「请求方式」下方；Anthropic 在「最大并发」下方。Gemini 不展示。
+
+| UI | 后端字段 | 取值 | 默认 |
+|----|----------|------|------|
+| 远端 Web Search | `remote_web_search` | `off` / `on` | `on` |
+
+默认 `on`：OpenAI 把请求方式改成 Responses、或直接用 Anthropic 配置，即可用上游内置 `web_search`。`chat_completions` 无视本开关，永远本地 `web_search_tool`。读写走 `useProviderConfig` create/save（Anthropic 分支也要带这个字段）。i18n：`aiConfig.serviceProvider.remoteWebSearch*`。
+
+## 7.6b OpenAI Provider：终端用户标识（`forward_end_user_id`）★
+
+位置：`AIConfig/dialogs/CreateConfigDialog.tsx`、`EditConfigDialog.tsx`；仅 **openai**
+provider 的创建 / 编辑弹窗展示。
+
+### 字段
+
+| UI / 表单 | 后端字段 | 类型 | 说明 |
+|-----------|----------|------|------|
+| 终端用户标识模式 | `forward_end_user_id` | `off` / `hashed` / `raw` | 是否向请求体携带 OpenAI `user` 字段 |
+| 摘要盐值 | `end_user_id_salt` | secret string | `hashed` 模式专用；管理员 GET 下发明文，前端默认隐藏 |
+
+选项列表来自 `GET /api/provider_config/options` 的 `forward_end_user_id` 数组（与后端
+`FORWARD_MODES` 同源）。`constants.tsx` 中 `FORWARD_END_USER_ID_OPTIONS` 附带各模式说明文案。
+
+### 读写
+
+- 创建：`useProviderConfig.createConfig` 把 `forward_end_user_id`、`end_user_id_salt` 写入
+  openai profile JSON。
+- 编辑：`EditConfigDialog` 通过 `onChangeField` 更新；盐值空串表示清除。
+
+### i18n
+
+`aiConfig.serviceProvider.forwardEndUserId*`、`endUserIdSalt*` — 三语
+`src/i18n/locales/{zh-CN,en-US,ja-JP}/aiConfig.json`。
+
+> 自建网关按人鉴权时，通常将该 profile 设为 `raw` 或 `hashed`，并在账号侧配置
+> `ACCOUNT_LLM_CREDENTIAL_CONFIGS`；详见 gsuid_core `24-provider-config.md` 与部署文档
+> `13-ai.md` §13.3.1。
+
+## 7.7 网络搜索 / 网页抓取：多源主备 UI ★★
+
+位置：`AIConfig/sections/WebSearchSection.tsx`、`WebFetchSection.tsx`；装配于
+`AIConfigPage.tsx`。对应后端 `ai_config` 字段 `websearch_*` / `webfetch_*`（热读，**无需重启**）。
+
+### 字段与默认
+
+| 字段 | 默认 | 说明 |
+|------|------|------|
+| `websearch_provider` | `Jina` | 主用：Jina / Tavily / Exa / MCP |
+| `websearch_lb_strategy` | `error_switch` | `none` / `error_switch` / `auto_balance` |
+| `websearch_fallback_order` | `[]` | 备用有序列表（不含主用语义）；空=后端自动收集已配置源 |
+| `webfetch_provider` | `Jina` | 主用：Jina / local |
+| `webfetch_lb_strategy` | `error_switch` | 同搜索 |
+| `webfetch_fallback_order` | `[]`（字段缺失时 UI 也显示空） | 空=后端默认（通常含 local）；**勿在前端合成未落盘默认值** |
+
+密钥配置独立 StringConfig：`jina_config`（搜索+抓取共用）、`tavily_config`、`exa_config`、
+`web_fetch_config`（local）。Jina 搜索 **Key 必填**；Jina 抓取 **Key 可选**。
+
+### UI 结构（两 section 同构）
+
+1. **主用源** `ChipGroup` 单选（`selectMode="single"` + 品牌图标 `@thesvg/react`）。
+2. **多源策略** 单选 Chip：无 / 错误切换 / 自动分流；文案用 `LabelWithHelp` + **Markdown 多行 tooltip**。
+3. **备用顺序** 仅当策略为 `error_switch` | `auto_balance` 时显示（`none` 时整块隐藏）：
+   - 多选 Chip，`allowEmpty` + **`showOrderIndex`**（选中 chip 显示 1-based 优先级）；
+   - **主用项仍展示**，但 `disabled: true`，标签可标「主用」；
+   - **value 与数据层均不含主用**（不写入 `*_fallback_order`）；
+   - **切换主用时**在 `AIConfigPage` 静默从 fallback 剔除新主用（无 toast）；
+     **无 soft-memory**——旧主用不会自动回到备用勾选，需用户再次点选；
+   - provider 身份用 `sameProviderId`（trim + 大小写不敏感）比较；
+   - `onValueChange` 只写回可见选中（已过滤主用）。
+4. **配置分区**：主用块 `border-primary/30 bg-primary/5` + 实心 Badge；备用块虚线边框 + 仅渲染
+   `effectiveFallbacks`（过滤掉主用）的配置面板；**无备用勾选则不渲染备用配置区**。
+
+### 保存时剥离「备用=主用」
+
+`executeSave` 写入 `websearch_fallback_order` / `webfetch_fallback_order` 前，从数组剔除当前
+主用（`filterOutPrimaryProvider`，兜底后端脏数据 / 大小写漂移）；若发生剔除则 toast 警告，
+并用 **`applyConfigsAndMarkSaved`** 原子同步 `configs` + `originalConfig`，避免 dirty 状态与后端不一致。
+
+### AdvancedSettingsSection 排除
+
+下列 key 必须进 `EXCLUDED_KEYS`，避免与 WebSearch/WebFetch section 重复：
+
+```ts
+'websearch_provider', 'websearch_lb_strategy', 'websearch_fallback_order',
+'webfetch_provider', 'webfetch_lb_strategy', 'webfetch_fallback_order',
+```
+
+### 后端契约
+
+详见 gsuid_core：`docs/skills/gscore-ai-core-api/references/11-mcp-image-search-and-meme.md` §11.3 / §11.3b、
+`docs/skills/gscore-deploy/references/13-ai.md`。
+
+## 7.8 `/mcp-config` 传输方式：stdio / SSE / Streamable HTTP ★
+
+位置：`src/pages/MCPConfigPage.tsx` + `src/lib/api.ts` 的 `MCPTransport`。
+后端契约：`gsuid_core/webconsole/docs/26-mcp-config.md`。
+
+### 三种传输
+
+| `transport` | 含义 | 表单字段 | 何时用 |
+|-------------|------|----------|--------|
+| `stdio` | 本地子进程 | `command` / `args` / `env` | 默认；`uvx` / `npx` 启动本地 MCP |
+| `streamable_http` | Streamable HTTP（当前推荐远程传输） | `url` / `headers` | 远程 MCP，URL 多为 `…/mcp` |
+| `sse` | 旧版 HTTP+SSE | `url` / `headers` | 仅当服务端仍只提供 `/sse` |
+
+类型别名：`http` / `streamable-http` / 官方 JSON 的 `type: "http"` 一律归一为 `streamable_http`。
+未写 `transport` 时：URL 路径以 `/sse` 结尾 → `sse`；其它 http(s) URL → `streamable_http`；否则 → `stdio`。
+
+### UI 约束
+
+- 表单用 `ToggleGroup` 三选一，`flex-wrap`，**不要**再做成 stdio/sse 两档。
+- `sse` 与 `streamable_http` **共用** URL + headers 区块（`isHttpMcpTransport`），不要复制两套表单。
+- 列表 Badge 短文案：`stdio` / `SSE` / `HTTP`；展开详情用完整 i18n。
+- 列表渲染必须兜底：`config.tools ?? []`、`config.args ?? []`、`config.env ?? {}`。远程配置的 `to_dict` 会省略空 `args`，直接 `.length` 会崩（P-26）。
+
+### i18n
+
+三语 `mcpConfig.json` 同步：`transportHelp` / `transportStdio` / `transportSse` / `transportStreamableHttp` / `url*` / `headersHelp`。

@@ -141,6 +141,18 @@ export function getAuthToken(): string | null {
   return authToken;
 }
 
+/** 401：清 token；非 demo 才整页跳登录。demo 下跳 /hub/login（无 hash）会白屏。 */
+function handleUnauthorized(): never {
+  setAuthToken(null);
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem('auth_user');
+    if (!import.meta.env.VITE_DEMO) {
+      window.location.href = getLoginPath();
+    }
+  }
+  throw new Error('会话已过期，请重新登录');
+}
+
 export interface KeyMetrics {
   dau: number;
   dag: number;
@@ -420,12 +432,9 @@ class ApiClient {
       credentials: 'include', // Include cookies for authentication
     });
 
-    // Handle 401 Unauthorized - redirect to login
+    // Handle 401 Unauthorized - redirect to login（demo 不整页跳，见 handleUnauthorized）
     if (response.status === 401) {
-      setAuthToken(null);
-      localStorage.removeItem('auth_user');
-      window.location.href = getLoginPath();
-      throw new Error('会话已过期，请重新登录');
+      handleUnauthorized();
     }
 
     // Handle non-OK responses
@@ -487,10 +496,7 @@ class ApiClient {
     });
 
     if (response.status === 401) {
-      setAuthToken(null);
-      localStorage.removeItem('auth_user');
-      window.location.href = getLoginPath();
-      throw new Error('会话已过期，请重新登录');
+      handleUnauthorized();
     }
 
     if (!response.ok) {
@@ -558,12 +564,9 @@ class ApiClient {
       credentials: 'include',
     });
 
-    // Handle 401 Unauthorized - redirect to login
+    // Handle 401 Unauthorized - redirect to login（demo 不整页跳，见 handleUnauthorized）
     if (response.status === 401) {
-      setAuthToken(null);
-      localStorage.removeItem('auth_user');
-      window.location.href = getLoginPath();
-      throw new Error('会话已过期，请重新登录');
+      handleUnauthorized();
     }
 
     if (!response.ok) {
@@ -602,12 +605,9 @@ class ApiClient {
       credentials: 'include',
     });
 
-    // Handle 401 Unauthorized - redirect to login
+    // Handle 401 Unauthorized - redirect to login（demo 不整页跳，见 handleUnauthorized）
     if (response.status === 401) {
-      setAuthToken(null);
-      localStorage.removeItem('auth_user');
-      window.location.href = getLoginPath();
-      throw new Error('会话已过期，请重新登录');
+      handleUnauthorized();
     }
 
     const data: ApiResponse<T> = await response.json();
@@ -636,12 +636,9 @@ class ApiClient {
       credentials: 'include',
     });
 
-    // Handle 401 Unauthorized - redirect to login
+    // Handle 401 Unauthorized - redirect to login（demo 不整页跳，见 handleUnauthorized）
     if (response.status === 401) {
-      setAuthToken(null);
-      localStorage.removeItem('auth_user');
-      window.location.href = getLoginPath();
-      throw new Error('会话已过期，请重新登录');
+      handleUnauthorized();
     }
 
     const data: ApiResponse<T> = await response.json();
@@ -665,12 +662,9 @@ class ApiClient {
       credentials: 'include',
     });
 
-    // Handle 401 Unauthorized - redirect to login
+    // Handle 401 Unauthorized - redirect to login（demo 不整页跳，见 handleUnauthorized）
     if (response.status === 401) {
-      setAuthToken(null);
-      localStorage.removeItem('auth_user');
-      window.location.href = getLoginPath();
-      throw new Error('会话已过期，请重新登录');
+      handleUnauthorized();
     }
 
     if (!response.ok) {
@@ -712,6 +706,12 @@ export const dashboardApi = {
   getDailyPersonalTriggers: (date: string, botId: string = 'all') =>
     api.get<any[]>(`/api/dashboard/daily/personal-triggers?date=${date}&bot_id=${botId}`),
 
+  /** 近 N 天每日命令总数（日历选择器；count==0 应禁用） */
+  getDailyCommandCounts: (days: number = 60, botId: string = 'all') =>
+    api.get<Array<{ date: string; count: number }>>(
+      `/api/dashboard/daily/command-counts?days=${days}&bot_id=${encodeURIComponent(botId)}`,
+    ),
+
   getBots: () =>
     api.get<BotItem[]>('/api/dashboard/bots'),
 };
@@ -737,6 +737,60 @@ export const configApi = {
 
   getCoreConfigOptions: () =>
     api.get<Record<string, CoreConfigOptionMeta>>('/api/core/config/options'),
+};
+
+// ===================
+// Live Chat（控制台实时聊天状态，持久化到 core data 目录）
+// ===================
+
+export interface LiveChatIdentityDto {
+  userId: string;
+  nickname: string;
+  avatar: string;
+  botSelfId: string;
+}
+
+export interface LiveChatConversationDto {
+  id: string;
+  type: 'group' | 'direct' | string;
+  targetId: string;
+  name: string;
+  messages: unknown[];
+  updatedAt: number;
+  lastPreview?: string | null;
+}
+
+export interface LiveChatStateDto {
+  identity: LiveChatIdentityDto;
+  conversations: LiveChatConversationDto[];
+  activeId?: string | null;
+}
+
+export interface LiveChatBootstrapDto {
+  masters: string[];
+}
+
+export const liveChatApi = {
+  /** masters 列表；不含 WS_TOKEN。WS 用登录会话 token。 */
+  getBootstrap: () => api.get<LiveChatBootstrapDto>('/api/live-chat/bootstrap'),
+  /** 组装完整状态（identity + index + 各会话文件） */
+  getState: () => api.get<LiveChatStateDto>('/api/live-chat/state'),
+  /** 整包拆分写入多文件 */
+  putState: (state: LiveChatStateDto) =>
+    api.put<LiveChatStateDto>('/api/live-chat/state', state),
+  putIdentity: (identity: LiveChatIdentityDto) =>
+    api.put<LiveChatIdentityDto>('/api/live-chat/identity', identity),
+  putIndex: (index: {
+    activeId?: string | null;
+    conversations: Array<Omit<LiveChatConversationDto, 'messages'>>;
+  }) => api.put('/api/live-chat/index', index),
+  putConversation: (conv: LiveChatConversationDto) =>
+    api.put<LiveChatConversationDto>(
+      `/api/live-chat/conversations/${encodeURIComponent(conv.id)}`,
+      conv,
+    ),
+  deleteConversation: (id: string) =>
+    api.delete(`/api/live-chat/conversations/${encodeURIComponent(id)}`),
 };
 
 // ===================
@@ -816,10 +870,22 @@ export const pluginsApi = {
   updateSvConfig: (pluginName: string, svName: string, config: Record<string, unknown>) =>
     api.post<{ status: number; msg: string }>(`/api/plugins/${pluginName}/sv/${svName}`, config),
 
-  // 重新加载插件
+  /**
+   * 重新加载插件。
+   * 必须用 postRaw：接口响应是 `{status, msg, data?}`，业务成败看顶层 status/msg。
+   * 若走 api.post 会只返回 data；旧后端无 data 时为 undefined，页面再读 `.status` 会 TypeError。
+   */
   reloadPlugin: (pluginName: string) =>
-    api.post<{ status: number; msg: string }>(`/api/plugins/${pluginName}/reload`),
+    api.postRaw<{ plugin_name?: string; ok?: boolean }>(
+      `/api/plugins/${encodeURIComponent(pluginName)}/reload`,
+    ),
 };
+
+/**
+ * 无独立插件 ICON 目录、应复用 hub 项目 LOGO（public/ICON.png）的插件名。
+ * 与 getBrandIconUrl / DEMO_BRAND_ICON 同源资源：`${BASE_URL}ICON.png`。
+ */
+const PROJECT_LOGO_PLUGIN_NAMES = new Set(['core_command']);
 
 /**
  * 构建插件 ICON 图片 URL
@@ -828,6 +894,10 @@ export const pluginsApi = {
  * @returns 图标 URL，可直接用于 <img src>
  */
 export function getPluginIconUrl(pluginName: string): string {
+  // 核心命令等框架内置插件：无 plugins/<name>/ICON.png，直接用前端 public/ICON.png
+  if (PROJECT_LOGO_PLUGIN_NAMES.has(pluginName.trim().toLowerCase())) {
+    return `${import.meta.env.BASE_URL}ICON.png`;
+  }
   // Demo：插件图标接口 <img> 拦不到，返回内置「字母图标」占位（彩色，避免按钮组/列表发素）。
   if (import.meta.env.VITE_DEMO) return demoPluginIcon(pluginName);
   const token = getAuthToken();
@@ -871,7 +941,7 @@ export const frameworkConfigApi = {
   getFrameworkConfig: (configName: string) =>
     api.get<FrameworkConfigDetail>(`/api/framework-config/${configName}`),
 
-  // 兼容旧接�?- 获取所有框架配�?
+  // 兼容旧接口 - 获取所有框架配置
   getFrameworkConfigs: () =>
     api.get<FrameworkConfig[]>('/api/framework-config'),
 
@@ -909,9 +979,18 @@ export interface OpenAIConfigOptions {
    */
   request_method: string[];
   /**
+   * 远端 Web Search（off / on）。仅 OpenAI 系列支持。
+   */
+  remote_web_search?: string[];
+  /**
    * 思考回传候选值（auto / off）。仅 OpenAI 系列支持。
    */
   send_back_thinking?: string[];
+  /**
+   * 终端用户标识透传候选值（off / hashed / raw）。仅 OpenAI 系列支持
+   * （`user` 是 OpenAI 协议字段，Anthropic / Gemini 无对等标准字段）。
+   */
+  forward_end_user_id?: string[];
 }
 
 export interface OpenAIConfigData {
@@ -938,11 +1017,28 @@ export interface OpenAIConfigData {
    */
   request_method?: string;
   /**
+   * 远端 Web Search。**仅 OpenAI 系列才有此字段**：
+   * `on`（默认；Responses 时用上游内置 web_search）/
+   * `off`。Chat Completions 无视本开关，永远走本地 web_search_tool。
+   */
+  remote_web_search?: string;
+  /**
    * 思考回传。**仅 OpenAI 系列才有此字段**：
    * `auto`（pydantic_ai 默认，历史思考以 <think> 标签/厂商字段回发）/
    * `off`（完全不回传思考内容，网关兼容性最好）。
    */
   send_back_thinking?: string;
+  /**
+   * 终端用户标识透传。**仅 OpenAI 系列才有此字段**：
+   * `off`（不携带，默认）/ `hashed`（携带加盐摘要）/ `raw`（携带原始标识）。
+   * 携带的是 OpenAI 协议标准的 `user` 字段，供上游网关按调用方聚合用量与日志。
+   */
+  forward_end_user_id?: string;
+  /**
+   * `hashed` 模式计算摘要用的盐值。**仅 OpenAI 系列才有此字段**，后端标记为
+   * secret；留空即无密钥摘要（标识空间小时可被枚举反查，只起混淆作用）。
+   */
+  end_user_id_salt?: string;
 }
 
 export interface OpenAIConfigDetail {
@@ -1069,8 +1165,12 @@ export interface ProviderConfigOptions {
     usage_stats_mode: string[];
     /** 请求方式候选值（chat_completions / responses）。仅 OpenAI 系列会返回。 */
     request_method: string[];
+    /** 远端 Web Search（off / on）。仅 OpenAI 系列会返回。 */
+    remote_web_search?: string[];
     /** 思考回传候选值（auto / off）。仅 OpenAI 系列会返回。 */
     send_back_thinking?: string[];
+    /** 终端用户标识透传候选值（off / hashed / raw）。仅 OpenAI 系列会返回。 */
+    forward_end_user_id?: string[];
   };
 }
 
@@ -1722,12 +1822,9 @@ export const authApi = {
       credentials: 'include',
     });
 
-    // Handle 401 Unauthorized - redirect to login
+    // Handle 401 Unauthorized - redirect to login（demo 不整页跳，见 handleUnauthorized）
     if (response.status === 401) {
-      setAuthToken(null);
-      localStorage.removeItem('auth_user');
-      window.location.href = getLoginPath();
-      throw new Error('会话已过期，请重新登录');
+      handleUnauthorized();
     }
 
     const data: ApiResponse<{ avatar: string }> = await response.json();
@@ -2019,7 +2116,7 @@ export interface PersonaFrameworkConfig {
 }
 
 // 角色配置相关类型
-export type PersonaScope = 'disabled' | 'global' | 'specific';
+export type PersonaScope = 'disabled' | 'global' | 'specific' | 'global_group' | 'global_private';
 export type AIMode = '提及应答' | '定时巡检' | '趣向捕捉(暂不可用)' | '困境救场(暂不可用)';
 
 export interface PersonaConfig {
@@ -2067,6 +2164,20 @@ export interface GlobalPersonaResponse {
 }
 
 export const personaApi = {
+  /** Heartbeat 巡检运行态（每 persona job 是否注册） */
+  getHeartbeatStatus: () =>
+    api.get<{
+      inspector_running: boolean;
+      items: Array<{
+        persona_name: string;
+        enabled: boolean;
+        inspect_interval: number | null;
+        job_registered: boolean;
+        job_id: string | null;
+      }>;
+      count: number;
+    }>('/api/persona/heartbeat/status'),
+
   // 获取角色列表
   getPersonaList: () =>
     api.get<PersonaListItem[]>('/api/persona/list'),
@@ -2235,11 +2346,12 @@ export const aiSkillsApi = {
   deleteSkill: (skillName: string) =>
     api.delete<{ msg: string }>(`/api/ai/skills/${encodeURIComponent(skillName)}`),
 
-  // �?Git 克隆 AI 技�?
-  cloneSkill: (gitUrl: string, skillName?: string) =>
+  // 从 Git / 直链安装技能；update=true 时覆盖同名技能
+  cloneSkill: (gitUrl: string, skillName?: string, update = false) =>
     api.post<AISkillCloneResponse>('/api/ai/skills/clone', {
       git_url: gitUrl,
       skill_name: skillName,
+      update,
     }),
 
   // 获取 AI 技�?Markdown 内容
@@ -2269,6 +2381,20 @@ export interface AIToolCategoriesResponse {
   data: Array<{ name: string; count: number }>;
 }
 
+export interface AIToolAssemblePreviewResponse {
+  query: string;
+  seeds: Array<{ name: string; plugin: string }>;
+  pool: Array<{ name: string; plugin: string }>;
+  core_pool_size: number;
+  recall: number;
+  max_extra: number;
+}
+
+export interface AIEntityIndexResponse {
+  count: number;
+  entries: Array<{ surface: string; plugins: string[]; ambiguous: boolean }>;
+}
+
 export const aiToolsApi = {
   // 获取 AI 工具列表
   getToolsList: (params?: { category?: string; plugin?: string }) => {
@@ -2286,6 +2412,14 @@ export const aiToolsApi = {
   // 获取指定工具详情
   getToolDetail: (toolName: string) =>
     api.get<AITool | null>(`/api/ai/tools/${encodeURIComponent(toolName)}`),
+
+  /** 预览 query 会装配出哪些工具（需鉴权） */
+  assemblePreview: (query: string) =>
+    api.post<AIToolAssemblePreviewResponse>('/api/ai/tools/assemble_preview', { query }),
+
+  /** 导出实体身份索引（L0 路由） */
+  getEntityIndex: () =>
+    api.get<AIEntityIndexResponse>('/api/ai/entity_index'),
 };
 
 // ===================
@@ -2307,6 +2441,8 @@ export interface AgentNodeItem {
   tool_query: string;
   boundary_override: string;
   source: AgentNodeSource;
+  /** 插件来源节点所属插件名；builtin/user/persona 通常为空 */
+  plugin?: string | null;
   version: number;
 }
 
@@ -2583,6 +2719,17 @@ export const aiKnowledgeApi = {
   // 导入恢复（从备份 records 或 jsonl）
   importBackup: (data: { records?: AIKnowledgeBackupRecord[]; jsonl?: string }) =>
     api.post<AIKnowledgeBackupResponse>('/api/ai/knowledge/backup/import', data),
+
+  // 深度对账（运维用，把 SQL 真值源与向量存储对账）
+  reconcile: () =>
+    api.post<{
+      total: number;
+      matched: number;
+      missing_in_vector: number;
+      missing_in_sql: number;
+      re_embedded: number;
+      details?: unknown[];
+    }>('/api/ai/knowledge/reconcile', {}),
 };
 
 // ===================
@@ -2648,10 +2795,7 @@ export const aiImageApi = {
     });
 
     if (response.status === 401) {
-      setAuthToken(null);
-      localStorage.removeItem('auth_user');
-      window.location.href = getLoginPath();
-      throw new Error('会话已过期，请重新登录');
+      handleUnauthorized();
     }
 
     const data: ApiResponse<AIImageUploadResponse> = await response.json();
@@ -2692,10 +2836,7 @@ export const aiImageApi = {
     });
 
     if (response.status === 401) {
-      setAuthToken(null);
-      localStorage.removeItem('auth_user');
-      window.location.href = getLoginPath();
-      throw new Error('会话已过期，请重新登录');
+      handleUnauthorized();
     }
 
     const result: ApiResponse<{ id: string; path: string; tags: string[] }> = await response.json();
@@ -3066,18 +3207,20 @@ export interface MCPToolFromServer {
   parameters?: Record<string, MCPToolParameter>;
 }
 
+export type MCPTransport = 'stdio' | 'sse' | 'streamable_http';
+
 export interface MCPConfig {
   config_id: string;
   name: string;
-  transport?: 'stdio' | 'sse';
-  command: string;
-  args: string[];
-  env: Record<string, string>;
+  transport?: MCPTransport | string;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
   url?: string;
   headers?: Record<string, string>;
   enabled: boolean;
   register_as_ai_tools: boolean;
-  tools: MCPToolDefinition[];
+  tools?: MCPToolDefinition[];
   tool_permissions?: Record<string, number>;
 }
 
@@ -3088,7 +3231,7 @@ export interface MCPConfigListResponse {
 
 export interface MCPConfigCreateData {
   name: string;
-  transport?: 'stdio' | 'sse';
+  transport?: MCPTransport;
   command?: string;
   args?: string[];
   env?: Record<string, string>;
@@ -3102,7 +3245,7 @@ export interface MCPConfigCreateData {
 
 export interface MCPConfigUpdateData {
   name?: string;
-  transport?: 'stdio' | 'sse';
+  transport?: MCPTransport;
   command?: string;
   args?: string[];
   env?: Record<string, string>;
@@ -3140,7 +3283,7 @@ export interface MCPImportResponse {
 export interface MCPPreset {
   name: string;
   description?: string;
-  transport?: 'stdio' | 'sse';
+  transport?: MCPTransport | string;
   command?: string;
   args?: string[];
   env?: Record<string, string>;
@@ -3217,7 +3360,7 @@ export const mcpConfigApi = {
   // 从临时配置发现工具（不保存）
   discoverToolsFromConfig: (data: {
     name: string;
-    transport?: 'stdio' | 'sse';
+    transport?: MCPTransport;
     command?: string;
     args?: string[];
     env?: Record<string, string>;
@@ -3322,13 +3465,14 @@ export const gitUpdateApi = {
   checkout: (pluginName: string, commitHash: string) =>
     api.post<GitCheckoutResponse>(`/api/git-update/checkout/${encodeURIComponent(pluginName)}`, { commit_hash: commitHash }),
 
-  // 普通更新（git fetch + git pull�?
+  // 普通更新（git fetch + git pull）
+  // 注意：api.post 已解包信封，返回的是内层 data（GitForceUpdateResponse），不是 {status,msg,data}
   update: (pluginName: string) =>
-    api.post<ApiResponse<GitForceUpdateResponse>>(`/api/git-update/update/${encodeURIComponent(pluginName)}`),
+    api.post<GitForceUpdateResponse>(`/api/git-update/update/${encodeURIComponent(pluginName)}`),
 
-  // 强制更新（git reset --hard + git pull�?
+  // 强制更新（git reset --hard + git pull）
   forceUpdate: (pluginName: string) =>
-    api.post<ApiResponse<GitForceUpdateResponse>>(`/api/git-update/force-update/${encodeURIComponent(pluginName)}`),
+    api.post<GitForceUpdateResponse>(`/api/git-update/force-update/${encodeURIComponent(pluginName)}`),
 
   // 更新全部插件
   updateAll: () =>
@@ -3548,10 +3692,7 @@ export const memeApi = {
     });
 
     if (response.status === 401) {
-      setAuthToken(null);
-      localStorage.removeItem('auth_user');
-      window.location.href = getLoginPath();
-      throw new Error('会话已过期，请重新登录');
+      handleUnauthorized();
     }
 
     if (!response.ok) {
@@ -3639,10 +3780,7 @@ export const memeApi = {
     });
 
     if (response.status === 401) {
-      setAuthToken(null);
-      localStorage.removeItem('auth_user');
-      window.location.href = getLoginPath();
-      throw new Error('会话已过期，请重新登录');
+      handleUnauthorized();
     }
 
     if (!response.ok) {
@@ -3665,7 +3803,20 @@ export const memeApi = {
     return data.data;
   },
 
-  // 清除所有已拒绝的表情包
+  // 按条件批量清空：全库须 purge_all=true；条件清空须 status/folder/persona_hint 之一
+  purge: (params: {
+    confirm: true;
+    purge_all?: boolean;
+    status?: string;
+    folder?: string;
+    persona_hint?: string;
+  }) =>
+    api.post<{ purged_count: number; failed: Array<{ meme_id: string; reason: string }> }>(
+      '/api/meme/purge',
+      params
+    ),
+
+  // 清除所有已拒绝的表情包（兼容旧接口）
   purgeRejected: () =>
     api.post<{ purged_count: number; failed: Array<{ meme_id: string; reason: string }> }>(
       '/api/meme/purge_rejected',
@@ -3917,6 +4068,26 @@ export interface AgentDebugMemoryConflict {
   created_at: string | null;
 }
 
+export interface AgentDebugTaskListItem {
+  id: string;
+  ordinal: number;
+  node_kind: string;
+  root_task_id: string;
+  display_name: string;
+  goal: string;
+  status: string;
+  owner_user_id: string | null;
+  agent_profile: string;
+  updated_at: string | null;
+}
+
+export interface AgentDebugTaskDetail {
+  task: Record<string, unknown>;
+  root: Record<string, unknown> | null;
+  subtasks: Array<Record<string, unknown>>;
+  logs: Array<{ event_type: string; content: string; timestamp: string | null }>;
+}
+
 export const agentDebugApi = {
   getMemoryEdges: (params: { scope_key: string; include_invalid?: boolean; limit?: number }) => {
     const query = new URLSearchParams();
@@ -3936,6 +4107,31 @@ export const agentDebugApi = {
     return api.get<AgentDebugMemoryConflict[]>(`/api/agent_debug/memory/conflicts?${query.toString()}`);
   },
 
+  // ── Orchestration Board ──
+  listTasks: (params: { status?: string; limit?: number } = {}) => {
+    const query = new URLSearchParams();
+    if (params.status) query.set('status', params.status);
+    if (params.limit !== undefined) query.set('limit', String(params.limit));
+    const qs = query.toString();
+    return api.get<AgentDebugTaskListItem[]>(`/api/agent_debug/tasks${qs ? `?${qs}` : ''}`);
+  },
+
+  getTask: (taskId: string) =>
+    api.get<AgentDebugTaskDetail>(
+      `/api/agent_debug/tasks/${encodeURIComponent(taskId)}`,
+    ),
+
+  abortTask: (taskId: string) =>
+    api.post<{ task_id: string }>(
+      `/api/agent_debug/tasks/${encodeURIComponent(taskId)}/abort`,
+    ),
+
+  // ── Persona Evolution Inspector ──
+  getSelfModel: (botId = 'default') =>
+    api.get<Record<string, unknown>>(`/api/agent_debug/self_model?bot_id=${encodeURIComponent(botId)}`),
+
+  setSelfModel: (data: { bot_id?: string; field: string; items: string[] }) =>
+    api.post<{ field: string; count: number }>(`/api/agent_debug/self_model`, data),
 };
 
 // ===================
@@ -4094,7 +4290,10 @@ export interface AIArtifactListResponse {
 }
 
 export interface AIArtifactDetail extends AIArtifactItem {
-  payload_preview: string;
+  payload_preview: string | null;
+  /** text | image — 图片勿当文本预览 */
+  payload_kind?: 'text' | 'image' | string;
+  raw_url?: string | null;
 }
 
 export interface AIWorkspaceFile {
@@ -4222,20 +4421,391 @@ export const aiKanbanApi = {
     api.downloadBlob(`/api/ai/artifacts/${encodeURIComponent(resId)}/raw`),
 
   getWorkspaceFiles: (taskId: string) =>
-    api.get<AIWorkspaceFilesResponse>(`/api/ai/kanban/tasks/${encodeURIComponent(taskId)}/workspace/files`),
+    api.get<AIWorkspaceFilesResponse>(
+      `/api/ai/kanban/tasks/${encodeURIComponent(taskId)}/workspace/files`,
+    ),
 
   downloadWorkspaceFile: (taskId: string, path: string) =>
-    api.downloadBlob(`/api/ai/kanban/tasks/${encodeURIComponent(taskId)}/workspace/files/raw?path=${encodeURIComponent(path)}`),
+    api.downloadBlob(
+      `/api/ai/kanban/tasks/${encodeURIComponent(taskId)}/workspace/files/raw?path=${encodeURIComponent(path)}`,
+    ),
 
   importWorkspaceFile: (taskId: string, file: File, subPath?: string) => {
     const formData = new FormData();
     formData.append('upload', file);
     const query = subPath ? `?sub_path=${encodeURIComponent(subPath)}` : '';
-    return api.postFormData<{ task_id: string; path: string; size_bytes: number; artifact_ids: string[] }>(`/api/ai/kanban/tasks/${encodeURIComponent(taskId)}/workspace/import${query}`, formData);
+    return api.postFormData<{
+      task_id: string;
+      path: string;
+      size_bytes: number;
+      artifact_ids: string[];
+    }>(
+      `/api/ai/kanban/tasks/${encodeURIComponent(taskId)}/workspace/import${query}`,
+      formData,
+    );
   },
 
   submitPatch: (taskId: string, data: { patch_text: string; summary: string; mime?: string }) =>
-    api.post<{ artifact_id: string; warning: string }>(`/api/ai/kanban/tasks/${encodeURIComponent(taskId)}/workspace/apply-patch`, data),
+    api.post<{ artifact_id: string; warning: string }>(
+      `/api/ai/kanban/tasks/${encodeURIComponent(taskId)}/workspace/apply-patch`,
+      data,
+    ),
+};
+
+/** FileOS 工具落盘（/ai-tool-outputs）：SQL 真身 + 可选磁盘 + Qdrant 索引。 */
+export interface AIToolOutputItem {
+  id: string;
+  tool_name: string;
+  profile: string;
+  summary: string;
+  owner_user_id: string;
+  scope_key: string;
+  session_id: string;
+  task_id: string;
+  root_task_id: string;
+  date_str: string;
+  res_handle: string;
+  size_bytes: number;
+  has_inline: boolean;
+  has_payload_path: boolean;
+  payload_path: string;
+  content_hash: string;
+  created_at: string | null;
+  expires_at: string | null;
+}
+
+export interface AIToolOutputListResponse {
+  items: AIToolOutputItem[];
+  count: number;
+  total: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
+}
+
+export interface AIToolOutputDetail extends AIToolOutputItem {
+  payload_preview: string | null;
+  payload_truncated: boolean;
+  payload_full_chars: number;
+}
+
+export const aiToolOutputsApi = {
+  list: (opts?: {
+    tool_name?: string;
+    owner_user_id?: string;
+    scope_key?: string;
+    session_id?: string;
+    keyword?: string;
+    include_expired?: boolean;
+    limit?: number;
+    offset?: number;
+  }) => {
+    const query = new URLSearchParams();
+    if (opts?.tool_name) query.set('tool_name', opts.tool_name);
+    if (opts?.owner_user_id) query.set('owner_user_id', opts.owner_user_id);
+    if (opts?.scope_key) query.set('scope_key', opts.scope_key);
+    if (opts?.session_id) query.set('session_id', opts.session_id);
+    if (opts?.keyword) query.set('keyword', opts.keyword);
+    if (opts?.include_expired) query.set('include_expired', 'true');
+    if (opts?.limit !== undefined) query.set('limit', String(opts.limit));
+    if (opts?.offset !== undefined) query.set('offset', String(opts.offset));
+    const qs = query.toString();
+    return api.get<AIToolOutputListResponse>(
+      `/api/ai/tool-outputs${qs ? `?${qs}` : ''}`,
+    );
+  },
+  toolNames: () =>
+    api.get<{ tool_names: string[] }>('/api/ai/tool-outputs/meta/tool-names'),
+  getDetail: (id: string, previewChars = 12000) =>
+    api.get<AIToolOutputDetail>(
+      `/api/ai/tool-outputs/${encodeURIComponent(id)}?preview_chars=${previewChars}`,
+    ),
+  delete: (id: string) =>
+    api.delete<{ id: string; deleted: number }>(
+      `/api/ai/tool-outputs/${encodeURIComponent(id)}`,
+    ),
+  batchDelete: (ids: string[]) =>
+    api.post<{ deleted: number; ids: string[] }>(
+      '/api/ai/tool-outputs/batch-delete',
+      { ids },
+    ),
+  downloadRaw: (id: string) =>
+    api.downloadBlob(`/api/ai/tool-outputs/${encodeURIComponent(id)}/raw`),
+};
+
+/**
+ * AI Artifacts 全局浏览（/ai-artifacts 页面专用）。
+ * 后端 `artifacts_api.list_artifacts`：
+ * - 不传 `root_task_id` / `task_id` 时按 `created_at desc` 全量浏览（最新 N 条）
+ * - 支持 `?limit=` 与 `?include_expired=` 参数
+ *
+ * `scope='all'` 用于显式告诉后端走「全局浏览」分支，否则后端会返回
+ * status=1 的 require_filter 错误。传空 rootTaskId + scope='all' 即
+ * 「按时间倒序拉最近 N 条」的语义，与后端契约对齐。
+ */
+export const aiArtifactsApi = {
+  listByRoot: (
+    rootTaskId: string,
+    opts?: { includeExpired?: boolean; limit?: number; scope?: string },
+  ) => {
+    const query = new URLSearchParams();
+    if (rootTaskId) query.set('root_task_id', rootTaskId);
+    if (opts?.scope) query.set('scope', opts.scope);
+    if (opts?.includeExpired) query.set('include_expired', 'true');
+    if (opts?.limit !== undefined) query.set('limit', String(opts.limit));
+    const qs = query.toString();
+    return api.get<AIArtifactListResponse>(
+      `/api/ai/artifacts${qs ? `?${qs}` : ''}`,
+    );
+  },
+  listByTask: (taskId: string, opts?: { includeExpired?: boolean; limit?: number }) => {
+    const query = new URLSearchParams();
+    query.set('task_id', taskId);
+    if (opts?.includeExpired) query.set('include_expired', 'true');
+    if (opts?.limit !== undefined) query.set('limit', String(opts.limit));
+    return api.get<AIArtifactListResponse>(
+      `/api/ai/artifacts?${query.toString()}`,
+    );
+  },
+  getDetail: (resId: string) =>
+    api.get<AIArtifactDetail>(`/api/ai/artifacts/${encodeURIComponent(resId)}`),
+  delete: (resId: string) =>
+    api.delete<{ res_id: string }>(`/api/ai/artifacts/${encodeURIComponent(resId)}`),
+  extendTtl: (resId: string, days = 30) =>
+    api.post<{ res_id: string; expires_at: string }>(
+      `/api/ai/artifacts/${encodeURIComponent(resId)}/extend-ttl?days=${days}`,
+    ),
+  downloadRaw: (resId: string) =>
+    api.downloadBlob(`/api/ai/artifacts/${encodeURIComponent(resId)}/raw`),
+};
+
+/**
+ * Batch Push（/batch-push 页面专用）。
+ * 后端 `/api/BatchPush` 走 `push_text` / `push_tag` / `push_bot` / `push_bot_self_id`；
+ * 前端需要先拉一批可选的 bot / bot_self_id / group / user —— 见 `/api/BatchPush/targets`。
+ *
+ * 精准推送四维：
+ * - `push_bot`：WS 连接（gss.active_bot key）；空 = 全部 active
+ * - tag 中的平台 `bot_id`：如 onebot / telegram
+ * - `push_bot_self_id`（或 tag 第三段）：机器人账号 ID
+ * - tag 中的 g:/u:/ALL*：发送对象
+ *
+ * targets 端点从 v2026-07 起分页 + 筛选；v2026-08 起额外返回 `bot_self_ids`：
+ * - 支持 `bot_id`（**平台** id，非 WS key）/ `bot_self_id` / `kind`（all|group|user） / `q`
+ * - 宏（ALLGROUP/ALLUSER）只在第一页 + 未指定 bot_id 时返回一次
+ * - 返回：`{ bots, bot_self_ids, items, total, limit, offset, has_more }`
+ * - 注意：`bots[].bot_id` 是 WS 连接 key，与 query `bot_id`（平台）不是同一维度
+ *
+ * push_tag 格式：
+ * - `ALLUSER` / `ALLGROUP`
+ * - `g:<id>|<bot_id>` / `u:<id>|<bot_id>`
+ * - `g:<id>|<bot_id>|<bot_self_id>` / `u:<id>|<bot_id>|<bot_self_id>`（单条覆盖 self_id）
+ */
+export interface BatchPushTargetItem {
+  kind: 'group' | 'user' | 'macro';
+  bot_id: string;
+  /** 目标表本身通常无 self_id；字段预留，宏/列表项可能为空串 */
+  bot_self_id?: string;
+  label: string;
+  value: string;
+}
+
+/** active WS 连接（用于 push_bot） */
+export interface BatchPushBotOption {
+  bot_id: string;
+  name: string;
+  ws_bot_id?: string;
+  connected?: boolean;
+}
+
+/**
+ * 已知机器人账号实例（平台 bot_id + bot_self_id）。
+ * `id` 形如 `bot_self_id:bot_id`，与 Dashboard 选择器一致。
+ */
+export interface BatchPushBotSelfOption {
+  id: string;
+  bot_id: string;
+  bot_self_id: string;
+  label: string;
+}
+
+export interface BatchPushTargetsResponse {
+  bots: BatchPushBotOption[];
+  /** 后端 v2026-08+；旧后端可能缺省 */
+  bot_self_ids?: BatchPushBotSelfOption[];
+  items: BatchPushTargetItem[];
+  total: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
+}
+
+export const batchPushApi = {
+  // 可选的推送目标（分页 + 筛选）。未传参数时等价于第一页全集。
+  getTargets: (opts?: {
+    /** 平台 bot_id（onebot/telegram/…），不是 WS 连接 key */
+    bot_id?: string;
+    bot_self_id?: string;
+    kind?: 'all' | 'group' | 'user';
+    q?: string;
+    limit?: number;
+    offset?: number;
+  }) => {
+    const query = new URLSearchParams();
+    if (opts?.bot_id) query.set('bot_id', opts.bot_id);
+    if (opts?.bot_self_id) query.set('bot_self_id', opts.bot_self_id);
+    if (opts?.kind && opts.kind !== 'all') query.set('kind', opts.kind);
+    if (opts?.q) query.set('q', opts.q);
+    if (opts?.limit !== undefined) query.set('limit', String(opts.limit));
+    if (opts?.offset !== undefined) query.set('offset', String(opts.offset));
+    const qs = query.toString();
+    return api.get<BatchPushTargetsResponse>(
+      `/api/BatchPush/targets${qs ? `?${qs}` : ''}`,
+    );
+  },
+
+  // 实际推送
+  push: (data: {
+    push_text: string;
+    push_tag: string;
+    push_bot: string;
+    /** 可选；精准指定机器人账号（bot_self_id），逗号分隔多值 */
+    push_bot_self_id?: string;
+  }) => api.postRaw<string>('/api/BatchPush', data),
+};
+
+/**
+ * Brand 设置（/brand-settings 页面专用）。
+ * 复用 brandApi 中的 updateBrand / uploadIcon / deleteIcon；
+ * 当前额外暴露一个 reset to default 便捷方法（仅前端 setState 用）。
+ */
+export const brandSettingsApi = {
+  get: () => brandApi.getBrand(),
+  update: (data: { title?: string; subtitle?: string }) => brandApi.updateBrand(data),
+  uploadIcon: (file: File) => brandApi.uploadIcon(file),
+  deleteIcon: () => brandApi.deleteIcon(),
+};
+
+/**
+ * 记忆子系统 API（2026-07-20 补全，导出后多个页面共用）。
+ *
+ * 历史：原本这是 AIMemoryPage 内私有 const，现在提到 api.ts 让
+ * /ai-debug / 记忆设置 Dialog 等都能复用。
+ */
+export interface MemorySearchRequest {
+  query: string;
+  group_id: string;
+  user_id?: string | null;
+  top_k?: number;
+  enable_system2?: boolean;
+  enable_user_global?: boolean;
+}
+
+export interface MemorySearchResultItem {
+  id?: string;
+  content?: string;
+  name?: string;
+  summary?: string;
+  fact?: string;
+  score?: number;
+  valid_at?: string;
+  [key: string]: unknown;
+}
+
+export interface MemorySearchResponse {
+  episodes: MemorySearchResultItem[];
+  entities: MemorySearchResultItem[];
+  edges: MemorySearchResultItem[];
+  preferences?: MemorySearchResultItem[];
+  retrieval_meta?: Record<string, unknown>;
+}
+
+export const memoryApi = {
+  getStats: (params?: { group_id?: string; scope_key?: string }) => {
+    const query = new URLSearchParams();
+    if (params?.group_id) query.set('group_id', params.group_id);
+    if (params?.scope_key) query.set('scope_key', params.scope_key);
+    const qs = query.toString();
+    return api.get(`/api/ai/memory/stats${qs ? `?${qs}` : ''}`);
+  },
+  getScopes: () => api.get('/api/ai/memory/scopes'),
+  getConfig: () => api.get<Record<string, unknown>>('/api/ai/memory/config'),
+  updateConfig: (data: Record<string, unknown>) =>
+    api.put<Record<string, unknown>>('/api/ai/memory/config', data),
+  getHierGraphStatus: (scopeKey?: string) =>
+    scopeKey
+      ? api.get(`/api/ai/memory/hiergraph/status?scope_key=${encodeURIComponent(scopeKey)}`)
+      : api.get('/api/ai/memory/hiergraph/status'),
+  rebuildHierGraph: (scopeKey?: string) =>
+    api.post(
+      '/api/ai/memory/hiergraph/rebuild',
+      scopeKey ? { scope_key: scopeKey } : {},
+    ),
+  /** 双路检索试跑 */
+  search: (body: MemorySearchRequest) =>
+    api.post<MemorySearchResponse>('/api/ai/memory/search', body),
+};
+
+/**
+ * 记忆子系统设置 facade（/ai-memory 页面「记忆设置」弹窗专用）。
+ * hiergraph 相关方法复用 memoryApi，避免重复实现。
+ */
+export const memorySettingsApi = {
+  getConfig: () => memoryApi.getConfig(),
+  updateConfig: (data: Record<string, unknown>) => memoryApi.updateConfig(data),
+  getHierGraphStatus: (scopeKey?: string) => memoryApi.getHierGraphStatus(scopeKey),
+  rebuildHierGraph: (scopeKey?: string) => memoryApi.rebuildHierGraph(scopeKey),
+};
+
+/**
+ * 日志控制台配置。
+ *
+ * 与 `webconsole/logs_api.py` GET/PUT `/api/logs/config` 对齐：后端只持久化
+ * `visible_levels`（`GET /api/logs/levels` 的真实 value，不含 UI 标志 `all`）。
+ * `/logs` 配置弹窗与 `/console` 级别筛选共用这份偏好。
+ */
+export const LOG_LEVEL_VALUES = [
+  'trace',
+  'debug',
+  'info',
+  'success',
+  'warning',
+  'error',
+  'critical',
+] as const;
+
+export type LogLevelValue = (typeof LOG_LEVEL_VALUES)[number];
+
+export interface LogsConfig {
+  visible_levels: string[];
+}
+
+export const DEFAULT_LOGS_CONFIG: LogsConfig = {
+  visible_levels: ['debug', 'info', 'warning', 'error'],
+};
+
+/** 与后端 `_sanitize_visible_levels` 一致：小写、去重、剔 `all` / 非法值，允许空数组。 */
+export function sanitizeVisibleLevels(values: unknown): string[] {
+  if (!Array.isArray(values)) return [];
+  const allowed = new Set<string>(LOG_LEVEL_VALUES);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of values) {
+    if (typeof raw !== 'string') continue;
+    const v = raw.trim().toLowerCase();
+    if (!v || v === 'all' || !allowed.has(v) || seen.has(v)) continue;
+    seen.add(v);
+    out.push(v);
+  }
+  return out;
+}
+
+export const logsConfigApi = {
+  get: () => api.get<LogsConfig>('/api/logs/config'),
+  update: (data: { visible_levels: string[] }) =>
+    api.put<LogsConfig>('/api/logs/config', {
+      visible_levels: sanitizeVisibleLevels(data.visible_levels),
+    }),
 };
 
 // ===================
@@ -4394,7 +4964,7 @@ export interface AIWizardPersonaScope {
   ai_mode: string[];
   inspect_interval: number | null;
   has_inspect: boolean;
-  scope: 'disabled' | 'global' | 'specific';
+  scope: 'disabled' | 'global' | 'specific' | 'global_group' | 'global_private';
   target_groups: string[];
   is_enabled: boolean;
   scope_desc: string;
@@ -4566,10 +5136,46 @@ export interface TokenRangeBucket {
 
 export interface TokenRangeDailyItem extends TokenRangeBucket {
   date: string; // YYYY-MM-DD
+  user_turn_count?: number;
+  agent_run_count?: number;
+  user_turn_agent_run_count?: number;
+  avg_tokens_per_user_turn?: number;
+  avg_tokens_per_agent_run?: number;
+  avg_agent_runs_per_user_turn?: number;
 }
 
 export interface TokenRangeByModelItem extends TokenRangeBucket {
   model: string;
+}
+
+/** User Turn / Agent Run 效率（省 Token 主指标） */
+export interface EfficiencyStatsData {
+  date?: string;
+  user_turn_count: number;
+  agent_run_count: number;
+  root_agent_run_count: number;
+  nested_agent_run_count: number;
+  user_turn_agent_run_count: number;
+  user_turn_input_tokens: number;
+  user_turn_output_tokens: number;
+  user_turn_cache_read_tokens: number;
+  user_turn_cache_write_tokens: number;
+  avg_tokens_per_user_turn: number;
+  avg_input_tokens_per_user_turn: number;
+  avg_output_tokens_per_user_turn: number;
+  avg_tokens_per_agent_run: number;
+  avg_input_tokens_per_agent_run: number;
+  avg_output_tokens_per_agent_run: number;
+  avg_agent_runs_per_user_turn: number;
+}
+
+export interface TokenRangeEfficiency {
+  user_turn_count: number;
+  agent_run_count: number;
+  user_turn_agent_run_count: number;
+  avg_tokens_per_user_turn: number;
+  avg_tokens_per_agent_run: number;
+  avg_agent_runs_per_user_turn: number;
 }
 
 export interface TokenRangeData {
@@ -4579,6 +5185,7 @@ export interface TokenRangeData {
   total: TokenRangeBucket;
   daily: TokenRangeDailyItem[];
   by_model: TokenRangeByModelItem[];
+  efficiency?: TokenRangeEfficiency;
 }
 
 export interface MemoryStatsData {
@@ -4608,6 +5215,7 @@ export interface StatisticsSummaryData {
   trigger_distribution: TriggerDistributionData;
   rag: RagStatsData;
   memory: MemoryStatsData;
+  efficiency?: EfficiencyStatsData;
   active_users: ActiveUserItem[];
 }
 
@@ -4625,6 +5233,17 @@ export const aiStatisticsApi = {
     const queryStr = query.toString();
     return api.get<TokenByModelItem[]>(`/api/ai/statistics/token-by-model${queryStr ? `?${queryStr}` : ''}`);
   },
+
+  /** 近 N 天每日 token（日历：展示 input_tokens 压缩文案，0 可禁用） */
+  getDailyTokenCounts: (days: number = 60) =>
+    api.get<
+      Array<{
+        date: string;
+        input_tokens: number;
+        output_tokens: number;
+        total_tokens: number;
+      }>
+    >(`/api/ai/statistics/daily-token-counts?days=${days}`),
 
   getActiveUsers: (date?: string, limit: number = 20) => {
     const query = new URLSearchParams();
@@ -4672,7 +5291,28 @@ export const aiStatisticsApi = {
     api.get<RagDocumentItem[]>('/api/ai/statistics/rag/documents'),
 
   getHistory: (days: number = 7) =>
-    api.get<Array<{ date: string }>>(`/api/ai/statistics/history?days=${days}`),
+    api.get<
+      Array<{
+        date: string;
+        data?: {
+          token_usage?: {
+            total_input_tokens?: number;
+            total_output_tokens?: number;
+            total_cache_read_tokens?: number;
+            total_cache_write_tokens?: number;
+          };
+          efficiency?: EfficiencyStatsData;
+          memory?: {
+            observations?: number;
+            ingestions?: number;
+            ingestion_errors?: number;
+            retrievals?: number;
+          };
+          errors?: { total?: number };
+          heartbeat?: { conversion_rate?: number };
+        };
+      }>
+    >(`/api/ai/statistics/history?days=${days}`),
 
   // 时间段 Token 消耗统计:[start_date, end_date] 闭区间逐日聚合
   // 默认 6 天前 ~ 今天(共 7 天);start_date > end_date 时后端自动交换。
@@ -4683,6 +5323,16 @@ export const aiStatisticsApi = {
     const queryStr = query.toString();
     return api.get<TokenRangeData>(
       `/api/ai/statistics/token-by-range${queryStr ? `?${queryStr}` : ''}`,
+    );
+  },
+
+  /** User Turn / Agent Run 效率（与 summary.efficiency 同源） */
+  getEfficiency: (date?: string) => {
+    const query = new URLSearchParams();
+    if (date) query.set('date', date);
+    const queryStr = query.toString();
+    return api.get<EfficiencyStatsData>(
+      `/api/ai/statistics/efficiency${queryStr ? `?${queryStr}` : ''}`,
     );
   },
 };
@@ -5040,10 +5690,7 @@ export const brandApi = {
     });
 
     if (response.status === 401) {
-      setAuthToken(null);
-      localStorage.removeItem('auth_user');
-      window.location.href = getLoginPath();
-      throw new Error('会话已过期，请重新登录');
+      handleUnauthorized();
     }
 
     const data: ApiResponse<BrandUploadResponse> = await response.json();
@@ -5080,3 +5727,367 @@ export const versionApi = {
     api.get<{ names: string[] }>('/api/version/bots/names'),
 };
 
+
+// ===================
+// Ops Diagnostics API - /api/ops/*
+// ===================
+
+export const opsApi = {
+  getBots: () =>
+    api.get<{
+      count: number;
+      connected_count: number;
+      items: Array<{
+        ws_bot_id: string;
+        bot_id: string;
+        bot_self_id?: string | null;
+        connected: boolean;
+        has_ws: boolean;
+      }>;
+      ts: number;
+    }>('/api/ops/bots'),
+
+  getSessions: () =>
+    api.get<{
+      count: number;
+      idle_threshold: number;
+      max_ai_history: number;
+      items: Array<{
+        session_id: string;
+        persona_name?: string | null;
+        create_by?: string | null;
+        history_length: number;
+        model_config_name?: string | null;
+        last_access?: number | null;
+        idle_seconds?: number | null;
+      }>;
+      ts: number;
+    }>('/api/ops/sessions'),
+
+  getFollowup: () =>
+    api.get<{
+      window_seconds: number;
+      max_total_seconds: number;
+      active_count: number;
+      items: Array<{
+        session_id: string;
+        user_id: string;
+        burst_start: number;
+        last_hard_ts: number;
+        age_since_hard: number;
+        age_since_burst: number;
+        remaining_window: number;
+        remaining_ceiling: number;
+        active: boolean;
+      }>;
+      ts: number;
+    }>('/api/ops/followup'),
+
+  getMultimodal: () =>
+    api.get<{
+      queue_size: number;
+      queue_max: number;
+      queue_utilization: number;
+      worker_running: boolean;
+      understand_concurrency: number;
+      rate_window_seconds: number;
+      rate_max_per_window: number;
+      tracked_scopes: number;
+      recent_url_scopes: number;
+      min_desc_len: number;
+      ts?: number;
+    }>('/api/ops/multimodal'),
+
+  getLifecycle: () =>
+    api.get<{ report: Record<string, unknown> | null; ts: number }>('/api/ops/lifecycle'),
+
+  runLifecycle: () =>
+    api.post<{ report: Record<string, unknown> | null; ts: number }>('/api/ops/lifecycle/run', {}),
+
+  classifyIntent: (text: string) =>
+    api.post<{ text?: string; intent?: string; conf?: number; reason?: string }>(
+      '/api/ops/intent',
+      { text },
+    ),
+
+  triggerReplay: (body: {
+    text: string;
+    user_id?: string;
+    group_id?: string | null;
+    bot_id?: string;
+    bot_self_id?: string;
+    is_tome?: boolean;
+    is_private?: boolean;
+    at_list?: string[];
+    persona_name?: string | null;
+  }) =>
+    api.post<{
+      outcome: string;
+      trigger_type?: string;
+      soft_triggered?: boolean;
+      persona_name?: string | null;
+      session_id?: string;
+      intent?: unknown;
+      steps: Array<{ step: string; pass: boolean; detail?: unknown }>;
+      reason?: string;
+    }>('/api/ops/trigger-replay', body),
+
+  outputPreview: (body: { text: string; user_text?: string; tier?: string }) =>
+    api.post<{
+      firewall_enabled: boolean;
+      ooc_hit: { category: string; matched: string[] } | null;
+      stages: Record<string, string>;
+      final: string;
+    }>('/api/ops/output-preview', body),
+
+  getToolTopology: (personaName?: string) => {
+    const q = personaName ? `?persona_name=${encodeURIComponent(personaName)}` : '';
+    return api.get<{
+      persona_name?: string | null;
+      tool_packs: string[];
+      tool_names: string[];
+      core_pool: Array<{ name: string; plugin?: string | null }>;
+      core_pool_size: number;
+      category_counts: Record<string, number>;
+      tool_search_recall?: number;
+      tool_extra_pool_max?: number;
+      tool_context_window?: number;
+      ts: number;
+    }>(`/api/ops/tool-topology${q}`);
+  },
+
+  exportSnapshot: () => api.get<Record<string, unknown>>('/api/ops/config-snapshot'),
+
+  importSnapshot: (body: {
+    snapshot: Record<string, unknown>;
+    apply_ai_config?: boolean;
+    apply_access?: boolean;
+    apply_security?: boolean;
+    apply_memory?: boolean;
+  }) =>
+    api.post<{ applied: string[]; skipped: string[]; applied_count: number }>(
+      '/api/ops/config-snapshot/import',
+      body,
+    ),
+
+  getAccess: () =>
+    api.get<{ black_list: string[]; white_list: string[] }>('/api/ops/access'),
+
+  setAccess: (body: { black_list?: string[]; white_list?: string[] }) =>
+    api.put<{ black_list: string[]; white_list: string[] }>('/api/ops/access', body),
+
+  getSecurityOutput: () => api.get<Record<string, unknown>>('/api/ops/security-output'),
+
+  setSecurityOutput: (values: Record<string, unknown>) =>
+    api.put<Record<string, unknown>>('/api/ops/security-output', { values }),
+
+  getPluginsDiagnostics: () =>
+    api.get<{
+      plugin_count: number;
+      module_cache_size: number;
+      active_bots: string[];
+      items: Array<{
+        name: string;
+        enabled: boolean;
+        sv_count: number;
+        has_config: boolean;
+        keys: string[];
+      }>;
+      ts: number;
+    }>('/api/ops/plugins-diagnostics'),
+};
+
+// ===================
+// Agent kits / relationship / cognition — /api/agent_kits/* /api/relationship/* /api/cognition/*
+// ===================
+
+export interface AgentKitCandidate {
+  kit_id: string;
+  display_name: string;
+  owns_tools: string[];
+}
+
+export interface AgentKitSlot {
+  name: string;
+  description: string;
+  default_kit_id: string;
+  exclusive: boolean;
+  sealed: boolean;
+  configured: string[];
+  occupants: string[];
+  healthy: boolean;
+  candidates: AgentKitCandidate[];
+}
+
+export interface AgentKitSlotsData {
+  slots: AgentKitSlot[];
+}
+
+export interface AgentHookPointInfo {
+  id: string;
+  name: string;
+  anchor: string;
+  capabilities: string[];
+  default_timeout_ms: number;
+  wired: boolean;
+  owners: string[];
+}
+
+export interface AgentKitHooksData {
+  enabled: boolean;
+  total_hooks: number;
+  points: AgentHookPointInfo[];
+}
+
+export interface RelationshipViewData {
+  user_id: string;
+  bot_id?: string;
+  scored: boolean;
+  score?: number;
+  zone: string;
+  zone_label: string;
+  line: string;
+  last_delta?: number;
+  last_reason?: string;
+  last_eval_at?: number;
+  daily_gain?: number;
+  daily_loss?: number;
+  daily_ymd?: string;
+  last_positive_interact_at?: number;
+  interaction_count?: number;
+}
+
+export interface CognitionAttachment {
+  id: number | null;
+  node_id: number;
+  slot: string;
+  title: string;
+  summary: string;
+  as_of: string;
+  source: string;
+  writable: boolean;
+  ref: string;
+  handle: string;
+}
+
+export interface CognitionNode {
+  id: number | null;
+  kind: string;
+  ref: string;
+  scope_key: string;
+  owner_user_id: string;
+  title: string;
+  summary: string;
+  as_of: string;
+  source: string;
+  handle: string;
+  canon?: string;
+  decay: number;
+  attachments?: CognitionAttachment[];
+}
+
+export interface CognitionNodesData {
+  nodes: CognitionNode[];
+}
+
+export interface CognitionRebuildMountData {
+  hubs: number;
+  attachments: number;
+  linked_env: number;
+  skipped_ambiguous: number;
+  skipped_unresolved: number;
+  last_error: string | null;
+}
+
+export interface CognitionArticlePreview {
+  handle: string;
+  source: string;
+  mime: string;
+  text: string;
+  truncated: boolean;
+  size_bytes: number;
+}
+
+/**
+ * 兼容标准封套 `{status:0,data}` 与旧版 `{status_code:200,data}`。
+ * 旧 gsuid_core 若尚未改封套，控制台仍能读到 data。
+ */
+function unwrapConsolePayload<T>(raw: ApiResponse<T> | Record<string, unknown>): T {
+  const rec = raw as unknown as Record<string, unknown>;
+  if ((raw as ApiResponse<T>).status === 0 && (raw as ApiResponse<T>).data !== undefined && (raw as ApiResponse<T>).data !== null) {
+    return (raw as ApiResponse<T>).data as T;
+  }
+  if (rec.status_code === 200 && rec.data !== undefined && rec.data !== null) {
+    return rec.data as T;
+  }
+  throw new Error(getApiErrorMessage(raw, 'API request failed'));
+}
+
+async function getConsolePayload<T>(endpoint: string): Promise<T> {
+  return unwrapConsolePayload<T>(await api.getRaw<T>(endpoint));
+}
+
+async function postConsolePayload<T>(endpoint: string, body?: unknown): Promise<T> {
+  return unwrapConsolePayload<T>(await api.postRaw<T>(endpoint, body));
+}
+
+export const agentKitsApi = {
+  getSlots: () => getConsolePayload<AgentKitSlotsData>('/api/agent_kits/slots'),
+
+  getHooks: () => getConsolePayload<AgentKitHooksData>('/api/agent_kits/hooks'),
+};
+
+export const relationshipApi = {
+  getView: (params: { user_id: string; bot_id?: string }) => {
+    const query = new URLSearchParams();
+    query.set('user_id', params.user_id);
+    if (params.bot_id) query.set('bot_id', params.bot_id);
+    return getConsolePayload<RelationshipViewData>(
+      `/api/relationship/view?${query.toString()}`,
+    );
+  },
+};
+
+export const cognitionApi = {
+  getNodes: (params: {
+    keyword?: string;
+    scope_key?: string;
+    owner_user_id?: string;
+    limit?: number;
+  } = {}) => {
+    const query = new URLSearchParams();
+    if (params.keyword) query.set('keyword', params.keyword);
+    if (params.scope_key) query.set('scope_key', params.scope_key);
+    if (params.owner_user_id) query.set('owner_user_id', params.owner_user_id);
+    if (params.limit !== undefined) query.set('limit', String(params.limit));
+    const qs = query.toString();
+    return getConsolePayload<CognitionNodesData>(
+      `/api/cognition/nodes${qs ? `?${qs}` : ''}`,
+    );
+  },
+
+  readArticle: (handle: string, limit = 20000) => {
+    const query = new URLSearchParams();
+    query.set('handle', handle);
+    query.set('limit', String(limit));
+    return getConsolePayload<CognitionArticlePreview>(
+      `/api/cognition/articles?${query.toString()}`,
+    );
+  },
+
+  getNode: (
+    nodeId: number,
+    params: { scope_key?: string; owner_user_id?: string } = {},
+  ) => {
+    const query = new URLSearchParams();
+    if (params.scope_key) query.set('scope_key', params.scope_key);
+    if (params.owner_user_id) query.set('owner_user_id', params.owner_user_id);
+    const qs = query.toString();
+    return getConsolePayload<CognitionNode>(
+      `/api/cognition/nodes/${nodeId}${qs ? `?${qs}` : ''}`,
+    );
+  },
+
+  rebuildMount: () =>
+    postConsolePayload<CognitionRebuildMountData>('/api/cognition/rebuild_mount'),
+};

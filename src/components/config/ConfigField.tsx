@@ -25,7 +25,7 @@ import { Separator } from '@/components/ui/separator';
 import {
   CalendarIcon, X, Upload, HelpCircle, Bell, CreditCard, Settings,
   Clock, Cog, MessageSquare, Image, Shield, Database, Zap, Key, Loader2,
-  ChevronDown, Eye, EyeOff, FileText, Files, Palette, AlertCircle, Minus,
+  ChevronDown, Eye, FileText, Files, Palette, AlertCircle, Minus,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
@@ -34,6 +34,7 @@ import { assetsApi, PluginConfigItem } from '@/lib/api';
 import { toast } from 'sonner';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { TagsInput } from './TagsInput';
+import { SecretInput } from './SecretInput';
 
 // 根据 title 关键词匹配图标
 const getTitleIcon = (title: string) => {
@@ -150,10 +151,7 @@ export function ConfigField({
   
   // 是否为密钥字段（仅由后端 secret 属性决定）
   const isSecret = isSecretField(field);
-  
-  // secret 字段的眼睛切换状态
-  const [showSecret, setShowSecret] = useState(false);
-  
+
   // regex 校验状态
   const [regexError, setRegexError] = useState<string | null>(null);
   
@@ -202,34 +200,20 @@ export function ConfigField({
   const isDividerField = field.type === 'divider';
 
   // ============================================================
-  // 密码/secret 输入框（带眼睛切换）
+  // 密码/secret 输入框（带眼睛切换；不用 type=password，避免浏览器自动填充）
   // ============================================================
   const renderSecretInput = () => {
     return (
-      <div className="relative">
-        <Input
-          type={showSecret ? 'text' : 'password'}
-          value={value as string}
-          onChange={(e) => {
-            onChange(fieldKey, e.target.value);
-            if (field.regex) validateRegex(e.target.value);
-          }}
-          placeholder={displayPlaceholder || `输入${displayLabel}`}
-          disabled={field.disabled}
-          className={cn(
-            "bg-background h-10 pr-10",
-            regexError && "border-destructive focus-visible:ring-destructive"
-          )}
-        />
-        <button
-          type="button"
-          onClick={() => setShowSecret(!showSecret)}
-          className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground transition-colors"
-          tabIndex={-1}
-        >
-          {showSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-        </button>
-      </div>
+      <SecretInput
+        value={String(value ?? '')}
+        onChange={(val) => {
+          onChange(fieldKey, val);
+          if (field.regex) validateRegex(val);
+        }}
+        placeholder={displayPlaceholder || `输入${displayLabel}`}
+        disabled={field.disabled}
+        className={cn(regexError && "border-destructive focus-visible:ring-destructive")}
+      />
     );
   };
 
@@ -304,7 +288,7 @@ export function ConfigField({
       // ----------------------------------------------------------
       // 数字
       // ----------------------------------------------------------
-      case 'number':
+      case 'number': {
         const numValue = value as number;
         const increment = () => {
           const next = (numValue || 0) + 1;
@@ -352,6 +336,7 @@ export function ConfigField({
             </div>
           </div>
         );
+      }
 
       // ----------------------------------------------------------
       // 布尔开关
@@ -477,7 +462,7 @@ export function ConfigField({
       // ----------------------------------------------------------
       // 时间范围选择器（两个 TimePicker 组合）
       // ----------------------------------------------------------
-      case 'timerange':
+      case 'timerange': {
         const timeRange = (Array.isArray(value) && value.length === 2) 
           ? value as [[number, number], [number, number]]
           : [[0, 0], [23, 59]] as [[number, number], [number, number]];
@@ -501,6 +486,7 @@ export function ConfigField({
             </div>
           </div>
         );
+      }
 
       // ----------------------------------------------------------
       // 标签输入
@@ -519,7 +505,7 @@ export function ConfigField({
       // ----------------------------------------------------------
       // 颜色选择器（主题化 Popover）
       // ----------------------------------------------------------
-      case 'color':
+      case 'color': {
         const hexValue = (typeof value === 'string' && value) ? value : '#000000';
         const displayColor = hexValue.length >= 7 ? hexValue.substring(0, 7) : hexValue;
 
@@ -573,12 +559,13 @@ export function ConfigField({
             </PopoverContent>
           </Popover>
         );
+      }
 
       // ----------------------------------------------------------
       // 文件上传（紧凑单行布局，与其他 input 框高度一致）
       // ----------------------------------------------------------
       case 'fileupload':
-      case 'filesupload':
+      case 'filesupload': {
         const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
           const files = e.target.files;
           if (!files || files.length === 0) return;
@@ -650,13 +637,14 @@ export function ConfigField({
             </Button>
           </>
         );
+      }
 
       // ----------------------------------------------------------
       // 图片上传
       // ----------------------------------------------------------
       // 图片上传（紧凑单行布局）
       // ----------------------------------------------------------
-      case 'image':
+      case 'image': {
         const previewUrl = assetsApi.getPreviewUrl(value as string);
         
         const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -762,6 +750,7 @@ export function ConfigField({
             </AlertDialog>
           </>
         );
+      }
 
       // ----------------------------------------------------------
       // 默认兜底

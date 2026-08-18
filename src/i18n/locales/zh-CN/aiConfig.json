@@ -54,6 +54,8 @@
     "whitelistNote": "仅以下用户可用：",
     "blacklistNote": "以下用户不可用：",
     "scopeGlobal": "全局启用",
+    "scopeGlobalGroup": "全局仅群聊",
+    "scopeGlobalPrivate": "全局仅私聊",
     "scopeSpecific": "特定启用",
     "scopeDisabled": "不启用",
     "memoryWarningTip": "全部群聊模式会处理所有群聊的记忆，可能占用较多 Token"
@@ -123,11 +125,34 @@
       "chat_completions": "OpenAI 标准的 /chat/completions 端点，几乎所有兼容厂商都支持；按 message 数组发送模型参数。",
       "responses": "OpenAI 新版 /responses 端点，统一管理多轮工具调用、文件引用与结构化输出；需要模型与代理同时支持。"
     },
+    "remoteWebSearch": "远端 Web Search",
+    "remoteWebSearchOptions": {
+      "off": "关闭（Responses 也改用本地搜索）",
+      "on": "开启（默认；Responses 用上游内置 web_search）"
+    },
+    "remoteWebSearchDescription": {
+      "off": "强制走本地 Tavily / Jina / Exa。OpenAI Chat Completions 本来就不看这个开关。",
+      "on": "默认值。OpenAI 选 Responses、或 Anthropic 配置，直接用上游内置 web_search，不用再改别的。OpenAI Chat Completions 无论开或关都走本地搜索。中转若不支持 hosted 工具会 400，再改回关闭即可。"
+    },
     "sendBackThinking": "思考回传",
     "sendBackThinkingOptions": {
       "auto": "自动（pydantic_ai 默认，回发历史思考）",
       "off": "关闭（不回传思考，兼容性最好）"
     },
+    "forwardEndUserId": "调用方标识透传",
+    "forwardEndUserIdOptions": {
+      "off": "关闭（不携带，默认）",
+      "hashed": "加盐摘要（携带不可逆摘要）",
+      "raw": "原始标识（携带明文）"
+    },
+    "forwardEndUserIdDescription": {
+      "off": "请求里不带任何调用方标识，上游只能看到这个配置整体的用量。默认值。",
+      "hashed": "把调用方标识做加盐摘要后放进 OpenAI 标准 user 字段，上游能按调用方聚合用量与日志，但拿不到原始标识。",
+      "raw": "把调用方标识原样放进 OpenAI 标准 user 字段。仅建议发给自建网关等可信上游，第三方官方端点请勿使用。"
+    },
+    "endUserIdSalt": "摘要盐值",
+    "endUserIdSaltPlaceholder": "留空即无密钥摘要",
+    "endUserIdSaltHint": "留空时摘要不带密钥：标识空间小（纯数字账号）时可被枚举反查，只起混淆作用。改动盐值会让此前的摘要全部失去对应关系，上游按调用方的历史聚合会断裂。",
     "capabilityText": "文本对话",
     "capabilityImage": "图片理解",
     "capabilityAudio": "语音处理",
@@ -161,14 +186,74 @@
     "embeddingSaveWarningDesc": "修改嵌入模型服务 / Qdrant 部署方式将导致历史向量数据需要迁移重构，建议先备份 data/ai_core 文件夹，保存后需重启服务生效，迁移可能耗时较久。",
     "webSearchService": "网络搜索服务",
     "webSearchServiceDesc": "配置网络搜索能力",
+    "primaryProvider": "主用搜索源",
+    "primaryProviderDesc": "首选搜索提供方。多源策略非「无」时，失败会按备用顺序切换。",
+    "lbStrategy": "多源策略",
+    "lbStrategyDesc": "**错误切换**：主用失败后，按备用顺序依次尝试下一个已配置源。\n\n**自动分流**：在已配置源之间轮询分发请求，分散负载。\n\n**无**：始终只使用主用源，失败也不切换。",
+    "lbStrategyNone": "无",
+    "lbStrategyErrorSwitch": "错误切换",
+    "lbStrategyAutoBalance": "自动分流",
+    "fallbackOrder": "备用源（顺序）",
+    "fallbackOrderDesc": "多选备用源，数字为优先级（1 最先）。留空则由后端使用所有已配置源。主用源不可勾选为备用；切换主用时会自动从备用列表剔除。",
+    "primaryConfigSection": "主用源配置",
+    "primaryConfigSectionDesc": "当前主用搜索源的密钥与参数。",
+    "fallbackConfigSection": "备用源配置",
+    "fallbackConfigSectionDesc": "备用搜索源的密钥与参数；主用失败时才会用到。",
+    "rolePrimary": "主用",
+    "roleFallback": "备用",
+    "fallbackPrimaryStrippedOnSave": "已从备用源中移除与主用重复的项，主用源不能同时作为备用。",
+    "configNotAvailable": "该源暂无可编辑配置项",
     "tavilyConfig": "Tavily配置",
     "exaConfig": "Exa配置",
+    "jinaConfig": "Jina 配置（s.jina.ai / r.jina.ai）",
     "miniMaxConfig": "MiniMax配置",
     "maxResults": "最大结果数",
     "searchDepth": "搜索深度",
     "searchType": "搜索类型",
     "apiHost": "API 主机地址",
     "resourceMode": "资源提供方式"
+  },
+  "webFetch": {
+    "title": "网页抓取服务",
+    "description": "配置 web_fetch_tool：主用 Jina / local，支持错误切换与自动分流。保存后即时生效，无需重启。",
+    "provider": "抓取提供方",
+    "primaryProvider": "主用抓取源",
+    "lbStrategy": "多源策略",
+    "lbStrategyDesc": "**错误切换**：主用失败后，按备用顺序依次尝试下一个源。\n\n**自动分流**：在候选源之间轮询分发请求，分散负载。\n\n**无**：始终只使用主用源，失败也不切换。",
+    "fallbackOrder": "备用源（顺序）",
+    "fallbackOrderDesc": "多选备用源，数字为优先级。留空则由后端默认（通常含 local）。主用源不可作备用。",
+    "primaryConfigSection": "主用源配置",
+    "primaryConfigSectionDesc": "当前主用抓取源的密钥与参数。",
+    "fallbackConfigSection": "备用源配置",
+    "fallbackConfigSectionDesc": "备用抓取源的参数；主用失败时才会用到。",
+    "providerLocal": "本机 (local)",
+    "providerJina": "Jina (r.jina.ai)",
+    "localHint": "本机用 aiohttp 直连目标站，可配代理 / UA / 超时。",
+    "jinaHint": "经 r.jina.ai 读取；API Key 可选，填写可提高额度。默认主用。",
+    "configNotLoaded": "尚未加载网页抓取服务配置，请确认后端已启动并注册 WebFetch 配置项",
+    "jinaConfigNotLoaded": "尚未加载 Jina 配置，请确认后端已注册「Jina搜索抓取配置」"
+  },
+  "relationshipSettings": {
+    "title": "关系温度",
+    "description": "好感度是人格对这个人的长期关系温度，由互动质量与越界行为驱动，不是聊天条数。",
+    "empty": "后端尚未下发关系温度字段。请升级 gsuid_core。",
+    "openRuntime": "查询某人的关系温度"
+  },
+  "agentKitsSettings": {
+    "title": "Agent 套件",
+    "description": "产品能力按槽位挂载。关某槽 = 该能力不注册。密封槽关闭会拆安全面。",
+    "allowReplaceSealedWarn": "密封槽承载出站话术与身份锚。打开后可以替换它们；除非你清楚后果，保持关闭。",
+    "sealedOff": "密封槽当前为空，安全面已拆开。",
+    "slotsTitle": "套件槽",
+    "empty": "后端尚未下发套件槽字段。请升级 gsuid_core。",
+    "openRuntime": "查看槽位与 Hook 健康"
+  },
+  "cognitionSettings": {
+    "title": "认知联邦",
+    "description": "记忆 / 知识 / 工具落盘 / 任务产物合成一个检索面。世界知识挂在公共 world: 枢纽上，节点可挂文章。",
+    "prefetchHint": "认知探针预取默认关闭，灰度确认后再开。",
+    "empty": "后端尚未下发认知联邦字段。请升级 gsuid_core。",
+    "openRuntime": "浏览认知索引"
   },
   "advancedSettings": {
     "title": "高级设置",

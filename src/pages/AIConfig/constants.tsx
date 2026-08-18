@@ -150,12 +150,26 @@ export const getRequestMethodLabel = (
 ): string =>
   getEnumLabel(t, 'aiConfig.serviceProvider.requestMethodOptions', raw);
 
+/** `remote_web_search`：`off / on` */
+export const getRemoteWebSearchLabel = (
+  t: (key: string) => string,
+  raw: string,
+): string =>
+  getEnumLabel(t, 'aiConfig.serviceProvider.remoteWebSearchOptions', raw);
+
 /** `send_back_thinking`：`auto / off`（思考回传） */
 export const getSendBackThinkingLabel = (
   t: (key: string) => string,
   raw: string,
 ): string =>
   getEnumLabel(t, 'aiConfig.serviceProvider.sendBackThinkingOptions', raw);
+
+/** `forward_end_user_id`：`off / hashed / raw`（终端用户标识透传） */
+export const getForwardEndUserIdLabel = (
+  t: (key: string) => string,
+  raw: string,
+): string =>
+  getEnumLabel(t, 'aiConfig.serviceProvider.forwardEndUserIdOptions', raw);
 
 /**
  * `request_method` 每个端点的端点级描述。用于在「编辑/新建」对话框下显示一行
@@ -168,3 +182,20 @@ export const getRequestMethodDescription = (
   raw: string,
 ): string =>
   getEnumLabel(t, 'aiConfig.serviceProvider.requestMethodDescription', raw);
+
+/** `remote_web_search` 开关说明：默认 on；只对 Responses 生效，Chat 永远本地。 */
+export const getRemoteWebSearchDescription = (
+  t: (key: string) => string,
+  raw: string,
+): string =>
+  getEnumLabel(t, 'aiConfig.serviceProvider.remoteWebSearchDescription', raw);
+
+/**
+ * `forward_end_user_id` 每个模式的说明。三种模式的隐私与可观测性权衡差别很大
+ * （raw 会把原始标识发到上游），必须逐项说明，写法同 `getRequestMethodDescription`。
+ */
+export const getForwardEndUserIdDescription = (
+  t: (key: string) => string,
+  raw: string,
+): string =>
+  getEnumLabel(t, 'aiConfig.serviceProvider.forwardEndUserIdDescription', raw);

@@ -1,13 +1,16 @@
 import {
   AlertTriangle,
   Cpu,
+  Fingerprint,
   Gauge,
   Globe,
   Hash,
   Info,
   Key,
+  KeyRound,
   Loader2,
   Plug2,
+  Search,
   Settings,
   Sparkles,
   TrendingUp,
@@ -32,7 +35,11 @@ import {
   getUsageStatsModeLabel,
   getRequestMethodLabel,
   getRequestMethodDescription,
+  getRemoteWebSearchLabel,
+  getRemoteWebSearchDescription,
   getSendBackThinkingLabel,
+  getForwardEndUserIdLabel,
+  getForwardEndUserIdDescription,
 } from '../constants.tsx';
 import type { OpenAIConfigData, ProviderConfigOptions } from '@/lib/api';
 
@@ -117,10 +124,20 @@ export function EditConfigDialog({
     options?.request_method && options.request_method.length > 0
       ? options.request_method
       : ['chat_completions', 'responses'];
+  const remoteWebSearchOptions =
+    options?.remote_web_search && options.remote_web_search.length > 0
+      ? options.remote_web_search
+      : ['off', 'on'];
   const sendBackThinkingOptions =
     options?.send_back_thinking && options.send_back_thinking.length > 0
       ? options.send_back_thinking
       : ['auto', 'off'];
+  const forwardEndUserIdOptions =
+    options?.forward_end_user_id && options.forward_end_user_id.length > 0
+      ? options.forward_end_user_id
+      : ['off', 'hashed', 'raw'];
+  // 老后端不下发该字段，缺省按 off（不透传）渲染，与后端默认一致
+  const forwardEndUserId = data?.forward_end_user_id || 'off';
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -261,6 +278,28 @@ export function EditConfigDialog({
                 inputPlaceholder={t('aiConfig.serviceProvider.maxConcurrency')}
               />
             </div>
+            {isAnthropic && (
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold flex items-center gap-2">
+                  <Search className="w-4 h-4" />
+                  {t('aiConfig.serviceProvider.remoteWebSearch')}
+                </Label>
+                <InputWithDropdown
+                  value={data.remote_web_search || 'on'}
+                  onChange={(val) => onChangeField('remote_web_search', val)}
+                  options={remoteWebSearchOptions}
+                  formatLabel={(raw) => getRemoteWebSearchLabel(t, raw)}
+                  placeholder={t('aiConfig.serviceProvider.remoteWebSearch')}
+                  inputPlaceholder={t('aiConfig.serviceProvider.remoteWebSearch')}
+                />
+                <p className="text-xs text-muted-foreground flex items-start gap-1">
+                  <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                  <span>
+                    {getRemoteWebSearchDescription(t, data.remote_web_search || 'on')}
+                  </span>
+                </p>
+              </div>
+            )}
             {/* OpenAI 系列才有 `usage_stats_mode` / `request_method` */}
             {isOpenAISeries && (
               <>
@@ -302,6 +341,26 @@ export function EditConfigDialog({
                 </div>
                 <div className="space-y-2">
                   <Label className="text-sm font-semibold flex items-center gap-2">
+                    <Search className="w-4 h-4" />
+                    {t('aiConfig.serviceProvider.remoteWebSearch')}
+                  </Label>
+                  <InputWithDropdown
+                    value={data.remote_web_search || 'on'}
+                    onChange={(val) => onChangeField('remote_web_search', val)}
+                    options={remoteWebSearchOptions}
+                    formatLabel={(raw) => getRemoteWebSearchLabel(t, raw)}
+                    placeholder={t('aiConfig.serviceProvider.remoteWebSearch')}
+                    inputPlaceholder={t('aiConfig.serviceProvider.remoteWebSearch')}
+                  />
+                  <p className="text-xs text-muted-foreground flex items-start gap-1">
+                    <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                    <span>
+                      {getRemoteWebSearchDescription(t, data.remote_web_search || 'on')}
+                    </span>
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-sm font-semibold flex items-center gap-2">
                     <Sparkles className="w-4 h-4" />
                     {t('aiConfig.serviceProvider.sendBackThinking')}
                   </Label>
@@ -314,6 +373,51 @@ export function EditConfigDialog({
                     inputPlaceholder={t('aiConfig.serviceProvider.sendBackThinking')}
                   />
                 </div>
+                <div className="space-y-2">
+                  <Label className="text-sm font-semibold flex items-center gap-2">
+                    <Fingerprint className="w-4 h-4" />
+                    {t('aiConfig.serviceProvider.forwardEndUserId')}
+                  </Label>
+                  <InputWithDropdown
+                    value={forwardEndUserId}
+                    onChange={(val) => onChangeField('forward_end_user_id', val)}
+                    options={forwardEndUserIdOptions}
+                    formatLabel={(raw) => getForwardEndUserIdLabel(t, raw)}
+                    placeholder={t('aiConfig.serviceProvider.forwardEndUserId')}
+                    inputPlaceholder={t('aiConfig.serviceProvider.forwardEndUserId')}
+                  />
+                  <p className="text-xs text-muted-foreground flex items-start gap-1">
+                    <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                    <span>
+                      {getForwardEndUserIdDescription(t, forwardEndUserId)}
+                    </span>
+                  </p>
+                </div>
+                {/* 盐值只在 hashed 模式下有意义，其余模式整块隐藏 */}
+                {forwardEndUserId === 'hashed' && (
+                  <div className="space-y-2">
+                    <Label className="text-sm font-semibold flex items-center gap-2">
+                      <KeyRound className="w-4 h-4" />
+                      {t('aiConfig.serviceProvider.endUserIdSalt')}
+                    </Label>
+                    <ConfigField
+                      fieldKey="end_user_id_salt"
+                      field={{
+                        type: 'password',
+                        label: 'end_user_id_salt',
+                        value: data.end_user_id_salt || '',
+                        placeholder: t('aiConfig.serviceProvider.endUserIdSaltPlaceholder'),
+                        description: '',
+                      }}
+                      showLabel={false}
+                      onChange={(_k, v) => onChangeField('end_user_id_salt', v as string)}
+                    />
+                    <p className="text-xs text-muted-foreground flex items-start gap-1">
+                      <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                      <span>{t('aiConfig.serviceProvider.endUserIdSaltHint')}</span>
+                    </p>
+                  </div>
+                )}
               </>
             )}
           </div>

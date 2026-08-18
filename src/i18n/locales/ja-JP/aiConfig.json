@@ -54,6 +54,8 @@
     "whitelistNote": "以下のユーザーのみ利用可:",
     "blacklistNote": "以下のユーザーは利用不可:",
     "scopeGlobal": "全体で有効",
+    "scopeGlobalGroup": "グループのみ",
+    "scopeGlobalPrivate": "トークのみ",
     "scopeSpecific": "指定範囲で有効",
     "scopeDisabled": "無効",
     "memoryWarningTip": "全グループのメモリを処理するため、トークン消費が増える場合があります"
@@ -123,11 +125,34 @@
       "chat_completions": "OpenAI 標準の /chat/completions エンドポイント。ほぼ全ての互換プロバイダでサポートされ、messages 配列でモデルに送信します。",
       "responses": "OpenAI の新しい /responses エンドポイント。複数ターンのツール呼び出し、ファイル参照、構造化出力を統合。モデルとプロキシ両方の対応が必要です。"
     },
+    "remoteWebSearch": "リモート Web Search",
+    "remoteWebSearchOptions": {
+      "off": "オフ（Responses でもローカル検索）",
+      "on": "オン（既定。Responses は上流の web_search）"
+    },
+    "remoteWebSearchDescription": {
+      "off": "常にローカルの Tavily / Jina / Exa を使います。OpenAI Chat Completions はこのスイッチを見ません。",
+      "on": "既定値。OpenAI を Responses にするか Anthropic 設定を使うだけで上流の hosted web_search を使います。OpenAI Chat Completions はオンでもオフでもローカル検索です。中継が hosted ツール非対応なら 400 になるので、そのときはオフにしてください。"
+    },
     "sendBackThinking": "思考の再送信",
     "sendBackThinkingOptions": {
       "auto": "自動（pydantic_ai 既定、履歴の思考を再送信）",
       "off": "オフ（思考を再送信しない、互換性最良）"
     },
+    "forwardEndUserId": "呼び出し元 ID の送信",
+    "forwardEndUserIdOptions": {
+      "off": "オフ（送信しない、既定）",
+      "hashed": "ソルト付きダイジェスト（不可逆な要約を送信）",
+      "raw": "生の ID（平文で送信）"
+    },
+    "forwardEndUserIdDescription": {
+      "off": "リクエストに呼び出し元 ID を含めません。上流はこの設定全体の使用量のみを把握できます。既定値です。",
+      "hashed": "呼び出し元 ID にソルトを加えたダイジェストを OpenAI 標準の user フィールドで送信します。上流は元の ID を知らずに呼び出し元ごとの使用量とログを集計できます。",
+      "raw": "呼び出し元 ID をそのまま OpenAI 標準の user フィールドで送信します。自前ゲートウェイなど信頼できる上流にのみ推奨し、サードパーティの公式エンドポイントには使用しないでください。"
+    },
+    "endUserIdSalt": "ダイジェストのソルト",
+    "endUserIdSaltPlaceholder": "空欄の場合は鍵なしダイジェスト",
+    "endUserIdSaltHint": "空欄では鍵なしダイジェストになります。ID 空間が小さい場合（数値のアカウント ID など）は総当たりで逆引きされ得るため、難読化にとどまります。ソルトを変更すると過去のダイジェストとの対応が失われ、上流の呼び出し元ごとの履歴が途切れます。",
     "capabilityText": "テキスト会話",
     "capabilityImage": "画像理解",
     "capabilityAudio": "音声処理",
@@ -161,14 +186,74 @@
     "embeddingSaveWarningDesc": "埋め込みモデルサービス / Qdrantデプロイ方式を変更すると、履歴ベクトルデータの移行・再構築が必要になります。先に data/ai_core フォルダをバックアップし、保存後はサービスの再起動が必要です。移行には時間がかかる場合があります。",
     "webSearchService": "ネット検索サービス",
     "webSearchServiceDesc": "設定ネット検索機能",
+    "primaryProvider": "メイン検索ソース",
+    "primaryProviderDesc": "優先する検索プロバイダー。マルチソース戦略では失敗時に予備順へ切替。",
+    "lbStrategy": "マルチソース戦略",
+    "lbStrategyDesc": "**エラー切替**：メイン失敗時、予備順に次の設定済みソースを試す。\n\n**自動分散**：設定済みソースへラウンドロビンで振り分け。\n\n**なし**：常にメインのみ使用し、失敗しても切替しない。",
+    "lbStrategyNone": "なし",
+    "lbStrategyErrorSwitch": "エラー切替",
+    "lbStrategyAutoBalance": "自動分散",
+    "fallbackOrder": "予備ソース（順序）",
+    "fallbackOrderDesc": "予備を複数選択。数字が優先度（1が最優先）。空ならバックエンドが設定済み全ソースを使用。メインは予備にできず、切替時にリストから除外されます。",
+    "primaryConfigSection": "メインソース設定",
+    "primaryConfigSectionDesc": "メイン検索ソースのキーとパラメータ。",
+    "fallbackConfigSection": "予備ソース設定",
+    "fallbackConfigSectionDesc": "予備検索ソースのキーとパラメータ。メイン失敗時に使用。",
+    "rolePrimary": "メイン",
+    "roleFallback": "予備",
+    "fallbackPrimaryStrippedOnSave": "予備からメインと重複する項目を削除しました。メインを予備にはできません。",
+    "configNotAvailable": "このソースに編集可能な設定はありません",
     "tavilyConfig": "Tavily設定",
     "exaConfig": "Exa設定",
+    "jinaConfig": "Jina 設定（s.jina.ai / r.jina.ai）",
     "miniMaxConfig": "MiniMax設定",
     "maxResults": "最大件数",
     "searchDepth": "検索深度",
     "searchType": "検索タイプ",
     "apiHost": "API ホスト",
     "resourceMode": "リソースプロバイダー式"
+  },
+  "webFetch": {
+    "title": "Web 取得サービス",
+    "description": "web_fetch_tool：メイン Jina / local、エラー切替と自動分散対応。保存後すぐ反映、再起動不要。",
+    "provider": "取得プロバイダー",
+    "primaryProvider": "メイン取得ソース",
+    "lbStrategy": "マルチソース戦略",
+    "lbStrategyDesc": "**エラー切替**：メイン失敗時、予備順に次のソースを試す。\n\n**自動分散**：候補ソースへラウンドロビンで振り分け。\n\n**なし**：常にメインのみ使用し、失敗しても切替しない。",
+    "fallbackOrder": "予備ソース（順序）",
+    "fallbackOrderDesc": "予備を複数選択。数字が優先度。空ならバックエンド既定（通常 local を含む）。メインは予備にできません。",
+    "primaryConfigSection": "メインソース設定",
+    "primaryConfigSectionDesc": "メイン取得ソースのキーとパラメータ。",
+    "fallbackConfigSection": "予備ソース設定",
+    "fallbackConfigSectionDesc": "予備取得ソースのパラメータ。メイン失敗時に使用。",
+    "providerLocal": "ローカル (local)",
+    "providerJina": "Jina (r.jina.ai)",
+    "localHint": "aiohttp で直接続。プロキシ / UA / タイムアウト設定可。",
+    "jinaHint": "r.jina.ai 経由。API Key は任意。デフォルトのメイン。",
+    "configNotLoaded": "Web 取得サービス設定が未読込です。バックエンドが起動し WebFetch 設定が登録されているか確認してください",
+    "jinaConfigNotLoaded": "Jina 設定が未読込です。バックエンドの Jina 検索・取得設定を確認してください"
+  },
+  "relationshipSettings": {
+    "title": "関係温度",
+    "description": "好感度は人格がこの人に対して持つ長期の関係温度です。交流の質で動き、発言数ではありません。",
+    "empty": "バックエンドが関係温度フィールドをまだ出していません。gsuid_core をアップグレードしてください。",
+    "openRuntime": "関係温度を照会"
+  },
+  "agentKitsSettings": {
+    "title": "Agent キット",
+    "description": "製品能力は槽に装着します。槽を閉じるとその能力は登録されません。密封槽を閉じると安全面が開きます。",
+    "allowReplaceSealedWarn": "密封槽は発話方針と身元アンカーを担います。置換は危険です。結果を理解していないならオフのままにしてください。",
+    "sealedOff": "密封槽が空です。安全面が開いています。",
+    "slotsTitle": "キット槽",
+    "empty": "バックエンドがキット槽フィールドをまだ出していません。gsuid_core をアップグレードしてください。",
+    "openRuntime": "槽と Hook の健全性を見る"
+  },
+  "cognitionSettings": {
+    "title": "認知フェデレーション",
+    "description": "記憶 / 知識 / ツール落盤 / タスク成果物を一つの検索面にまとめます。世界知識は公開 world: ハブにあり、ノードに記事を掛けることができます。",
+    "prefetchHint": "認知プリフェッチは既定オフです。グレーリリース後にオンにしてください。",
+    "empty": "バックエンドが認知フィールドをまだ出していません。gsuid_core をアップグレードしてください。",
+    "openRuntime": "認知インデックスを見る"
   },
   "advancedSettings": {
     "title": "詳細設定",

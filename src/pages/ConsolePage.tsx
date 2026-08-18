@@ -4,7 +4,13 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Terminal, Trash2, Download, Circle, Check, Minus } from "lucide-react";
-import { remoteCommandApi, logsApi } from "@/lib/api";
+import {
+  remoteCommandApi,
+  logsApi,
+  logsConfigApi,
+  sanitizeVisibleLevels,
+  DEFAULT_LOGS_CONFIG,
+} from "@/lib/api";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import { cn } from "@/lib/utils";
@@ -55,6 +61,40 @@ function parseLogLevel(level: string): string {
   return level.toLowerCase();
 }
 
+/**
+ * 从 SSE 载荷解析 plugin，并尽量把正文里残留的 `plugin=...` 清掉
+ *（兼容尚未升级、仍把 plugin 塞进 message 的旧后端）。
+ */
+function resolvePluginAndContent(
+  message: unknown,
+  pluginField: unknown,
+): { plugin?: string; content: string } {
+  let content = typeof message === "string" ? message : String(message ?? "");
+  let plugin =
+    typeof pluginField === "string" && pluginField.trim()
+      ? pluginField.trim()
+      : undefined;
+
+  // 旧后端：plugin 落在正文 extras 行，例如 "plugin=WutheringWavesUID, pathname=..."
+  if (!plugin) {
+    const m = content.match(/(?:^|[\n,]\s*)plugin=([^\n,]+)/i);
+    if (m?.[1]) {
+      plugin = m[1].trim();
+    }
+  }
+
+  if (plugin) {
+    // 去掉 plugin=xxx 键值（单独一段或夹在逗号列表里）
+    content = content
+      .replace(/(?:^|\n)\s*plugin=[^\n,]*(?:,\s*)?/gi, "\n")
+      .replace(/,\s*plugin=[^\n,]*/gi, "")
+      .replace(/\n{3,}/g, "\n\n")
+      .replace(/^\n+|\n+$/g, "");
+  }
+
+  return { plugin, content };
+}
+
 export default function ConsolePage() {
   const { t } = useLanguage();
   const { style, mode } = useTheme();
@@ -103,10 +143,13 @@ export default function ConsolePage() {
   const [commandHistory, setCommandHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [autoScroll, setAutoScroll] = useState(false);
+  // ref 镜像：让 SSE handler / addLogs 等闭包内能读到最新值
+  const autoScrollRef = useRef(autoScroll);
+  autoScrollRef.current = autoScroll;
 
   const [availableLevels, setAvailableLevels] = useState<Array<{ label: string; value: string }>>([]);
   const [visibleLevels, setVisibleLevels] = useState<Set<string>>(
-    () => new Set<string>(['debug', 'info', 'error']),
+    () => new Set<string>(DEFAULT_LOGS_CONFIG.visible_levels),
   );
   // 标记是否已应用过持久化数据，避免在拿到后�?levels 后被默认值覆�?
   const initializedRef = useRef(false);
@@ -138,49 +181,65 @@ export default function ConsolePage() {
       { label: 'CRITICAL', value: 'critical' },
     ];
 
-    const applyLevels = (levels: Array<{ label: string; value: string }>) => {
+    const applyLevels = (
+      levels: Array<{ label: string; value: string }>,
+      persisted: string[] | null,
+    ) => {
       setAvailableLevels(levels);
 
-      // 1) 优先尝试 localStorage 中的持久化选择
-      const persisted = loadVisibleLevelsFromStorage();
-      if (persisted && persisted.length > 0) {
-        // 仅保留后端实际提供的级别，防止新�?删除级别后出现幽灵选项
-        const validValues = new Set(levels.map((lv) => lv.value));
-        const filtered = persisted.filter((v) => validValues.has(v) && v !== 'all');
-        if (filtered.length > 0) {
-          setVisibleLevels(new Set(filtered));
-          initializedRef.current = true;
-          return;
-        }
+      const validValues = new Set(levels.map((lv) => lv.value));
+      const pick = (raw: string[] | null) =>
+        sanitizeVisibleLevels(raw).filter((v) => validValues.has(v));
+
+      // 1) GET /api/logs/config 是权威来源（允许空数组 = 用户主动全不选）
+      if (persisted !== null) {
+        setVisibleLevels(new Set(pick(persisted)));
+        initializedRef.current = true;
+        return;
       }
 
-      // 2) 没有持久化或持久化内容失效：使用默认 [debug, info, error]
-      const defaults = new Set<string>();
-      levels.forEach((lv) => {
-        if (['debug', 'info', 'error'].includes(lv.value)) {
-          defaults.add(lv.value);
-        }
-      });
+      // 2) 接口失败时回退 localStorage
+      const fromStorage = pick(loadVisibleLevelsFromStorage());
+      if (fromStorage.length > 0) {
+        setVisibleLevels(new Set(fromStorage));
+        initializedRef.current = true;
+        return;
+      }
+
+      // 3) 与后端 DEFAULT_LOGS_CONFIG 对齐
+      const defaults = new Set(
+        DEFAULT_LOGS_CONFIG.visible_levels.filter((v) => validValues.has(v)),
+      );
       if (defaults.size === 0 && levels.length > 0) {
-        // 后端未提供默认三档时，至少选中第一�?
-        defaults.add(levels[0].value);
+        const first = levels.find((lv) => lv.value !== 'all')?.value;
+        if (first) defaults.add(first);
       }
       setVisibleLevels(defaults);
       initializedRef.current = true;
     };
 
-    logsApi
-      .getLevels()
-      .then(applyLevels)
-      .catch(() => {
-        applyLevels(fallback);
-      });
+    Promise.all([
+      logsApi.getLevels().catch(() => fallback),
+      logsConfigApi
+        .get()
+        .then((cfg) => (Array.isArray(cfg?.visible_levels) ? cfg.visible_levels : []))
+        .catch(() => null),
+    ]).then(([levels, persisted]) => {
+      applyLevels(Array.isArray(levels) ? levels : fallback, persisted);
+    });
   }, []);
 
-  // 持久化：visibleLevels 变化时写�?localStorage
+  // 持久化：写 localStorage 缓存，并防抖写入 GET/PUT /api/logs/config
   useEffect(() => {
     if (!initializedRef.current) return;
     saveVisibleLevelsToStorage(visibleLevels);
+    const levels = Array.from(visibleLevels);
+    const timer = window.setTimeout(() => {
+      logsConfigApi.update({ visible_levels: levels }).catch(() => {
+        /* 网络失败时仍保留 localStorage 缓存 */
+      });
+    }, 400);
+    return () => window.clearTimeout(timer);
   }, [visibleLevels]);
 
   // SSE stream for real-time logs - 始终接收所有级别，前端通过 filteredLogs 控制显示
@@ -196,9 +255,24 @@ export default function ConsolePage() {
 
     authEventSource.onmessage = (event) => {
       try {
-        // 记录断点：event.lastEventId 即后端随每条日志下发的 id:（log_seq 序号）
+        // 断点续传去重：重连后后端可能重放缓冲中已收过的日志，
+        // 跳过 event id <= 已知最大 id 的条目，避免重复日志冲刷数组。
+        // 若后端重启（log_seq 归零），新 id 会远小于旧 id（差值 > 缓冲上限 2000），
+        // 此时重置跟踪并接受新序列。
         if (event.lastEventId) {
-          lastEventIdRef.current = event.lastEventId;
+          const eventId = parseInt(event.lastEventId, 10);
+          const lastId = lastEventIdRef.current ? parseInt(lastEventIdRef.current, 10) : -1;
+          if (lastId >= 0 && eventId <= lastId) {
+            if (lastId - eventId > 2000) {
+              // 后端重启，log_seq 归零——接受新序列
+              lastEventIdRef.current = event.lastEventId;
+            } else {
+              // 缓冲重放的重复日志，跳过
+              return;
+            }
+          } else {
+            lastEventIdRef.current = event.lastEventId;
+          }
         }
         const logData = JSON.parse(event.data);
         const rawLevel = parseLogLevel(logData.level);
@@ -216,19 +290,33 @@ export default function ConsolePage() {
         }
 
         const ts = new Date(logData.timestamp);
-        const content = logData.message;
+        const { plugin, content } = resolvePluginAndContent(
+          logData.message,
+          logData.plugin,
+        );
         allLogsRef.current.push({
           id: (++logCounter).toString(),
           type: logType,
           content,
+          plugin,
           timestamp: ts,
           anchor: buildLogAnchor(ts, content),
           // 预算行数（按 \n 拆分），让虚拟化器初次布局就拿到正确行高
           lineCount: computeLineCount(content),
         });
-        // 限制最大条�?
-        if (allLogsRef.current.length > 2000) {
-          allLogsRef.current = allLogsRef.current.slice(-2000);
+        // 限制最大条数：
+        // - autoScroll 开启时用户在底部，从头部裁剪不影响可视区域
+        // - autoScroll 关闭时用户可能在看旧日志，从头部裁剪会导致视口内容逐行消失，
+        //   因此使用更高的上限兜底内存，不做逐条头部裁剪
+        const cap = autoScrollRef.current ? 2000 : 10000;
+        if (allLogsRef.current.length > cap) {
+          if (autoScrollRef.current) {
+            allLogsRef.current = allLogsRef.current.slice(-cap);
+          } else {
+            // 非自动滚动模式下仅在超出高水位时从头部批量裁剪（避免每条都触发），
+            // 一次性裁掉 2000 条，减少虚拟化器重布局频率
+            allLogsRef.current = allLogsRef.current.slice(-(cap - 2000));
+          }
         }
         // 节流后通知 React，不要每条都重渲染
         scheduleLogVersionFlush();
@@ -265,8 +353,13 @@ export default function ConsolePage() {
         : { ...e, anchor: buildLogAnchor(e.timestamp, e.content), lineCount };
     });
     allLogsRef.current.push(...stamped);
-    if (allLogsRef.current.length > 2000) {
-      allLogsRef.current = allLogsRef.current.slice(-2000);
+    const cap = autoScrollRef.current ? 2000 : 10000;
+    if (allLogsRef.current.length > cap) {
+      if (autoScrollRef.current) {
+        allLogsRef.current = allLogsRef.current.slice(-cap);
+      } else {
+        allLogsRef.current = allLogsRef.current.slice(-(cap - 2000));
+      }
     }
     scheduleLogVersionFlush();
   }, [scheduleLogVersionFlush]);
@@ -358,7 +451,10 @@ export default function ConsolePage() {
 
   const exportLogs = () => {
     const content = allLogsRef.current
-      .map((log) => `[${log.timestamp.toISOString()}] [${log.type.toUpperCase()}] ${log.content}`)
+      .map((log) => {
+        const pluginTag = log.plugin ? ` {${log.plugin}}` : "";
+        return `[${log.timestamp.toISOString()}] [${log.type.toUpperCase()}]${pluginTag} ${log.content}`;
+      })
       .join("\n");
     const blob = new Blob([content], { type: "text/plain" });
     const url = URL.createObjectURL(blob);

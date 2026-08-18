@@ -1,0 +1,17 @@
+{
+  "title": "日志控制台配置",
+  "subtitle": "持久化实时控制台要显示的日志级别。保存后跨会话生效。",
+  "saveSuccess": "日志控制台配置已保存",
+  "saveFailed": "保存失败",
+  "loadFailed": "加载日志控制台配置失败",
+  "cancel": "取消",
+  "save": "保存",
+  "selectAll": "全选",
+  "deselectAll": "全不选",
+  "emptyHint": "当前未选择任何级别：实时控制台将不显示日志（仍可在此改回）。",
+  "fields": {
+    "visibleLevels": "可见日志级别",
+    "visibleLevelsHint": "与实时控制台工具栏的级别筛选共用。空列表表示全部隐藏。"
+  },
+  "toolbar": "控制台配置"
+}

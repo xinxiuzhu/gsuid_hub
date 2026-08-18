@@ -29,8 +29,12 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { cn } from '@/lib/utils';
 import { versionApi, VersionInfo, ActiveBotsInfo } from '@/lib/api';
+import {
+  SidebarHoverIcon,
+  hoverIconGroupClass,
+} from '@/components/layout/SidebarHoverIcon';
 
-const frontendVersion = PACKAGE_VERSION || '0.0.18';
+const frontendVersion = PACKAGE_VERSION || '0.1.2';
 
 // Build HomePage card classes that follow the global theme:
 // - `glass-card` (theme system: opacity + blur intensity, dark/light)
@@ -101,6 +105,7 @@ export default function HomePage() {
   }, [t]);
 
   const displayName = user?.name?.trim() || 'User';
+  const isAdmin = user?.role === 'admin';
 
   const loadHomeData = useCallback(async () => {
     setIsLoading(true);
@@ -124,11 +129,15 @@ export default function HomePage() {
   }, [loadHomeData]);
 
   const quickNavItems = [
-    { label: t('home.goToPlugins'), description: t('home.goToPluginsDesc'), href: '/plugins', icon: Plug },
+    ...(isAdmin
+      ? [
+          { label: t('home.goToPlugins'), description: t('home.goToPluginsDesc'), href: '/plugins', icon: Plug },
+          { label: t('home.goToFrameworkConfig'), description: t('home.goToFrameworkConfigDesc'), href: '/framework-config', icon: Cpu },
+          { label: t('home.goToDatabase'), description: t('home.goToDatabaseDesc'), href: '/database', icon: Database },
+        ]
+      : []),
     { label: t('home.goToGitUpdate'), description: t('home.goToGitUpdateDesc'), href: '/git-update', icon: GitBranch },
     { label: t('home.goToDashboard'), description: t('home.goToDashboardDesc'), href: '/dashboard', icon: LayoutDashboard },
-    { label: t('home.goToDatabase'), description: t('home.goToDatabaseDesc'), href: '/database', icon: Database },
-    { label: t('home.goToFrameworkConfig'), description: t('home.goToFrameworkConfigDesc'), href: '/framework-config', icon: Cpu },
     { label: t('home.goToConsole'), description: t('home.goToConsoleDesc'), href: '/console', icon: Terminal },
   ];
 
@@ -175,7 +184,7 @@ export default function HomePage() {
                 {t('home.backendVersion')} v{versionInfo?.version || '-'}
               </Badge>
               <Badge className="gap-1.5 rounded-full border-border/50 bg-background/20 px-3 py-1 text-sm text-muted-foreground backdrop-blur-xl" variant="outline">
-                <GitCommit className="h-3.5 w-3.5 text-primary" />
+                <GitCommit className="h-3.5 w-3.5" />
                 {t('home.commitHash')} {versionInfo?.commit || '-'}
               </Badge>
             </div>
@@ -225,9 +234,16 @@ export default function HomePage() {
             <Link
               key={item.href}
               to={item.href}
-              className={cn('glass-card-flat group relative flex min-h-24 items-center gap-3 rounded-2xl p-4 text-left transition-all hover:-translate-y-0.5 hover:!border-primary/55 hover:!bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45 dark:hover:!bg-primary/10', 'border border-border/70')}
+              className={cn(
+                hoverIconGroupClass,
+                'glass-card-flat relative flex min-h-24 items-center gap-3 rounded-2xl p-4 text-left transition-all hover:-translate-y-0.5 hover:!border-primary/55 hover:!bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45 dark:hover:!bg-primary/10',
+                'border border-border/70',
+              )}
             >
-              <item.icon className="h-5 w-5 shrink-0 self-center text-primary transition-transform group-hover:scale-110" />
+              <SidebarHoverIcon
+                icon={item.icon}
+                className="h-5 w-5 shrink-0 self-center text-primary"
+              />
               <span className="flex min-w-0 flex-1 flex-col justify-center gap-1 self-center">
                 <span className="block text-sm font-semibold leading-snug text-foreground">{item.label}</span>
                 <span className="block text-xs leading-snug text-muted-foreground">{item.description}</span>

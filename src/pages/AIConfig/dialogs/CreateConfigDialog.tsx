@@ -2,12 +2,15 @@ import { useEffect, useState } from 'react';
 import {
   AlertTriangle,
   Brain,
+  Fingerprint,
   Gauge,
   Hash,
   Info,
   Key,
+  KeyRound,
   Plus,
   Plug2,
+  Search,
   Server,
   TrendingUp,
 } from 'lucide-react';
@@ -33,7 +36,11 @@ import {
   getUsageStatsModeLabel,
   getRequestMethodLabel,
   getRequestMethodDescription,
+  getRemoteWebSearchLabel,
+  getRemoteWebSearchDescription,
   getSendBackThinkingLabel,
+  getForwardEndUserIdLabel,
+  getForwardEndUserIdDescription,
 } from '../constants.tsx';
 import type { ProviderConfigOptions } from '@/lib/api';
 
@@ -56,8 +63,14 @@ export interface CreateConfigDialogProps {
   usageStatsMode: string;
   /** 仅 OpenAI 系列：请求方式（Anthropic 不存在） */
   requestMethod: string;
+  /** 仅 OpenAI 系列：远端 Web Search off/on */
+  remoteWebSearch: string;
   /** 仅 OpenAI 系列：思考回传 auto/off */
   sendBackThinking: string;
+  /** 仅 OpenAI 系列：终端用户标识透传 off/hashed/raw */
+  forwardEndUserId: string;
+  /** 仅 OpenAI 系列：`hashed` 模式的盐值 */
+  endUserIdSalt: string;
   fetchedModels: string[];
   isFetching: boolean;
 
@@ -82,7 +95,13 @@ export interface CreateConfigDialogProps {
   /** 仅 OpenAI 系列 */
   onChangeRequestMethod: (v: string) => void;
   /** 仅 OpenAI 系列 */
+  onChangeRemoteWebSearch: (v: string) => void;
+  /** 仅 OpenAI 系列 */
   onChangeSendBackThinking: (v: string) => void;
+  /** 仅 OpenAI 系列 */
+  onChangeForwardEndUserId: (v: string) => void;
+  /** 仅 OpenAI 系列 */
+  onChangeEndUserIdSalt: (v: string) => void;
   onReset: () => void;
   onSubmit: () => void;
 }
@@ -109,7 +128,10 @@ export function CreateConfigDialog(props: CreateConfigDialogProps) {
     maxTokens,
     usageStatsMode,
     requestMethod,
+    remoteWebSearch,
     sendBackThinking,
+    forwardEndUserId,
+    endUserIdSalt,
     fetchedModels,
     isFetching,
     providerConfigOptions,
@@ -127,7 +149,10 @@ export function CreateConfigDialog(props: CreateConfigDialogProps) {
     onChangeMaxTokens,
     onChangeUsageStatsMode,
     onChangeRequestMethod,
+    onChangeRemoteWebSearch,
     onChangeSendBackThinking,
+    onChangeForwardEndUserId,
+    onChangeEndUserIdSalt,
     onReset,
     onSubmit,
   } = props;
@@ -165,10 +190,18 @@ export function CreateConfigDialog(props: CreateConfigDialogProps) {
     options?.request_method && options.request_method.length > 0
       ? options.request_method
       : ['chat_completions', 'responses'];
+  const remoteWebSearchOptions =
+    options?.remote_web_search && options.remote_web_search.length > 0
+      ? options.remote_web_search
+      : ['off', 'on'];
   const sendBackThinkingOptions =
     options?.send_back_thinking && options.send_back_thinking.length > 0
       ? options.send_back_thinking
       : ['auto', 'off'];
+  const forwardEndUserIdOptions =
+    options?.forward_end_user_id && options.forward_end_user_id.length > 0
+      ? options.forward_end_user_id
+      : ['off', 'hashed', 'raw'];
 
   return (
     <Dialog
@@ -367,6 +400,26 @@ export function CreateConfigDialog(props: CreateConfigDialogProps) {
               inputPlaceholder={t('aiConfig.serviceProvider.maxConcurrency')}
             />
           </div>
+          {isAnthropic && (
+            <div className="space-y-2">
+              <Label className="font-semibold flex items-center gap-2">
+                <Search className="w-4 h-4" />
+                {t('aiConfig.serviceProvider.remoteWebSearch')}
+              </Label>
+              <InputWithDropdown
+                value={remoteWebSearch}
+                onChange={onChangeRemoteWebSearch}
+                options={remoteWebSearchOptions}
+                formatLabel={(raw) => getRemoteWebSearchLabel(t, raw)}
+                placeholder={t('aiConfig.serviceProvider.remoteWebSearch')}
+                inputPlaceholder={t('aiConfig.serviceProvider.remoteWebSearch')}
+              />
+              <p className="text-xs text-muted-foreground flex items-start gap-1">
+                <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                <span>{getRemoteWebSearchDescription(t, remoteWebSearch)}</span>
+              </p>
+            </div>
+          )}
           {/* 仅 OpenAI 系列才有 usage_stats_mode / request_method */}
           {isOpenAISeries && (
             <>
@@ -408,6 +461,24 @@ export function CreateConfigDialog(props: CreateConfigDialogProps) {
               </div>
               <div className="space-y-2">
                 <Label className="font-semibold flex items-center gap-2">
+                  <Search className="w-4 h-4" />
+                  {t('aiConfig.serviceProvider.remoteWebSearch')}
+                </Label>
+                <InputWithDropdown
+                  value={remoteWebSearch}
+                  onChange={onChangeRemoteWebSearch}
+                  options={remoteWebSearchOptions}
+                  formatLabel={(raw) => getRemoteWebSearchLabel(t, raw)}
+                  placeholder={t('aiConfig.serviceProvider.remoteWebSearch')}
+                  inputPlaceholder={t('aiConfig.serviceProvider.remoteWebSearch')}
+                />
+                <p className="text-xs text-muted-foreground flex items-start gap-1">
+                  <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                  <span>{getRemoteWebSearchDescription(t, remoteWebSearch)}</span>
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label className="font-semibold flex items-center gap-2">
                   <Brain className="w-4 h-4" />
                   {t('aiConfig.serviceProvider.sendBackThinking')}
                 </Label>
@@ -420,6 +491,49 @@ export function CreateConfigDialog(props: CreateConfigDialogProps) {
                   inputPlaceholder={t('aiConfig.serviceProvider.sendBackThinking')}
                 />
               </div>
+              <div className="space-y-2">
+                <Label className="font-semibold flex items-center gap-2">
+                  <Fingerprint className="w-4 h-4" />
+                  {t('aiConfig.serviceProvider.forwardEndUserId')}
+                </Label>
+                <InputWithDropdown
+                  value={forwardEndUserId}
+                  onChange={onChangeForwardEndUserId}
+                  options={forwardEndUserIdOptions}
+                  formatLabel={(raw) => getForwardEndUserIdLabel(t, raw)}
+                  placeholder={t('aiConfig.serviceProvider.forwardEndUserId')}
+                  inputPlaceholder={t('aiConfig.serviceProvider.forwardEndUserId')}
+                />
+                <p className="text-xs text-muted-foreground flex items-start gap-1">
+                  <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                  <span>{getForwardEndUserIdDescription(t, forwardEndUserId)}</span>
+                </p>
+              </div>
+              {/* 盐值只在 hashed 模式下有意义，其余模式整块隐藏 */}
+              {forwardEndUserId === 'hashed' && (
+                <div className="space-y-2">
+                  <Label className="font-semibold flex items-center gap-2">
+                    <KeyRound className="w-4 h-4" />
+                    {t('aiConfig.serviceProvider.endUserIdSalt')}
+                  </Label>
+                  <ConfigField
+                    fieldKey="end_user_id_salt"
+                    field={{
+                      type: 'password',
+                      label: 'end_user_id_salt',
+                      value: endUserIdSalt,
+                      placeholder: t('aiConfig.serviceProvider.endUserIdSaltPlaceholder'),
+                      description: '',
+                    }}
+                    showLabel={false}
+                    onChange={(_k, v) => onChangeEndUserIdSalt(v as string)}
+                  />
+                  <p className="text-xs text-muted-foreground flex items-start gap-1">
+                    <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                    <span>{t('aiConfig.serviceProvider.endUserIdSaltHint')}</span>
+                  </p>
+                </div>
+              )}
             </>
           )}
         </div>

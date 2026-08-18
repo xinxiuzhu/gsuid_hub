@@ -1,4 +1,4 @@
-import { Home, LayoutDashboard, Database, Settings, FileText, LogOut, Palette, Terminal, Calendar, Store, Cpu, HardDrive, PanelLeftClose, Cog, Power, RotateCw, User, Brain, ChevronDown, ChevronRight, Wrench, Sparkles, BookOpen, History, TrendingUp, Clock, Server, GitBranch, Image as ImageIcon, ScrollText, Layers, ClipboardList, Activity, Wallet, ShieldCheck } from 'lucide-react';
+import { Home, LayoutDashboard, Database, Settings, FileText, LogOut, Palette, Terminal, Calendar, Store, Cpu, HardDrive, PanelLeftClose, Cog, Power, RotateCw, User, Brain, ChevronDown, ChevronRight, Wrench, Sparkles, BookOpen, History, TrendingUp, Clock, Server, GitBranch, Image as ImageIcon, ScrollText, Layers, ClipboardList, Activity, Wallet, ShieldCheck, Bug, PackageOpen, Send, Users, MessageCircle, FileSearch, Puzzle } from 'lucide-react';
 import { NavLink } from '@/components/NavLink';
 import { Badge } from '@/components/ui/badge';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -31,6 +31,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { useSystemControl } from '@/hooks/useSystemControl';
+import { SidebarHoverIcon, sidebarNavItemGroupClass } from '@/components/layout/SidebarHoverIcon';
 
 // 导航项类型定义
 interface NavItem {
@@ -40,6 +41,7 @@ interface NavItem {
   url?: string;
   icon?: React.ElementType;
   children?: NavItem[];
+  adminOnly?: boolean;
 }
 
 // 静态导航配置 - 避免每次渲染重新创建
@@ -65,16 +67,37 @@ const ICON_MAP: Record<string, React.ElementType> = {
   Server,
   GitBranch,
   Wallet,
+  MessageCircle,
+  Puzzle,
 };
 
+function filterAdminNav(items: NavItem[], isAdmin: boolean): NavItem[] {
+  const out: NavItem[] = [];
+  for (const item of items) {
+    if (item.adminOnly && !isAdmin) {
+      continue;
+    }
+    if (item.children && item.children.length > 0) {
+      const children = filterAdminNav(item.children, isAdmin);
+      if (children.length === 0) {
+        continue;
+      }
+      out.push({ ...item, children });
+      continue;
+    }
+    out.push(item);
+  }
+  return out;
+}
+
 // 导航项配置
-const getNavItems = (t: (key: string) => string, isAIEnabled: boolean): NavItem[] => {
+const getNavItems = (t: (key: string) => string, isAIEnabled: boolean, isAdmin: boolean): NavItem[] => {
   // AI 配置的子菜单：未启用 AI 时只保留 基础配置 / AI历史调用
   const aiConfigChildren: NavItem[] = isAIEnabled
     ? [
         { id: 'ai-basicConfig', title: t('sidebar.basicConfig'), url: '/ai-config', icon: Cog },
-        { id: 'ai-budget', title: t('sidebar.aiBudget'), url: '/ai-budget', icon: Wallet },
         { id: 'ai-personaConfig', title: t('sidebar.personaConfig'), url: '/persona-config', icon: User },
+        { id: 'ai-budget', title: t('sidebar.aiBudget'), url: '/ai-budget', icon: Wallet },
         { id: 'ai-mcpConfig', title: t('sidebar.mcpConfig'), url: '/mcp-config', icon: Server },
         { id: 'ai-capabilityAgents', title: t('sidebar.aiCapabilityAgents'), url: '/ai-capability-agents', icon: Layers },
         { id: 'ai-tools', title: t('sidebar.aiTools'), url: '/ai-tools', icon: Wrench },
@@ -86,25 +109,32 @@ const getNavItems = (t: (key: string) => string, isAIEnabled: boolean): NavItem[
         { id: 'ai-memory', title: t('sidebar.aiMemory'), url: '/ai-memory', icon: Brain },
         { id: 'ai-history', title: t('sidebar.aiHistory'), url: '/ai-history', icon: ScrollText },
         { id: 'ai-kanban', title: t('sidebar.aiKanban'), url: '/ai-kanban', icon: ClipboardList },
+        { id: 'ai-stateStore', title: t('sidebar.stateStore'), url: '/state-store', icon: HardDrive },
+        { id: 'ai-groupProfile', title: t('sidebar.groupProfile'), url: '/group-profile', icon: Users },
         { id: 'ai-approvals', title: t('sidebar.aiApprovals'), url: '/ai-approvals', icon: ShieldCheck },
+        { id: 'ai-debug', title: t('sidebar.aiDebug'), url: '/ai-debug', icon: Bug },
+        { id: 'ai-ops', title: t('sidebar.aiOps'), url: '/ai-ops', icon: Activity },
+        { id: 'ai-runtime', title: t('sidebar.aiRuntime'), url: '/ai-runtime', icon: Puzzle },
+        { id: 'ai-artifacts', title: t('sidebar.aiArtifacts'), url: '/ai-artifacts', icon: PackageOpen },
+        { id: 'ai-tool-outputs', title: t('sidebar.aiToolOutputs'), url: '/ai-tool-outputs', icon: FileSearch },
       ]
     : [
         { id: 'ai-basicConfig', title: t('sidebar.basicConfig'), url: '/ai-config', icon: Cog },
         { id: 'ai-history', title: t('sidebar.aiHistory'), url: '/ai-history', icon: ScrollText },
       ];
 
-  return [
+  const items: NavItem[] = [
     { id: 'home', title: t('sidebar.home'), url: '/home', icon: Home },
     { id: 'dashboard', title: t('sidebar.dashboard'), url: '/dashboard', icon: LayoutDashboard },
-    { id: 'database', title: t('sidebar.database'), url: '/database', icon: Database },
+    { id: 'database', title: t('sidebar.database'), url: '/database', icon: Database, adminOnly: true },
     {
       id: 'adminCore',
       title: t('sidebar.adminCore'),
       icon: Cog,
       children: [
-        { id: 'coreConfig', title: t('sidebar.coreConfig'), url: '/core-config', icon: Cog },
-        { id: 'frameworkConfig', title: t('sidebar.frameworkConfig'), url: '/framework-config', icon: Cpu },
-        { id: 'backup', title: t('sidebar.backup'), url: '/backup', icon: HardDrive },
+        { id: 'coreConfig', title: t('sidebar.coreConfig'), url: '/core-config', icon: Cog, adminOnly: true },
+        { id: 'frameworkConfig', title: t('sidebar.frameworkConfig'), url: '/framework-config', icon: Cpu, adminOnly: true },
+        { id: 'backup', title: t('sidebar.backup'), url: '/backup', icon: HardDrive, adminOnly: true },
         { id: 'scheduler', title: t('sidebar.scheduler'), url: '/scheduler', icon: Calendar }
       ]
     },
@@ -116,7 +146,9 @@ const getNavItems = (t: (key: string) => string, isAIEnabled: boolean): NavItem[
         { id: 'console', title: t('sidebar.console'), url: '/console', icon: Terminal },
         { id: 'historyLogs', title: t('sidebar.historyLogs'), url: '/logs', icon: FileText },
         { id: 'traces', title: t('sidebar.traces'), url: '/traces', icon: Activity },
-        { id: 'sessionManagement', title: t('sidebar.sessionManagement'), url: '/session-management', icon: History }
+        { id: 'sessionManagement', title: t('sidebar.sessionManagement'), url: '/session-management', icon: History },
+        { id: 'liveChat', title: t('sidebar.liveChat'), url: '/live-chat', icon: MessageCircle },
+        { id: 'batchPush', title: t('sidebar.batchPush'), url: '/batch-push', icon: Send, adminOnly: true }
       ]
     },
     {
@@ -125,7 +157,7 @@ const getNavItems = (t: (key: string) => string, isAIEnabled: boolean): NavItem[
       icon: Brain,
       children: aiConfigChildren,
     },
-    { id: 'plugins', title: t('sidebar.plugins'), url: '/plugins', icon: Settings },
+    { id: 'plugins', title: t('sidebar.plugins'), url: '/plugins', icon: Settings, adminOnly: true },
     { id: 'pluginStore', title: t('sidebar.pluginStore'), url: '/plugin-store', icon: Store },
     { id: 'gitUpdate', title: t('sidebar.gitUpdate'), url: '/git-update', icon: GitBranch },
     {
@@ -134,10 +166,12 @@ const getNavItems = (t: (key: string) => string, isAIEnabled: boolean): NavItem[
       icon: Settings,
       children: [
         { id: 'themes', title: t('sidebar.themes'), url: '/themes', icon: Palette },
+        { id: 'brandSettings', title: t('sidebar.brandSettings'), url: '/brand-settings', icon: ImageIcon },
         { id: 'accountSettings', title: t('sidebar.accountSettings'), url: '/settings', icon: User }
       ]
     }
   ];
+  return filterAdminNav(items, isAdmin);
 };
 
 // 使用memo优化NavItem渲染
@@ -185,6 +219,7 @@ const MemoizedNavItem = memo(function MemoizedNavItem({
               <SidebarMenuButton
                 tooltip={item.title}
                 className={cn(
+                  sidebarNavItemGroupClass,
                   "flex items-center rounded-lg transition-all cursor-pointer",
                   "justify-center w-10 h-10 p-0",
                   "hover:bg-primary/10",
@@ -192,7 +227,9 @@ const MemoizedNavItem = memo(function MemoizedNavItem({
                   isItemActive && "bg-primary/20 text-primary font-medium shadow-sm"
                 )}
               >
-                {item.icon && React.createElement(item.icon, { className: iconClass, style: iconStyle })}
+                {item.icon && (
+                  <SidebarHoverIcon icon={item.icon} className={iconClass} style={iconStyle} />
+                )}
               </SidebarMenuButton>
             </DropdownMenuTrigger>
             <DropdownMenuContent
@@ -208,10 +245,12 @@ const MemoizedNavItem = memo(function MemoizedNavItem({
                 <DropdownMenuItem key={child.id} asChild>
                   <NavLink
                     to={child.url || '#'}
-                    className="cursor-pointer flex items-center gap-2 py-2"
+                    className={cn(sidebarNavItemGroupClass, "cursor-pointer flex items-center gap-2 py-2")}
                     activeClassName="bg-accent text-accent-foreground font-medium"
                   >
-                    {child.icon && <child.icon className="w-4 h-4 shrink-0" style={iconStyle} />}
+                    {child.icon && (
+                      <SidebarHoverIcon icon={child.icon} className="w-4 h-4 shrink-0" style={iconStyle} />
+                    )}
                     <span>{child.title}</span>
                   </NavLink>
                 </DropdownMenuItem>
@@ -234,16 +273,19 @@ const MemoizedNavItem = memo(function MemoizedNavItem({
             <SidebarMenuButton
               tooltip={item.title}
               className={cn(
+                sidebarNavItemGroupClass,
                 "flex items-center rounded-lg transition-all cursor-pointer",
                 "gap-3 px-3 py-2.5 w-full",
                 "hover:bg-primary/10"
               )}
             >
-              {item.icon && React.createElement(item.icon, { className: iconClass, style: iconStyle })}
+              {item.icon && (
+                <SidebarHoverIcon icon={item.icon} className={iconClass} style={iconStyle} />
+              )}
               <span className="flex-1 text-left">{item.title}</span>
               {isExpanded
-                ? React.createElement(ChevronDown, { className: iconClass, style: iconStyle })
-                : React.createElement(ChevronRight, { className: iconClass, style: iconStyle })}
+                ? <SidebarHoverIcon icon={ChevronDown} className={iconClass} style={iconStyle} />
+                : <SidebarHoverIcon icon={ChevronRight} className={iconClass} style={iconStyle} />}
             </SidebarMenuButton>
           </CollapsibleTrigger>
           <CollapsibleContent>
@@ -254,13 +296,16 @@ const MemoizedNavItem = memo(function MemoizedNavItem({
                     <NavLink
                       to={child.url || '#'}
                       className={cn(
+                        sidebarNavItemGroupClass,
                         "flex items-center rounded-lg transition-all",
                         "gap-3 px-3 py-2",
                         "hover:bg-primary/10"
                       )}
                       activeClassName="bg-primary/20 text-primary font-medium shadow-sm"
                     >
-                      {child.icon && <child.icon className="w-4 h-4 shrink-0" style={iconStyle} />}
+                      {child.icon && (
+                        <SidebarHoverIcon icon={child.icon} className="w-4 h-4 shrink-0" style={iconStyle} />
+                      )}
                       <span>{child.title}</span>
                     </NavLink>
                   </SidebarMenuButton>
@@ -279,13 +324,16 @@ const MemoizedNavItem = memo(function MemoizedNavItem({
         <NavLink
           to={item.url || '#'}
           className={cn(
+            sidebarNavItemGroupClass,
             "flex items-center rounded-lg transition-all",
             isCollapsed ? "justify-center w-10 h-10 p-0" : "gap-3 px-3 py-2.5",
             "hover:bg-primary/10"
           )}
           activeClassName="bg-primary/20 text-primary font-medium shadow-sm"
         >
-          {item.icon && <item.icon className="w-5 h-5 shrink-0" style={iconStyle} />}
+          {item.icon && (
+            <SidebarHoverIcon icon={item.icon} className="w-5 h-5 shrink-0" style={iconStyle} />
+          )}
           {!isCollapsed && <span>{item.title}</span>}
         </NavLink>
       </SidebarMenuButton>
@@ -297,13 +345,14 @@ const MemoizedNavItem = memo(function MemoizedNavItem({
 export function AppSidebar() {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const { state: sidebarState, toggleSidebar, isMobile } = useSidebar();
   const { style: themeStyle, iconColor, sidebarLayout } = useTheme();
   const { t, language, setLanguage, availableLanguages } = useLanguage();
   const { isAIEnabled, refresh: refreshAIStatus } = useAIStatus();
   const { title: brandTitle, subtitle: brandSubtitle, iconUrl: brandIconUrl } = useBrand();
 
-  const navItems = useMemo(() => getNavItems(t, isAIEnabled), [t, isAIEnabled]);
+  const navItems = useMemo(() => getNavItems(t, isAIEnabled, isAdmin), [t, isAIEnabled, isAdmin]);
   // 移动端模式下侧边栏总是展开（抽屉打开后需要展示完整菜单，而不是仅 icon）
   // 桌面端才遵循用户的收起/展开偏好
   const isCollapsed = !isMobile && sidebarState === 'collapsed';
@@ -445,7 +494,7 @@ export function AppSidebar() {
               <div className="flex items-center gap-1 whitespace-nowrap">
                 <span className="font-bold text-lg">{brandTitle}</span>
                 {/* rounded-md 挂 --radius，随主题杂项「圆角强度」变化；覆盖 Badge 默认的 rounded-full */}
-                <Badge variant="default" className="rounded-md text-xs font-medium shrink-0">v{import.meta.env.PACKAGE_VERSION || '0.0.18'}</Badge>
+                <Badge variant="default" className="rounded-md text-xs font-medium shrink-0">v{import.meta.env.PACKAGE_VERSION || '0.1.2'}</Badge>
               </div>
               <span className="text-xs text-muted-foreground whitespace-nowrap">{brandSubtitle}</span>
             </div>
@@ -454,13 +503,14 @@ export function AppSidebar() {
           <button
             onClick={toggleSidebar}
             className={cn(
+              sidebarNavItemGroupClass,
               "h-8 flex items-center justify-center rounded-lg hover:bg-primary/10 transition-all duration-300 ease-out-soft text-muted-foreground hover:text-foreground shrink-0 overflow-hidden",
               isCollapsed ? "w-0 opacity-0 pointer-events-none" : "w-8 opacity-100"
             )}
             aria-label={t('sidebar.collapseSidebar')}
             tabIndex={isCollapsed ? -1 : 0}
           >
-            <PanelLeftClose className="w-4 h-4" />
+            <SidebarHoverIcon icon={PanelLeftClose} className="w-4 h-4" />
           </button>
         </div>
       </SidebarHeader>
@@ -548,44 +598,53 @@ export function AppSidebar() {
           </DropdownMenuContent>
         </DropdownMenu>
 
+        {isAdmin && (
         <Button
           variant="ghost"
           size={isCollapsed ? 'icon' : 'default'}
           onClick={() => setShowPauseDialog(true)}
           title={isPaused ? t('sidebar.resumeGsCore') : t('sidebar.pauseGsCore')}
           className={cn(
+            sidebarNavItemGroupClass,
             "hover:text-yellow-500 hover:bg-yellow-500/10 transition-colors",
             isCollapsed ? "w-auto justify-center" : "w-full justify-start gap-2"
           )}
         >
-          {isPaused ? <RotateCw className="w-4 h-4" /> : <Power className="w-4 h-4" />}
+          {isPaused
+            ? <SidebarHoverIcon icon={RotateCw} className="w-4 h-4" />
+            : <SidebarHoverIcon icon={Power} className="w-4 h-4" />}
           {!isCollapsed && <span>{isPaused ? t('sidebar.resumeGsCore') : t('sidebar.pauseGsCore')}</span>}
         </Button>
+        )}
 
+        {isAdmin && (
         <Button
           variant="ghost"
           size={isCollapsed ? 'icon' : 'default'}
           onClick={() => setShowRestartDialog(true)}
           title={t('sidebar.restartGsCore')}
           className={cn(
+            sidebarNavItemGroupClass,
             "hover:text-orange-500 hover:bg-orange-500/10 transition-colors",
             isCollapsed ? "w-auto justify-center" : "w-full justify-start gap-2"
           )}
         >
-          <Power className="w-4 h-4" />
+          <SidebarHoverIcon icon={Power} className="w-4 h-4" />
           {!isCollapsed && <span>{t('sidebar.restartGsCore')}</span>}
         </Button>
+        )}
 
         <Button
           variant="ghost"
           size={isCollapsed ? 'icon' : 'default'}
           onClick={logout}
           className={cn(
+            sidebarNavItemGroupClass,
             "hover:text-destructive hover:bg-destructive/10 transition-colors",
             isCollapsed ? "w-auto justify-center" : "w-full justify-start gap-2"
           )}
         >
-          <LogOut className="w-4 h-4" />
+          <SidebarHoverIcon icon={LogOut} className="w-4 h-4" />
           {!isCollapsed && <span>{t('sidebar.logout')}</span>}
         </Button>
       </SidebarFooter>

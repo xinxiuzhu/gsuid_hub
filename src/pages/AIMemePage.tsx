@@ -41,7 +41,11 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { TagsInput } from '@/components/config/TagsInput';
-import { TabButtonGroup } from '@/components/ui/TabButtonGroup';
+import {
+  TabButtonGroup,
+  tabToolbarControlClass,
+  tabToolbarGroupWrapClass,
+} from '@/components/ui/TabButtonGroup';
 import {
   Image as ImageIcon,
   Search,
@@ -64,6 +68,7 @@ import {
   Layers,
   Download,
   FileUp,
+  FileDown,
   Eraser,
   RotateCw,
   ListChecks,
@@ -98,6 +103,7 @@ import {
 } from '@/lib/memeSelection';
 import { PinnedPage } from '@/components/layout/PinnedPage';
 import { toast } from 'sonner';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 
 // ============================================================================
 // Types
@@ -193,6 +199,42 @@ function formatDateTime(dateStr: string | null): string {
   } catch {
     return dateStr;
   }
+}
+
+/** 把列表项 / 详情接口可能缺字段的记录补成 MemeDetailDialog 可安全渲染的形状。
+ *  demo 下若 mock 未命中会返回 emptyFor 空对象，直接 `[...meme.emotion_tags]` 会抛错白屏。 */
+function normalizeMemeRecord(raw: Partial<MemeRecord> | null | undefined, fallback?: MemeRecord | null): MemeRecord | null {
+  if (!raw || typeof raw !== 'object') return fallback ?? null;
+  const base = fallback ?? null;
+  const asStringArray = (v: unknown, fb: string[] = []): string[] =>
+    Array.isArray(v) ? v.map(String) : fb;
+  const memeId = typeof raw.meme_id === 'string' && raw.meme_id
+    ? raw.meme_id
+    : base?.meme_id;
+  if (!memeId) return base;
+  return {
+    meme_id: memeId,
+    file_path: typeof raw.file_path === 'string' ? raw.file_path : (base?.file_path ?? ''),
+    file_size: typeof raw.file_size === 'number' ? raw.file_size : (base?.file_size ?? 0),
+    file_mime: typeof raw.file_mime === 'string' ? raw.file_mime : (base?.file_mime ?? 'image/png'),
+    width: typeof raw.width === 'number' ? raw.width : (base?.width ?? 0),
+    height: typeof raw.height === 'number' ? raw.height : (base?.height ?? 0),
+    source_group: typeof raw.source_group === 'string' ? raw.source_group : (base?.source_group ?? ''),
+    folder: typeof raw.folder === 'string' ? raw.folder : (base?.folder ?? 'common'),
+    persona_hint: typeof raw.persona_hint === 'string' ? raw.persona_hint : (base?.persona_hint ?? ''),
+    emotion_tags: asStringArray(raw.emotion_tags, base?.emotion_tags ?? []),
+    scene_tags: asStringArray(raw.scene_tags, base?.scene_tags ?? []),
+    description: typeof raw.description === 'string' ? raw.description : (base?.description ?? ''),
+    custom_tags: asStringArray(raw.custom_tags, base?.custom_tags ?? []),
+    status: (raw.status as MemeRecord['status']) || base?.status || 'tagged',
+    nsfw_score: typeof raw.nsfw_score === 'number' ? raw.nsfw_score : (base?.nsfw_score ?? 0),
+    use_count: typeof raw.use_count === 'number' ? raw.use_count : (base?.use_count ?? 0),
+    last_used_at: (raw.last_used_at as string | null | undefined) ?? base?.last_used_at ?? null,
+    last_used_group: typeof raw.last_used_group === 'string' ? raw.last_used_group : (base?.last_used_group ?? ''),
+    created_at: typeof raw.created_at === 'string' ? raw.created_at : (base?.created_at ?? ''),
+    tagged_at: (raw.tagged_at as string | null | undefined) ?? base?.tagged_at ?? null,
+    updated_at: typeof raw.updated_at === 'string' ? raw.updated_at : (base?.updated_at ?? ''),
+  };
 }
 
 // ============================================================================
@@ -513,7 +555,7 @@ const MemeCard = memo(function MemeCard({
           >
             {formatImageType(meme.file_mime)}
           </Badge>
-          {meme.emotion_tags.slice(0, 3).map((tag) => (
+          {(Array.isArray(meme.emotion_tags) ? meme.emotion_tags : []).slice(0, 3).map((tag) => (
             <Badge
               key={tag}
               variant="secondary"
@@ -522,7 +564,7 @@ const MemeCard = memo(function MemeCard({
               {tag}
             </Badge>
           ))}
-          {meme.emotion_tags.length > 3 && (
+          {Array.isArray(meme.emotion_tags) && meme.emotion_tags.length > 3 && (
             <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-5">
               +{meme.emotion_tags.length - 3}
             </Badge>
@@ -577,11 +619,12 @@ function MemeDetailDialog({
   useEffect(() => {
     if (meme) {
       setEditDescription(meme.description || '');
-      setEditEmotionTags([...meme.emotion_tags]);
-      setEditSceneTags([...meme.scene_tags]);
-      setEditCustomTags([...meme.custom_tags]);
+      // 始终用 Array.isArray 兜底，避免缺字段时展开抛错导致整页白屏
+      setEditEmotionTags(Array.isArray(meme.emotion_tags) ? [...meme.emotion_tags] : []);
+      setEditSceneTags(Array.isArray(meme.scene_tags) ? [...meme.scene_tags] : []);
+      setEditCustomTags(Array.isArray(meme.custom_tags) ? [...meme.custom_tags] : []);
       setEditPersonaHint(meme.persona_hint || '');
-      setMoveTarget(meme.folder);
+      setMoveTarget(meme.folder || '');
     }
   }, [meme]);
 
@@ -1281,6 +1324,17 @@ export default function AIMemePage() {
   const [isRetaggingPending, setIsRetaggingPending] = useState(false);
   const [showPurgeDialog, setShowPurgeDialog] = useState(false);
   const [showRetagPendingDialog, setShowRetagPendingDialog] = useState(false);
+  // 按条件清空（全部 / 当前筛选）
+  const [showPurgeAllDialog, setShowPurgeAllDialog] = useState(false);
+  const [purgeScope, setPurgeScope] = useState<'filtered' | 'all'>('filtered');
+  const [isPurgingAll, setIsPurgingAll] = useState(false);
+  // === .meme 导入对话框状态 ===
+  const [showImportDotMemeDialog, setShowImportDotMemeDialog] = useState(false);
+  const [importDotMemeFile, setImportDotMemeFile] = useState<File | null>(null);
+  const [importDotMemePersonaHint, setImportDotMemePersonaHint] = useState<string>('');
+  const [importDotMemeSkip, setImportDotMemeSkip] = useState(true);
+  const [importDotMemeAutoTag, setImportDotMemeAutoTag] = useState(false);
+  const [importingDotMeme, setImportingDotMeme] = useState(false);
 
   // Search debounce
   const searchTimerRef = useRef<ReturnType<typeof setTimeout>>();
@@ -1337,8 +1391,13 @@ export default function AIMemePage() {
       };
 
       const data = await memeApi.getList(params);
-      setMemes(data.records);
-      setTotal(data.total);
+      const records = Array.isArray(data?.records) ? data.records : [];
+      setMemes(
+        records
+          .map((r) => normalizeMemeRecord(r))
+          .filter((r): r is MemeRecord => r != null),
+      );
+      setTotal(typeof data?.total === 'number' ? data.total : records.length);
     } catch (error) {
       console.error('Failed to fetch memes:', error);
       toast.error(t('aiMeme.loadFailed'));
@@ -1429,18 +1488,79 @@ export default function AIMemePage() {
     if (deletePollTimerRef.current) clearTimeout(deletePollTimerRef.current);
   }, []);
 
+  // Export current filter view (or selection) to .meme archive
+  const handleExportDotMeme = async () => {
+    const ids = selectedIds.size > 0 ? Array.from(selectedIds) : undefined;
+    const folder = ids ? undefined : filterFolder || undefined;
+    try {
+      setIsExporting(true);
+      const blob = await memeApi.exportMemes(ids, folder);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      a.download = `memes_${stamp}.meme`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success(t('aiMeme.exportDotMemeSuccess'));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : t('aiMeme.exportDotMemeFailed'));
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleImportDotMeme = async () => {
+    if (!importDotMemeFile) {
+      toast.warning(t('aiMeme.importDotMemeFileRequired'));
+      return;
+    }
+    try {
+      setImportingDotMeme(true);
+      const result = await memeApi.importMemes(
+        importDotMemeFile,
+        importDotMemeSkip,
+        importDotMemeAutoTag,
+        importDotMemePersonaHint || undefined,
+      );
+      toast.success(
+        t('aiMeme.importDotMemeSuccess', {
+          imported: result.imported_count,
+          skipped: result.skipped_count,
+        }),
+      );
+      setShowImportDotMemeDialog(false);
+      setImportDotMemeFile(null);
+      fetchMemes();
+      fetchStats();
+      fetchPersonas();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : t('aiMeme.importDotMemeFailed'));
+    } finally {
+      setImportingDotMeme(false);
+    }
+  };
+
   // ============================================================================
   // Handlers
   // ============================================================================
 
   const handleMemeClick = useCallback(async (meme: MemeRecord) => {
+    // 先用列表项立刻打开弹窗（已规范化），避免等详情时空白；详情返回后再覆盖。
+    const safeListItem = normalizeMemeRecord(meme);
+    if (safeListItem) {
+      setSelectedMeme(safeListItem);
+      setDetailOpen(true);
+    }
     try {
       const detail = await memeApi.getDetail(meme.meme_id);
-      setSelectedMeme(detail);
+      const safe = normalizeMemeRecord(detail, safeListItem);
+      if (safe) setSelectedMeme(safe);
     } catch {
-      setSelectedMeme(meme);
+      // 列表项已展示，详情失败时保持列表数据即可
     }
-    setDetailOpen(true);
   }, []);
 
   const handleDetailUpdate = () => {
@@ -1449,7 +1569,13 @@ export default function AIMemePage() {
     fetchPersonas();
     // Refresh selected meme
     if (selectedMeme) {
-      memeApi.getDetail(selectedMeme.meme_id).then(setSelectedMeme).catch(() => {});
+      memeApi
+        .getDetail(selectedMeme.meme_id)
+        .then((detail) => {
+          const safe = normalizeMemeRecord(detail, selectedMeme);
+          if (safe) setSelectedMeme(safe);
+        })
+        .catch(() => {});
     }
   };
 
@@ -1656,9 +1782,64 @@ export default function AIMemePage() {
       fetchStats();
       fetchPersonas();
     } catch (error) {
-      toast.error(t('aiMeme.purgeRejectedFailed'));
+      toast.error(getApiErrorMessage(error, t('aiMeme.purgeRejectedFailed')));
     } finally {
       setIsPurging(false);
+    }
+  };
+
+  // 按条件清空：全部(purge_all) 或 当前筛选（status / folder / persona；不含语义搜索）
+  const handlePurgeAll = async () => {
+    try {
+      setIsPurgingAll(true);
+
+      const params: {
+        confirm: true;
+        purge_all?: boolean;
+        status?: string;
+        folder?: string;
+        persona_hint?: string;
+      } = { confirm: true };
+
+      if (purgeScope === 'all') {
+        params.purge_all = true;
+      } else {
+        if (filterStatus) params.status = filterStatus;
+        if (filterFolder) {
+          params.folder = filterFolder;
+        } else if (filterPersona && filterPersona !== PERSONA_ALL) {
+          params.persona_hint = filterPersona;
+        }
+        if (!params.status && !params.folder && !params.persona_hint) {
+          toast.error(t('aiMeme.purgeFilteredNoFilter'));
+          return;
+        }
+      }
+
+      toast.info(t('aiMeme.purgeAllWorking'));
+      const result = await memeApi.purge(params);
+      if (result.purged_count === 0) {
+        toast.info(t('aiMeme.purgeAllNone'));
+      } else if (!result.failed?.length) {
+        toast.success(t('aiMeme.purgeAllSuccess', { count: result.purged_count }));
+      } else {
+        toast.warning(
+          t('aiMeme.purgeAllPartial', {
+            success: result.purged_count,
+            failed: result.failed.length,
+          }),
+        );
+      }
+      setShowPurgeAllDialog(false);
+      setSelectedIds(new Set());
+      setPage(1);
+      fetchMemes();
+      fetchStats();
+      fetchPersonas();
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, t('aiMeme.purgeAllFailed')));
+    } finally {
+      setIsPurgingAll(false);
     }
   };
 
@@ -1729,6 +1910,21 @@ export default function AIMemePage() {
                 {t('aiMeme.batchRetagPending')}
               </Button>
             )}
+            {(stats?.total ?? total) > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setPurgeScope('filtered');
+                  setShowPurgeAllDialog(true);
+                }}
+                disabled={isPurgingAll}
+                className="gap-1.5 whitespace-nowrap border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+              >
+                <Trash2 className="w-4 h-4" />
+                {t('aiMeme.purgeAll')}
+              </Button>
+            )}
             <Button
               variant={selectionMode ? 'secondary' : 'outline'}
               size="sm"
@@ -1758,6 +1954,27 @@ export default function AIMemePage() {
             >
               <Upload className="w-4 h-4" />
               {t('aiMeme.upload.title')}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowImportDotMemeDialog(true)}
+              className="gap-1.5 whitespace-nowrap"
+              title={t('aiMeme.importDotMeme')}
+            >
+              <FileDown className="w-4 h-4" />
+              <span className="hidden xl:inline">{t('aiMeme.importDotMeme')}</span>
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleExportDotMeme}
+              className="gap-1.5 whitespace-nowrap"
+              title={t('aiMeme.exportDotMeme')}
+              disabled={memes.length === 0}
+            >
+              <FileUp className="w-4 h-4" />
+              <span className="hidden xl:inline">{t('aiMeme.exportDotMeme')}</span>
             </Button>
           </div>
         </div>
@@ -1939,22 +2156,24 @@ export default function AIMemePage() {
         ) : null}
       </div>
 
-      {/* Filter Bar - single row: TabButtonGroup + Search + Sort */}
+      {/* Filter Bar - single row: TabButtonGroup + Search + Sort；同行控件 h-11 对齐默认 group 高度 */}
       <div className="flex flex-wrap items-center gap-3">
         {/* Status Tab Filter */}
-        <TabButtonGroup
-          value={filterStatus}
-          onValueChange={(v) => updateStructuredQuery(() => setFilterStatus(v))}
-          className="shrink-0"
-          options={[
-            { value: 'tagged', label: t('aiMeme.status.tagged'), icon: <CheckCircle2 className="w-4 h-4" /> },
-            { value: 'pending', label: t('aiMeme.status.pending'), icon: <Clock className="w-4 h-4" /> },
-            { value: 'pending_manual', label: t('aiMeme.status.pendingManual'), icon: <AlertCircle className="w-4 h-4" /> },
-            { value: 'manual', label: t('aiMeme.status.manual'), icon: <Sparkles className="w-4 h-4" /> },
-            { value: 'rejected', label: t('aiMeme.status.rejected'), icon: <X className="w-4 h-4" /> },
-            { value: '', label: t('aiMeme.filter.allStatus'), icon: <Layers className="w-4 h-4" /> },
-          ]}
-        />
+        <div className={tabToolbarGroupWrapClass}>
+          <TabButtonGroup
+            value={filterStatus}
+            onValueChange={(v) => updateStructuredQuery(() => setFilterStatus(v))}
+            className="shrink-0"
+            options={[
+              { value: 'tagged', label: t('aiMeme.status.tagged'), icon: <CheckCircle2 className="w-4 h-4" /> },
+              { value: 'pending', label: t('aiMeme.status.pending'), icon: <Clock className="w-4 h-4" /> },
+              { value: 'pending_manual', label: t('aiMeme.status.pendingManual'), icon: <AlertCircle className="w-4 h-4" /> },
+              { value: 'manual', label: t('aiMeme.status.manual'), icon: <Sparkles className="w-4 h-4" /> },
+              { value: 'rejected', label: t('aiMeme.status.rejected'), icon: <X className="w-4 h-4" /> },
+              { value: '', label: t('aiMeme.filter.allStatus'), icon: <Layers className="w-4 h-4" /> },
+            ]}
+          />
+        </div>
 
         {/* Search */}
         <div className={cn(
@@ -1966,7 +2185,7 @@ export default function AIMemePage() {
             value={searchInput}
             onChange={(e) => handleSearchChange(e.target.value)}
             placeholder={t('aiMeme.filter.searchPlaceholder')}
-            className="h-11 pl-10 pr-9 text-sm bg-transparent border-0 rounded-none shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+            className={cn(tabToolbarControlClass, 'pl-10 pr-9 text-sm bg-transparent border-0 rounded-none shadow-none focus-visible:ring-0 focus-visible:ring-offset-0')}
           />
           {searchInput && (
             <button
@@ -1994,7 +2213,7 @@ export default function AIMemePage() {
             value={filterPersona}
             onValueChange={(v) => updateStructuredQuery(() => setFilterPersona(v))}
           >
-            <SelectTrigger className="w-auto min-w-[180px] max-w-[260px] h-11 text-sm whitespace-nowrap bg-transparent border-0 rounded-none shadow-none focus:ring-0 focus:ring-offset-0">
+            <SelectTrigger className={cn(tabToolbarControlClass, 'w-auto min-w-[180px] max-w-[260px] text-sm whitespace-nowrap bg-transparent border-0 rounded-none shadow-none focus:ring-0 focus:ring-offset-0')}>
               <div className="flex items-center gap-1.5 min-w-0">
                 <Users className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
                 <SelectValue placeholder={t('aiMeme.filter.persona')} />
@@ -2025,7 +2244,7 @@ export default function AIMemePage() {
             value={sortBy}
             onValueChange={(v) => updateStructuredQuery(() => setSortBy(v as SortOption))}
           >
-            <SelectTrigger className="w-auto min-w-[160px] h-11 text-sm whitespace-nowrap bg-transparent border-0 rounded-none shadow-none focus:ring-0 focus:ring-offset-0">
+            <SelectTrigger className={cn(tabToolbarControlClass, 'w-auto min-w-[160px] text-sm whitespace-nowrap bg-transparent border-0 rounded-none shadow-none focus:ring-0 focus:ring-offset-0')}>
               <div className="flex items-center gap-1.5">
                 <TrendingUp className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
                 <SelectValue placeholder={t('aiMeme.filter.sortBy')} />
@@ -2432,6 +2651,51 @@ export default function AIMemePage() {
         </AlertDialogContent>
       </AlertDialog>
 
+      {/* Purge All / Filtered Confirm Dialog */}
+      <AlertDialog open={showPurgeAllDialog} onOpenChange={(open) => !isPurgingAll && setShowPurgeAllDialog(open)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('aiMeme.purgeAllConfirm')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('aiMeme.purgeAllConfirmDesc')}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <RadioGroup
+            value={purgeScope}
+            onValueChange={(v) => setPurgeScope(v as 'filtered' | 'all')}
+            className="gap-3 py-2"
+            disabled={isPurgingAll}
+          >
+            <label className="flex items-start gap-3 rounded-md border border-border p-3 cursor-pointer hover:bg-muted/40">
+              <RadioGroupItem value="filtered" id="purge-scope-filtered" className="mt-0.5" />
+              <span className="text-sm leading-snug">
+                {t('aiMeme.purgeScopeFiltered', { count: total })}
+              </span>
+            </label>
+            <label className="flex items-start gap-3 rounded-md border border-border p-3 cursor-pointer hover:bg-muted/40">
+              <RadioGroupItem value="all" id="purge-scope-all" className="mt-0.5" />
+              <span className="text-sm leading-snug">
+                {t('aiMeme.purgeScopeAll', { count: stats?.total ?? total })}
+              </span>
+            </label>
+          </RadioGroup>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isPurgingAll}>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                void handlePurgeAll();
+              }}
+              disabled={isPurgingAll}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isPurgingAll && <Loader2 className="w-4 h-4 animate-spin mr-1.5" />}
+              {t('common.confirm')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* Batch Retag Pending Confirm Dialog */}
       <AlertDialog open={showRetagPendingDialog} onOpenChange={setShowRetagPendingDialog}>
         <AlertDialogContent>
@@ -2453,6 +2717,54 @@ export default function AIMemePage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* .meme 导入对话框 */}
+      <Dialog open={showImportDotMemeDialog} onOpenChange={setShowImportDotMemeDialog}>
+        <DialogContent className="glass-card">
+          <DialogHeader>
+            <DialogTitle>{t('aiMeme.importDotMemeTitle')}</DialogTitle>
+            <DialogDescription>{t('aiMeme.importDotMemeDesc')}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <Input
+              type="file"
+              accept=".meme,.zip,application/octet-stream,application/zip"
+              onChange={(e) => setImportDotMemeFile(e.target.files?.[0] ?? null)}
+            />
+            <Input
+              className="h-9"
+              placeholder={t('aiMeme.importDotMemePersonaHint') ?? ''}
+              value={importDotMemePersonaHint}
+              onChange={(e) => setImportDotMemePersonaHint(e.target.value)}
+            />
+            <div className="flex items-center gap-4">
+              <label className="flex items-center gap-2 text-sm">
+                <Switch
+                  checked={importDotMemeSkip}
+                  onCheckedChange={setImportDotMemeSkip}
+                />
+                {t('aiMeme.importDotMemeSkipExisting')}
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <Switch
+                  checked={importDotMemeAutoTag}
+                  onCheckedChange={setImportDotMemeAutoTag}
+                />
+                {t('aiMeme.importDotMemeAutoTag')}
+              </label>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowImportDotMemeDialog(false)}>
+              {t('common.cancel')}
+            </Button>
+            <Button onClick={handleImportDotMeme} disabled={importingDotMeme}>
+              {importingDotMeme && <Loader2 className="w-4 h-4 animate-spin mr-1.5" />}
+              {t('aiMeme.importDotMemeSubmit')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </PinnedPage>
   );
 }

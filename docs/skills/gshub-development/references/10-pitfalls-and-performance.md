@@ -22,7 +22,12 @@ toast.error((mode === 'create' ? t('…createFailed') : t('…updateFailed')) + 
 
 ### P-3 一行筛选/表单控件高度不统一 ★★
 
-`Input`(h-10) + `SelectTrigger`(h-9) + `Button`(h-10) 并排不显式统一 `h-9` → 高低不齐。详见 [§05](./05-components-and-form-controls.md)。
+`Input`(h-10) + `SelectTrigger`(h-9) + `Button`(h-10) 并排不显式统一高度 → 高低不齐。
+
+- **无 TabButtonGroup**：统一 `h-9`。
+- **有 TabButtonGroup**：保持默认 group 高度，同行用 `tabToolbarControlClass`（`h-11`）；**禁止**把 group 压成 `h-8`/`h-9` 矮版。
+
+详见 [§05 §5.4](./05-components-and-form-controls.md)、[§06 §6.1](./06-reusable-component-catalog.md)。
 
 ### P-4 条件渲染里把分支文案写死 ★
 
@@ -298,7 +303,7 @@ padding: var(--shadow-bleed);             /*  0.75rem：把内容推回原位 */
 
 ### P-26 demo 模式的页面崩溃 ≠ 你改坏了 ★
 
-`npm run dev:demo` 的 Mock Server（`src/lib/mockServer.ts`）**只覆盖了部分 `/api/*`**，未匹配的请求会
+`pnpm dev:demo` 的 Mock Server（`src/lib/mockServer.ts`）**只覆盖了部分 `/api/*`**，未匹配的请求会
 穿透到 `originalFetch` → 404 → 页面拿到 `undefined` 字段后崩溃。当前已知在 demo 模式下**必崩**的页面
 （在**未改动的 HEAD 代码**上同样复现，与前端改动无关）：
 
@@ -406,6 +411,57 @@ min-content 宽 = 整句话的宽度，**永不收缩**。把它塞进 `flex ite
 **自检**：窄屏（390 / 360）下遍历 DOM，任何元素的 `getBoundingClientRect().right` 都不应超过
 `.layout-page-inner` 的右边界；同时留意某个文本节点的**高度异常大**（= 被挤成竖条）。
 
+### P-30 Live Chat / 长连接：handler 进 useEffect 依赖 → WS 断连风暴 ★★★
+
+**症状**：改昵称、切会话、语言切换后「消息发出去了但 AI 从不回复」；Network 里 WS 反复
+close/open；core 日志出现请求被丢弃。
+
+**根因**：把 `onMessage` 闭包或 `identity` / `conversations` / `t` 放进「建连」的
+`useEffect` 依赖 → 每次状态更新都 `disconnect` + 新建 socket。Core 适配器队列里的未完成
+请求超过 **STALE_CHAT_REQUEST_TTL ≈ 8s** 会被当作陈旧请求丢弃。
+
+**修法**：
+
+```tsx
+const handleIncomingRef = useRef<(msg: MessageSend) => void>(() => {});
+handleIncomingRef.current = (msg) => { /* 读 identityRef / activeIdRef / tRef */ };
+
+useEffect(() => {
+  if (!coreLoaded) return;
+  const client = new LiveChatWsClient({ token: getAuthToken() || '', … });
+  client.setHandlers({ onMessage: (m) => handleIncomingRef.current(m) });
+  client.connect();
+  return () => client.disconnect();
+}, [coreLoaded]); // 仅建连相关；禁止 identity / conversations / t
+```
+
+同类长连接（Console 日志 WS 等）同样适用。详见 [§11 §11.4](./11-live-chat.md)。
+
+### P-31 Live Chat：同会话连发被 8s 队列 TTL 丢弃 ★★
+
+**症状**：用户快速连发两条，只有第一条有回复，或两条都没回复；后端侧请求「进了队列又没了」。
+
+**根因**：GsCore 对适配器未完成 chat 请求有约 **8 秒** 陈旧 TTL。同一会话在上一轮 AI 还在跑时
+再上报，后发请求可能在队列里等到超时被丢。
+
+**修法**（`LiveChatPage` 已实现）：
+
+- `awaitingByConv[convId]`：发送成功置 true；收到 `role==='bot'` 或 120s 保险超时后清 false；
+- 发送 / +1 / 重试前若 awaiting → `toast.message(t('liveChat.waitForReply'))` 并 return；
+- 空下发（TTL 丢弃导致 content 无有效段）**不要画气泡**，但仍要处理 `echo` 回执。
+
+详见 [§11 §11.6](./11-live-chat.md)。
+
+### P-32 早柚协议历史 typo 字段不要「纠正」★
+
+后端 / 协议里长期存在：
+
+- `ButtonData.permisson`（应为 permission）
+- `excute_delete_message` / `excute_ban_user`（应为 execute_…）
+
+前端 `types.ts` / `protocol.ts` **必须原样对齐**。改成正确拼写会导致按钮权限与撤回/禁言
+控制包全部失效。若后端某天正式改名，再做兼容双读。
+
 ## B. 性能优化
 
 ### B.1 图片
@@ -444,7 +500,7 @@ min-content 宽 = 整句话的宽度，**永不收缩**。把它塞进 `flex ite
 - [ ] 卡片网格加 `glass-card-grid`；glass-card 宿主无 `overflow-hidden`（P-19）
 - [ ] 标题 `text-3xl font-bold` + 内联图标 `w-8 h-8`（无背景容器）；副标题 `text-muted-foreground mt-1`（无 `text-sm`）
 - [ ] 卡片/弹窗一律 `className="glass-card"`（**不**用 `isGlass &&`）（[§03](./03-theme-and-styling.md)）
-- [ ] 每个筛选行的 `Input`/`Select`/`Button` 都 `h-9`，高度齐平（[§05](./05-components-and-form-controls.md)）
+- [ ] 筛选行高度齐平：无 Tab → `h-9`；有 TabButtonGroup → 默认高度 + 同行 `h-11`（`tabToolbarControlClass`），禁止压矮 group（[§05](./05-components-and-form-controls.md)）
 - [ ] `Select` 的"全部"用 `__all__`，非空串
 - [ ] 字段说明用 Tooltip + `HelpCircle`，不用独立文字行
 - [ ] 输入+下拉用 `InputWithDropdown`、标签用 `TagsInput`、切换用 `TabButtonGroup`、后端字段用 `DynamicConfigPanel`（不手搓）（[§06](./06-reusable-component-catalog.md)）
@@ -457,4 +513,6 @@ min-content 宽 = 整句话的宽度，**永不收缩**。把它塞进 `flex ite
 - [ ] 配置页脏检查同时比 `config` 与 `rawConfig`，原始快照等全部加载完再设（[§07](./07-config-pages-and-state.md)）
 - [ ] 双态 UI 的动作/图标/文案都按同一条件分支（P-4）
 - [ ] 三元 + 字符串拼接整体加括号（P-1）
+- [ ] Live Chat / 长连接：WS handler 用 ref，建连 effect 不依赖业务 state（P-30）；同会话防连发（P-31）
+- [ ] 协议 typo 字段保持兼容（P-32）；详见 [§11](./11-live-chat.md)
 - [ ] `npx tsc --noEmit -p tsconfig.app.json` 不新增报错

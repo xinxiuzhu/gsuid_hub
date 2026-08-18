@@ -13,11 +13,15 @@ import {
 } from '@/components/ui/select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Button } from '@/components/ui/button';
-import { Calendar as CalendarComponent } from '@/components/ui/calendar';
-import { format } from 'date-fns';
+import { format, parse } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { dashboardApi, DailyCommandData, BotItem } from '@/lib/api';
-import { commandColors } from '@/lib/mockData';
+import {
+  collectCommandKeysFromTriggerRows,
+  getCommandColor,
+  latestDateWithMetric,
+} from '@/lib/featureUtils';
+import { MetricDayCalendar } from '@/components/ui/metric-day-calendar';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { EChartsWrapper } from '@/components/charts';
 import type { EChartsOption } from 'echarts';
@@ -118,10 +122,44 @@ export default function Dashboard() {
   });
   const [groupTriggerVisibility, setGroupTriggerVisibility] = useState<Record<string, boolean>>({});
   const [personalTriggerVisibility, setPersonalTriggerVisibility] = useState<Record<string, boolean>>({});
-  
+  /** yyyy-MM-dd → 当日命令总数（日历角标 + 禁用无数据日） */
+  const [dailyCommandCounts, setDailyCommandCounts] = useState<Record<string, number>>({});
+
   const dateStr = format(selectedDate, 'yyyy-MM-dd');
-  
-  // Fetch daily data when date or bot changes
+
+  // 日历：近 60 天每日命令总数（随 bot 变化）
+  useEffect(() => {
+    let cancelled = false;
+    const loadCounts = async () => {
+      try {
+        const rows = await dashboardApi.getDailyCommandCounts(60, selectedBot);
+        if (cancelled) return;
+        const record: Record<string, number> = {};
+        for (const item of rows ?? []) {
+          record[item.date] = item.count ?? 0;
+        }
+        setDailyCommandCounts(record);
+        // 当前选中日若无数据，跳到最近有命令的一天
+        const cur = format(selectedDate, 'yyyy-MM-dd');
+        if ((record[cur] ?? 0) <= 0) {
+          const latest = latestDateWithMetric(record);
+          if (latest) {
+            setSelectedDate(parse(latest, 'yyyy-MM-dd', new Date()));
+          }
+        }
+      } catch (error) {
+        console.error('Failed to fetch daily command counts:', error);
+      }
+    };
+    void loadCounts();
+    return () => {
+      cancelled = true;
+    };
+    // selectedDate 不进 deps：避免跳转后重复拉 counts；bot 变才重拉
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
+  }, [selectedBot]);
+
+  // Fetch daily charts when date or bot changes
   useEffect(() => {
     const fetchDailyData = async () => {
       setIsLoadingDaily(true);
@@ -131,32 +169,25 @@ export default function Dashboard() {
           dashboardApi.getDailyGroupTriggers(dateStr, selectedBot),
           dashboardApi.getDailyPersonalTriggers(dateStr, selectedBot),
         ]);
-        
-        const today = new Date();
-        const isToday = selectedDate.getDate() === today.getDate() &&
-                        selectedDate.getMonth() === today.getMonth() &&
-                        selectedDate.getFullYear() === today.getFullYear();
-                        
-        if (isToday && commands.length === 0 && groupTriggers.length === 0 && personalTriggers.length === 0) {
-          const yesterday = new Date(today);
-          yesterday.setDate(yesterday.getDate() - 1);
-          setSelectedDate(yesterday);
-          return;
-        }
-        
+
         setDailyCommandUsage(commands);
         setDailyGroupTriggers(groupTriggers);
         setDailyPersonalTriggers(personalTriggers);
-        
-        if (groupTriggers.length > 0) {
-          const firstItem = groupTriggers[0];
-          const cmds = Object.keys(firstItem).filter(k => k !== 'group');
-          setCommandTypeList(cmds);
-          const visibility: Record<string, boolean> = {};
-          cmds.forEach(cmd => { visibility[cmd] = true; });
-          setGroupTriggerVisibility(visibility);
-          setPersonalTriggerVisibility(visibility);
+
+        const cmds = collectCommandKeysFromTriggerRows(
+          [...groupTriggers, ...personalTriggers] as Array<Record<string, unknown>>,
+          ['group', 'user'],
+        );
+        for (const row of commands) {
+          if (row?.command && !cmds.includes(row.command)) cmds.push(row.command);
         }
+        setCommandTypeList(cmds);
+        const visibility: Record<string, boolean> = {};
+        cmds.forEach((cmd) => {
+          visibility[cmd] = true;
+        });
+        setGroupTriggerVisibility(visibility);
+        setPersonalTriggerVisibility(visibility);
       } catch (error) {
         console.error('Failed to fetch daily data:', error);
         setDailyCommandUsage([]);
@@ -166,8 +197,8 @@ export default function Dashboard() {
         setIsLoadingDaily(false);
       }
     };
-    fetchDailyData();
-  }, [selectedBot, selectedDate]);
+    void fetchDailyData();
+  }, [selectedBot, selectedDate, dateStr]);
 
   const metricCards = [
     { title: 'DAU', value: keyMetrics.dau.toLocaleString(), icon: Users, color: 'text-blue-500', desc: t('dashboard.dauDesc') },
@@ -184,11 +215,11 @@ export default function Dashboard() {
   // ECharts 配置
   // ============================================================================
 
-  // 月度命令统计 - 折线图
+  // 月度命令统计 - 折线图（固定 4 项图例；窄屏/长文案时 scroll 防换行）
   const monthlyCommandOption = useMemo<EChartsOption>(() => ({
     animationDuration: 1000,
     animationEasing: 'cubicOut' as const,
-    grid: { left: '3%', right: '4%', bottom: '12%', top: '15%', containLabel: true },
+    grid: { left: '3%', right: '4%', bottom: 48, top: '12%', containLabel: true },
     xAxis: {
       type: 'category',
       data: monthlyCommandData.map(d => d.date.slice(5)),
@@ -200,6 +231,7 @@ export default function Dashboard() {
       axisPointer: { type: 'cross', label: { show: false } },
     },
     legend: {
+      type: 'scroll',
       data: [
         { name: t('dashboard.sendCommand'), icon: 'roundRect' },
         { name: t('dashboard.receiveCommand'), icon: 'roundRect' },
@@ -207,6 +239,8 @@ export default function Dashboard() {
         { name: t('dashboard.imageGen'), icon: 'roundRect' },
       ],
       bottom: 0,
+      left: 'center',
+      width: '92%',
       selected: {
         [t('dashboard.sendCommand')]: monthlyCommandVisibility.sentCommands,
         [t('dashboard.receiveCommand')]: monthlyCommandVisibility.receivedCommands,
@@ -270,11 +304,11 @@ export default function Dashboard() {
     ],
   }), [monthlyCommandData, monthlyCommandVisibility, t]);
 
-  // 月度用户与群组统计 - 柱状图
+  // 月度用户与群组统计 - 柱状图（固定 2 项图例，风险低；统一 bottom 留白）
   const monthlyUserGroupOption = useMemo<EChartsOption>(() => ({
     animationDuration: 800,
     animationEasing: 'cubicOut' as const,
-    grid: { left: '3%', right: '4%', bottom: '12%', top: '15%', containLabel: true },
+    grid: { left: '3%', right: '4%', bottom: 40, top: '12%', containLabel: true },
     xAxis: {
       type: 'category',
       data: monthlyUserGroupData.map(d => d.date.slice(5)),
@@ -312,15 +346,16 @@ export default function Dashboard() {
     ],
   }), [monthlyUserGroupData, monthlyUserGroupVisibility, t]);
 
-  // 命令使用量 - 水平柱状图
+  // 命令使用量 - 水平柱状图（每条命令独立配色）
+  // 图例仅 1 项，无多 series 换行风险；但 Y 轴类目多时需动态增高，避免条带挤扁
   const commandUsageOption = useMemo<EChartsOption>(() => ({
     animationDuration: 800,
     animationEasing: 'cubicOut' as const,
-    grid: { left: '3%', right: '8%', bottom: '8%', top: '8%', containLabel: true },
+    grid: { left: '3%', right: '8%', bottom: 36, top: 12, containLabel: true },
     xAxis: { type: 'value' },
     yAxis: {
       type: 'category',
-      data: dailyCommandUsage.map(d => d.command),
+      data: dailyCommandUsage.map((d) => d.command),
       axisLabel: { fontSize: 11 },
     },
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
@@ -335,19 +370,75 @@ export default function Dashboard() {
       {
         name: t('dashboard.callCount'),
         type: 'bar',
-        data: dailyCommandUsage.map(d => d.count),
+        data: dailyCommandUsage.map((d) => ({
+          value: d.count,
+          itemStyle: {
+            color: getCommandColor(d.command),
+            borderRadius: [0, 6, 6, 0],
+          },
+        })),
         barMaxWidth: 24,
-        itemStyle: { borderRadius: [0, 6, 6, 0] },
         emphasis: { focus: 'series' },
       },
     ],
   }), [dailyCommandUsage, commandUsageVisibility, t]);
 
+  const commandUsageChartHeight = useMemo(
+    () => Math.max(350, dailyCommandUsage.length * 28 + 72),
+    [dailyCommandUsage.length],
+  );
+  // 命令系列过多时：滚动图例（单行 + 翻页），避免图例换行盖住柱状图
+  const buildManySeriesLegend = useCallback((
+    selected: Record<string, boolean>,
+  ): EChartsOption['legend'] => ({
+    type: 'scroll',
+    orient: 'horizontal',
+    data: commandTypeList.map((cmd) => ({ name: cmd, icon: 'roundRect' })),
+    bottom: 0,
+    left: 'center',
+    width: '92%',
+    itemWidth: 12,
+    itemHeight: 10,
+    itemGap: 10,
+    pageIconSize: 12,
+    pageButtonGap: 6,
+    pageButtonItemGap: 4,
+    textStyle: { fontSize: 11 },
+    selected,
+  }), [commandTypeList]);
+
+  const stackedTriggerTooltipFormatter = useCallback((params: any) => {
+    if (!Array.isArray(params) || params.length === 0) return '';
+    const label = params[0].axisValue;
+    let total = 0;
+    let rows = '';
+    params.forEach((p: any) => {
+      if (p.value > 0) {
+        total += p.value;
+        rows += `<div style="display:flex;align-items:center;justify-content:space-between;gap:16px;margin:2px 0">
+          <span style="display:flex;align-items:center;gap:6px">
+            <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${p.color}"></span>
+            ${p.seriesName}
+          </span>
+          <span style="font-weight:600">${p.value}</span>
+        </div>`;
+      }
+    });
+    return `<div style="min-width:120px">
+      <div style="font-weight:600;margin-bottom:6px">${label}</div>
+      ${rows}
+      <div style="border-top:1px solid rgba(128,128,128,0.2);margin-top:6px;padding-top:6px;display:flex;justify-content:space-between">
+        <span>${t('dashboard.total')}</span><span style="font-weight:700">${total}</span>
+      </div>
+    </div>`;
+  }, [t]);
+
   // 群组命令触发量 - 堆叠水平柱状图
   const groupTriggerOption = useMemo<EChartsOption>(() => ({
     animationDuration: 800,
     animationEasing: 'cubicOut' as const,
-    grid: { left: '3%', right: '8%', bottom: '12%', top: '8%', containLabel: true },
+    // 固定预留底部空间给单行 scroll 图例，避免与绘图区重叠
+    grid: { left: '3%', right: '8%', bottom: 48, top: 12, containLabel: true },
     xAxis: { type: 'value' },
     yAxis: {
       type: 'category',
@@ -357,56 +448,28 @@ export default function Dashboard() {
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
-      formatter: (params: any) => {
-        if (!Array.isArray(params) || params.length === 0) return '';
-        const label = params[0].axisValue;
-        let total = 0;
-        let rows = '';
-        params.forEach((p: any) => {
-          if (p.value > 0) {
-            total += p.value;
-            rows += `<div style="display:flex;align-items:center;justify-content:space-between;gap:16px;margin:2px 0">
-              <span style="display:flex;align-items:center;gap:6px">
-                <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${p.color}"></span>
-                ${p.seriesName}
-              </span>
-              <span style="font-weight:600">${p.value}</span>
-            </div>`;
-          }
-        });
-        return `<div style="min-width:120px">
-          <div style="font-weight:600;margin-bottom:6px">${label}</div>
-          ${rows}
-          <div style="border-top:1px solid rgba(128,128,128,0.2);margin-top:6px;padding-top:6px;display:flex;justify-content:space-between">
-            <span>${t('dashboard.total')}</span><span style="font-weight:700">${total}</span>
-          </div>
-        </div>`;
-      },
+      formatter: stackedTriggerTooltipFormatter,
     },
-    legend: {
-      data: commandTypeList.map(cmd => ({ name: cmd, icon: 'roundRect' })),
-      bottom: 0,
-      selected: groupTriggerVisibility,
-    },
+    legend: buildManySeriesLegend(groupTriggerVisibility),
     series: commandTypeList.map((cmd, index) => ({
       name: cmd,
       type: 'bar' as const,
       stack: 'total',
-      data: dailyGroupTriggers.map(d => d[cmd] || 0),
+      data: dailyGroupTriggers.map((d) => d[cmd] || 0),
       barMaxWidth: 20,
       itemStyle: {
-        color: commandColors[cmd] || '#6b7280',
+        color: getCommandColor(cmd),
         borderRadius: index === commandTypeList.length - 1 ? [0, 6, 6, 0] : undefined,
       },
       emphasis: { focus: 'series' as const },
     })),
-  }), [dailyGroupTriggers, commandTypeList, groupTriggerVisibility, t]);
+  }), [dailyGroupTriggers, commandTypeList, groupTriggerVisibility, buildManySeriesLegend, stackedTriggerTooltipFormatter]);
 
   // 个人命令触发量 - 堆叠水平柱状图
   const personalTriggerOption = useMemo<EChartsOption>(() => ({
     animationDuration: 800,
     animationEasing: 'cubicOut' as const,
-    grid: { left: '3%', right: '8%', bottom: '12%', top: '8%', containLabel: true },
+    grid: { left: '3%', right: '8%', bottom: 48, top: 12, containLabel: true },
     xAxis: { type: 'value' },
     yAxis: {
       type: 'category',
@@ -416,51 +479,32 @@ export default function Dashboard() {
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
-      formatter: (params: any) => {
-        if (!Array.isArray(params) || params.length === 0) return '';
-        const label = params[0].axisValue;
-        let total = 0;
-        let rows = '';
-        params.forEach((p: any) => {
-          if (p.value > 0) {
-            total += p.value;
-            rows += `<div style="display:flex;align-items:center;justify-content:space-between;gap:16px;margin:2px 0">
-              <span style="display:flex;align-items:center;gap:6px">
-                <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${p.color}"></span>
-                ${p.seriesName}
-              </span>
-              <span style="font-weight:600">${p.value}</span>
-            </div>`;
-          }
-        });
-        return `<div style="min-width:120px">
-          <div style="font-weight:600;margin-bottom:6px">${label}</div>
-          ${rows}
-          <div style="border-top:1px solid rgba(128,128,128,0.2);margin-top:6px;padding-top:6px;display:flex;justify-content:space-between">
-            <span>${t('dashboard.total')}</span><span style="font-weight:700">${total}</span>
-          </div>
-        </div>`;
-      },
+      formatter: stackedTriggerTooltipFormatter,
     },
-    legend: {
-      data: commandTypeList.map(cmd => ({ name: cmd, icon: 'roundRect' })),
-      bottom: 0,
-      selected: personalTriggerVisibility,
-    },
+    legend: buildManySeriesLegend(personalTriggerVisibility),
     series: commandTypeList.map((cmd, index) => ({
       name: cmd,
       type: 'bar' as const,
       stack: 'total',
-      data: dailyPersonalTriggers.map(d => d[cmd] || 0),
+      data: dailyPersonalTriggers.map((d) => d[cmd] || 0),
       barMaxWidth: 20,
       itemStyle: {
-        color: commandColors[cmd] || '#6b7280',
+        color: getCommandColor(cmd),
         borderRadius: index === commandTypeList.length - 1 ? [0, 6, 6, 0] : undefined,
       },
       emphasis: { focus: 'series' as const },
     })),
-  }), [dailyPersonalTriggers, commandTypeList, personalTriggerVisibility, t]);
+  }), [dailyPersonalTriggers, commandTypeList, personalTriggerVisibility, buildManySeriesLegend, stackedTriggerTooltipFormatter]);
 
+  // 行数多时拉高图表，避免 Y 轴类目挤在一起；命令多时也略增高给图例留白
+  const groupTriggerChartHeight = useMemo(
+    () => Math.max(350, dailyGroupTriggers.length * 36 + 96),
+    [dailyGroupTriggers.length],
+  );
+  const personalTriggerChartHeight = useMemo(
+    () => Math.max(350, dailyPersonalTriggers.length * 36 + 96),
+    [dailyPersonalTriggers.length],
+  );
   // Legend 切换事件处理
   const handleLegendSelectChanged = useCallback((
     setter: React.Dispatch<React.SetStateAction<Record<string, boolean>>>,
@@ -599,30 +643,36 @@ export default function Dashboard() {
         </CardContent>
       </Card>
 
-      {/* Date Selector */}
-      <div className="flex items-center gap-4">
+      {/* Date Selector — 角标为当日命令数；0 禁用（样式对齐 /traces） */}
+      <div className="flex flex-wrap items-center gap-4">
         <h2 className="text-xl font-semibold">{t('dashboard.dateDetails')}</h2>
         <Popover>
           <PopoverTrigger asChild>
             <Button
               variant="outline"
               className={cn(
-                "w-[240px] justify-start text-left font-normal",
-                !selectedDate && "text-muted-foreground"
+                'w-[260px] justify-start text-left font-normal',
+                !selectedDate && 'text-muted-foreground',
               )}
             >
-              <Calendar className="mr-2 h-4 w-4" />
-              {selectedDate ? format(selectedDate, "yyyy-MM-dd") : t('dashboard.selectDate')}
+              <Calendar className="mr-2 h-4 w-4 shrink-0" />
+              <span className="truncate">
+                {selectedDate ? format(selectedDate, 'yyyy-MM-dd') : t('dashboard.selectDate')}
+              </span>
+              {(dailyCommandCounts[dateStr] ?? 0) > 0 && (
+                <span className="ml-auto pl-2 text-xs text-muted-foreground tabular-nums">
+                  {dailyCommandCounts[dateStr]}
+                </span>
+              )}
             </Button>
           </PopoverTrigger>
           <PopoverContent className="w-auto p-0" align="start" side="bottom" sideOffset={8}>
-            <CalendarComponent
-              mode="single"
+            <MetricDayCalendar
               selected={selectedDate}
-              onSelect={(date) => date && setSelectedDate(date)}
-              defaultMonth={selectedDate}
-              initialFocus
-              className="pointer-events-auto"
+              onSelect={setSelectedDate}
+              metrics={dailyCommandCounts}
+              disableEmpty
+              formatMetric={(n) => String(n)}
             />
           </PopoverContent>
         </Popover>
@@ -639,7 +689,7 @@ export default function Dashboard() {
         <CardContent>
           <EChartsWrapper
             option={commandUsageOption}
-            height={350}
+            height={commandUsageChartHeight}
             onEvents={{ legendselectchanged: commandUsageLegendHandler }}
           />
         </CardContent>
@@ -658,7 +708,7 @@ export default function Dashboard() {
           <CardContent>
             <EChartsWrapper
               option={groupTriggerOption}
-              height={350}
+              height={groupTriggerChartHeight}
               onEvents={{ legendselectchanged: groupTriggerLegendHandler }}
             />
           </CardContent>
@@ -675,7 +725,7 @@ export default function Dashboard() {
           <CardContent>
             <EChartsWrapper
               option={personalTriggerOption}
-              height={350}
+              height={personalTriggerChartHeight}
               onEvents={{ legendselectchanged: personalTriggerLegendHandler }}
             />
           </CardContent>

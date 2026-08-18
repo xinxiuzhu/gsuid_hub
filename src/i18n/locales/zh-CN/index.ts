@@ -43,7 +43,19 @@ import module41 from './gsCoreAiMcpServer.json';
 import module42 from './aiBudget.json';
 import module43 from './brand.json';
 import module44 from './aiApprovals.json';
+import module45 from './brandSettings.json';
+import module46 from './batchPush.json';
+import module47 from './aiDebug.json';
+import module48 from './aiArtifacts.json';
+import module49 from './memorySettings.json';
+import module50 from './logsConfig.json';
+import module_aiToolOutputs from './aiToolOutputs.json';
 
+import module_stateStore from './stateStore.json';
+import module_groupProfile from './groupProfile.json';
+import module_aiOps from './aiOps.json';
+import module_liveChat from './liveChat.json';
+import module_aiRuntime from './aiRuntime.json';
 const locale = {
   "common": module0,
   "login": module1,
@@ -89,7 +101,19 @@ const locale = {
   "gsCoreAiMcpServer": module41,
   "aiBudget": module42,
   "brand": module43,
-  "aiApprovals": module44
+  "aiApprovals": module44,
+  "brandSettings": module45,
+  "batchPush": module46,
+  "aiDebug": module47,
+  "aiArtifacts": module48,
+  "memorySettings": module49,
+  "logsConfig": module50,
+  "aiToolOutputs": module_aiToolOutputs,
+  "groupProfile": module_groupProfile,
+  "stateStore": module_stateStore,
+  "aiOps": module_aiOps,
+  "liveChat": module_liveChat,
+  "aiRuntime": module_aiRuntime
 } as const;
 
 export default locale;

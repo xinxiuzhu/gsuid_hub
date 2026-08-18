@@ -54,6 +54,8 @@
     "whitelistNote": "Only these users can use:",
     "blacklistNote": "These users cannot use:",
     "scopeGlobal": "Global",
+    "scopeGlobalGroup": "Groups Only",
+    "scopeGlobalPrivate": "DMs Only",
     "scopeSpecific": "Specific",
     "scopeDisabled": "Disabled",
     "memoryWarningTip": "All groups mode processes memory for all groups, which may consume more tokens"
@@ -123,11 +125,34 @@
       "chat_completions": "OpenAI's standard /chat/completions endpoint, supported by virtually all chat-compatible providers. Sends a messages array to the model.",
       "responses": "OpenAI's newer /responses endpoint that unifies multi-turn tool calls, file references and structured output. Requires the model and proxy to both support it."
     },
+    "remoteWebSearch": "Remote Web Search",
+    "remoteWebSearchOptions": {
+      "off": "Off (use local search even on Responses)",
+      "on": "On (default; Responses uses hosted web_search)"
+    },
+    "remoteWebSearchDescription": {
+      "off": "Always use local Tavily / Jina / Exa. OpenAI Chat Completions never reads this switch.",
+      "on": "Default. OpenAI Responses or any Anthropic config uses the provider's hosted web_search with no extra setup. OpenAI Chat Completions always uses local search. If a relay does not support hosted tools it will 400 — turn this off then."
+    },
     "sendBackThinking": "Send Back Thinking",
     "sendBackThinkingOptions": {
       "auto": "Auto (pydantic_ai default, resend history thinking)",
       "off": "Off (never resend thinking, best compatibility)"
     },
+    "forwardEndUserId": "Forward Caller Identity",
+    "forwardEndUserIdOptions": {
+      "off": "Off (never sent, default)",
+      "hashed": "Salted digest (send an irreversible digest)",
+      "raw": "Raw identity (send in plain text)"
+    },
+    "forwardEndUserIdDescription": {
+      "off": "Requests carry no caller identity, so upstream only sees usage aggregated for this config as a whole. This is the default.",
+      "hashed": "Sends a salted digest of the caller identity in OpenAI's standard user field. Upstream can group usage and logs per caller without ever seeing the original identity.",
+      "raw": "Sends the caller identity verbatim in OpenAI's standard user field. Only recommended for trusted upstreams such as your own gateway — never for third-party official endpoints."
+    },
+    "endUserIdSalt": "Digest Salt",
+    "endUserIdSaltPlaceholder": "Leave empty for an unkeyed digest",
+    "endUserIdSaltHint": "An empty salt means an unkeyed digest: when the identity space is small (numeric account IDs), it can be brute-forced back, so it only obfuscates. Changing the salt orphans every previously sent digest and breaks upstream per-caller history.",
     "capabilityText": "Text Chat",
     "capabilityImage": "Image Understanding",
     "capabilityAudio": "Audio Processing",
@@ -161,14 +186,74 @@
     "embeddingSaveWarningDesc": "Modifying the embedding model service / Qdrant deployment will require historical vector data to be migrated and rebuilt. It is recommended to back up the data/ai_core folder first; a service restart is required after saving, and migration may take a long time.",
     "webSearchService": "Web Search Service",
     "webSearchServiceDesc": "Configure web search capability",
+    "primaryProvider": "Primary search provider",
+    "primaryProviderDesc": "Preferred search provider. With multi-source strategies, failures fall through the fallback list.",
+    "lbStrategy": "Multi-source strategy",
+    "lbStrategyDesc": "**Error switch**: On primary failure, try the next configured fallback in order.\n\n**Auto balance**: Round-robin requests across configured sources.\n\n**None**: Always use the primary source only; no failover.",
+    "lbStrategyNone": "None",
+    "lbStrategyErrorSwitch": "Error switch",
+    "lbStrategyAutoBalance": "Auto balance",
+    "fallbackOrder": "Fallback order",
+    "fallbackOrderDesc": "Multi-select fallbacks; numbers show priority (1 first). Empty = backend uses all configured sources. Primary cannot be a fallback; switching primary strips it from this list.",
+    "primaryConfigSection": "Primary provider config",
+    "primaryConfigSectionDesc": "API keys and options for the primary search provider.",
+    "fallbackConfigSection": "Fallback provider config",
+    "fallbackConfigSectionDesc": "API keys and options for fallback providers; used when primary fails.",
+    "rolePrimary": "Primary",
+    "roleFallback": "Fallback",
+    "fallbackPrimaryStrippedOnSave": "Removed primary from fallback list — the primary source cannot also be a fallback.",
+    "configNotAvailable": "No editable settings for this provider",
     "tavilyConfig": "Tavily Configuration",
     "exaConfig": "Exa Configuration",
+    "jinaConfig": "Jina config (s.jina.ai / r.jina.ai)",
     "miniMaxConfig": "MiniMax Configuration",
     "maxResults": "Max Results",
     "searchDepth": "Search Depth",
     "searchType": "Search Type",
     "apiHost": "API Host",
     "resourceMode": "Resource Mode"
+  },
+  "webFetch": {
+    "title": "Web Fetch Service",
+    "description": "Configure web_fetch_tool: primary Jina / local with error switch and auto balance. Changes apply immediately—no restart.",
+    "provider": "Fetch provider",
+    "primaryProvider": "Primary fetch provider",
+    "lbStrategy": "Multi-source strategy",
+    "lbStrategyDesc": "**Error switch**: On primary failure, try the next fallback in order.\n\n**Auto balance**: Round-robin requests across candidates.\n\n**None**: Always use the primary source only; no failover.",
+    "fallbackOrder": "Fallback order",
+    "fallbackOrderDesc": "Multi-select fallbacks; numbers show priority. Empty = backend default (usually includes local). Primary cannot be a fallback.",
+    "primaryConfigSection": "Primary provider config",
+    "primaryConfigSectionDesc": "Keys and options for the primary fetch provider.",
+    "fallbackConfigSection": "Fallback provider config",
+    "fallbackConfigSectionDesc": "Options for fallback fetch providers; used when primary fails.",
+    "providerLocal": "Local",
+    "providerJina": "Jina (r.jina.ai)",
+    "localHint": "Direct aiohttp fetch with optional proxy / UA / timeout.",
+    "jinaHint": "Read via r.jina.ai; API key optional (higher quota when set). Default primary.",
+    "configNotLoaded": "Web fetch service config not loaded. Ensure the backend is running and WebFetch config is registered",
+    "jinaConfigNotLoaded": "Jina config not loaded; ensure backend registered Jina search/fetch settings"
+  },
+  "relationshipSettings": {
+    "title": "Relationship",
+    "description": "Favorability is the persona's long-term temperature toward this person, driven by interaction quality — not message count.",
+    "empty": "The backend has not published relationship fields yet. Please upgrade gsuid_core.",
+    "openRuntime": "Look up a user's relationship"
+  },
+  "agentKitsSettings": {
+    "title": "Agent kits",
+    "description": "Product capabilities mount on slots. Turning a slot off unregisters that capability. Closing a sealed slot opens the safety surface.",
+    "allowReplaceSealedWarn": "Sealed slots carry outbound speech and the identity anchor. Replacing them is unsafe unless you know the consequences.",
+    "sealedOff": "A sealed slot is currently empty. The safety surface is open.",
+    "slotsTitle": "Kit slots",
+    "empty": "The backend has not published kit-slot fields yet. Please upgrade gsuid_core.",
+    "openRuntime": "Inspect slot and hook health"
+  },
+  "cognitionSettings": {
+    "title": "Cognition federation",
+    "description": "Memory, knowledge, tool dumps, and task artifacts share one retrieval surface. World knowledge lives on public world: hubs; nodes can carry articles.",
+    "prefetchHint": "Cognition prefetch is off by default. Enable it only after a gray release.",
+    "empty": "The backend has not published cognition fields yet. Please upgrade gsuid_core.",
+    "openRuntime": "Browse the cognition index"
   },
   "advancedSettings": {
     "title": "Advanced Settings",

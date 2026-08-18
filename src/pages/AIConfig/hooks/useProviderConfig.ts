@@ -56,8 +56,14 @@ export interface UseProviderConfigReturn {
   newConfigUsageStatsMode: string;
   /** 仅 OpenAI 系列在 UI 暴露（Anthropic 没有请求方式这一说） */
   newConfigRequestMethod: string;
+  /** 仅 OpenAI 系列在 UI 暴露：远端 Web Search off/on */
+  newConfigRemoteWebSearch: string;
   /** 仅 OpenAI 系列在 UI 暴露：思考回传 auto/off */
   newConfigSendBackThinking: string;
+  /** 仅 OpenAI 系列在 UI 暴露：终端用户标识透传 off/hashed/raw */
+  newConfigForwardEndUserId: string;
+  /** 仅 OpenAI 系列在 UI 暴露：`hashed` 模式的盐值 */
+  newConfigEndUserIdSalt: string;
   newConfigFetchedModels: string[];
   isFetchingNewConfigModels: boolean;
 
@@ -85,7 +91,10 @@ export interface UseProviderConfigReturn {
   setNewConfigMaxTokens: (v: string) => void;
   setNewConfigUsageStatsMode: (v: string) => void;
   setNewConfigRequestMethod: (v: string) => void;
+  setNewConfigRemoteWebSearch: (v: string) => void;
   setNewConfigSendBackThinking: (v: string) => void;
+  setNewConfigForwardEndUserId: (v: string) => void;
+  setNewConfigEndUserIdSalt: (v: string) => void;
   resetNewConfigForm: () => void;
   setIsCreateDialogOpen: (open: boolean) => void;
   setIsEditDialogOpen: (open: boolean) => void;
@@ -177,7 +186,11 @@ export function useProviderConfig(): UseProviderConfigReturn {
   const [newConfigRequestMethod, setNewConfigRequestMethod] = useState(
     'chat_completions',
   );
+  const [newConfigRemoteWebSearch, setNewConfigRemoteWebSearch] = useState('on');
   const [newConfigSendBackThinking, setNewConfigSendBackThinking] = useState('auto');
+  // 默认 off：透传终端用户标识属于要显式打开的行为，不能默认外发
+  const [newConfigForwardEndUserId, setNewConfigForwardEndUserId] = useState('off');
+  const [newConfigEndUserIdSalt, setNewConfigEndUserIdSalt] = useState('');
   const [newConfigFetchedModels, setNewConfigFetchedModels] = useState<string[]>([]);
   const [editConfigFetchedModels, setEditConfigFetchedModels] = useState<string[]>(
     [],
@@ -282,7 +295,7 @@ export function useProviderConfig(): UseProviderConfigReturn {
         //  - 共有：base_url / api_key / model_name / model_support / model_effort /
         //          max_concurrency
         //  - 仅 Anthropic：max_tokens
-        //  - 仅 OpenAI 系列：usage_stats_mode / request_method
+        //  - 仅 OpenAI 系列：usage_stats_mode / request_method / remote_web_search
         // 没有的字段用 `undefined` 占位，UI / save 时按 provider 再处理。
         const configData: OpenAIConfigData = {
           base_url: (cfg.base_url?.data as string) || '',
@@ -296,7 +309,10 @@ export function useProviderConfig(): UseProviderConfigReturn {
           max_tokens: cfg.max_tokens?.data as string | undefined,
           usage_stats_mode: cfg.usage_stats_mode?.data as string | undefined,
           request_method: cfg.request_method?.data as string | undefined,
+          remote_web_search: cfg.remote_web_search?.data as string | undefined,
           send_back_thinking: cfg.send_back_thinking?.data as string | undefined,
+          forward_end_user_id: cfg.forward_end_user_id?.data as string | undefined,
+          end_user_id_salt: cfg.end_user_id_salt?.data as string | undefined,
         };
         setOpenaiConfigData(configData);
         setEditingConfigProvider(provider);
@@ -458,6 +474,9 @@ export function useProviderConfig(): UseProviderConfigReturn {
         if (openaiConfigData.max_tokens) {
           configData.max_tokens = { data: openaiConfigData.max_tokens };
         }
+        configData.remote_web_search = {
+          data: openaiConfigData.remote_web_search || 'on',
+        };
       } else if (editingConfigProvider === 'gemini') {
         // Gemini 只有公共字段，无 max_tokens / usage_stats_mode / request_method
       } else {
@@ -468,8 +487,18 @@ export function useProviderConfig(): UseProviderConfigReturn {
         configData.request_method = {
           data: openaiConfigData.request_method || 'chat_completions',
         };
+        configData.remote_web_search = {
+          data: openaiConfigData.remote_web_search || 'on',
+        };
         configData.send_back_thinking = {
           data: openaiConfigData.send_back_thinking || 'auto',
+        };
+        configData.forward_end_user_id = {
+          data: openaiConfigData.forward_end_user_id || 'off',
+        };
+        // 盐值允许为空串（无密钥摘要），所以不能用 `||` 兜底成默认值
+        configData.end_user_id_salt = {
+          data: openaiConfigData.end_user_id_salt ?? '',
         };
       }
       await providerConfigApi.saveConfig(
@@ -500,7 +529,10 @@ export function useProviderConfig(): UseProviderConfigReturn {
     setNewConfigMaxTokens('8192');
     setNewConfigUsageStatsMode('auto');
     setNewConfigRequestMethod('chat_completions');
+    setNewConfigRemoteWebSearch('on');
     setNewConfigSendBackThinking('auto');
+    setNewConfigForwardEndUserId('off');
+    setNewConfigEndUserIdSalt('');
     setNewConfigFetchedModels([]);
   }, []);
 
@@ -537,12 +569,16 @@ export function useProviderConfig(): UseProviderConfigReturn {
       };
       if (newConfigProvider === 'anthropic') {
         configData.max_tokens = { data: newConfigMaxTokens };
+        configData.remote_web_search = { data: newConfigRemoteWebSearch };
       } else if (newConfigProvider === 'gemini') {
         // Gemini 只有公共字段
       } else {
         configData.usage_stats_mode = { data: newConfigUsageStatsMode };
         configData.request_method = { data: newConfigRequestMethod };
+        configData.remote_web_search = { data: newConfigRemoteWebSearch };
         configData.send_back_thinking = { data: newConfigSendBackThinking };
+        configData.forward_end_user_id = { data: newConfigForwardEndUserId };
+        configData.end_user_id_salt = { data: newConfigEndUserIdSalt };
       }
       await providerConfigApi.saveConfig(newConfigProvider, configName, configData);
       toast.success(t('aiConfig.openaiConfig.createSuccess', { name: configName }));
@@ -564,7 +600,10 @@ export function useProviderConfig(): UseProviderConfigReturn {
     newConfigMaxTokens,
     newConfigUsageStatsMode,
     newConfigRequestMethod,
+    newConfigRemoteWebSearch,
     newConfigSendBackThinking,
+    newConfigForwardEndUserId,
+    newConfigEndUserIdSalt,
     newConfigProvider,
     t,
     fetchAllConfigs,
@@ -716,7 +755,10 @@ export function useProviderConfig(): UseProviderConfigReturn {
     newConfigMaxTokens,
     newConfigUsageStatsMode,
     newConfigRequestMethod,
+    newConfigRemoteWebSearch,
     newConfigSendBackThinking,
+    newConfigForwardEndUserId,
+    newConfigEndUserIdSalt,
     newConfigFetchedModels,
     isFetchingNewConfigModels,
 
@@ -744,7 +786,10 @@ export function useProviderConfig(): UseProviderConfigReturn {
     setNewConfigMaxTokens,
     setNewConfigUsageStatsMode,
     setNewConfigRequestMethod,
+    setNewConfigRemoteWebSearch,
     setNewConfigSendBackThinking,
+    setNewConfigForwardEndUserId,
+    setNewConfigEndUserIdSalt,
     resetNewConfigForm,
     setIsCreateDialogOpen,
     setIsEditDialogOpen,
