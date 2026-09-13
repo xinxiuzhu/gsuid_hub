@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { cn } from '@/lib/utils';
@@ -71,6 +71,7 @@ import {
   FolderOpen,
   ScrollText,
   FilePlus,
+  Puzzle,
 } from 'lucide-react';
 import {
   aiKnowledgeApi,
@@ -87,6 +88,9 @@ import {
 import { toast } from 'sonner';
 import { PinnedPage } from '@/components/layout/PinnedPage';
 import { TagsInput } from '@/components/config/TagsInput';
+import { PluginIcon } from '@/components/ui/plugin-icon';
+
+const ALL_PLUGINS = '__all__';
 
 
 // ============================================================================
@@ -142,8 +146,10 @@ export default function AIKnowledgePage() {
   // 知识类型筛选（文本/图片）
   const [knowledgeType, setKnowledgeType] = useState<KnowledgeType>('text');
   
-  // 来源筛选（插件/手动）
+  // 来源筛选（插件/手动）；插件知识默认全量，可再按插件名筛
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>('plugin');
+  const [selectedPluginFilter, setSelectedPluginFilter] = useState(ALL_PLUGINS);
+  const [pluginNames, setPluginNames] = useState<string[]>([]);
   
   // 搜索和分页状态
   const [searchQuery, setSearchQuery] = useState('');
@@ -217,6 +223,11 @@ export default function AIKnowledgePage() {
   const [previewDialogOpen, setPreviewDialogOpen] = useState(false);
   const [previewImageUrl, setPreviewImageUrl] = useState('');
 
+  const pluginQuery =
+    sourceFilter === 'plugin' && selectedPluginFilter !== ALL_PLUGINS
+      ? selectedPluginFilter
+      : undefined;
+
   // 加载知识列表
   const fetchKnowledgeList = useCallback(async () => {
     try {
@@ -226,16 +237,26 @@ export default function AIKnowledgePage() {
         const data = await aiKnowledgeApi.getKnowledgeList({ 
           page, 
           limit, 
-          source: sourceFilter 
+          source: sourceFilter,
+          plugin: pluginQuery,
         });
         setTextKnowledgeList(data.list || []);
         setTotal(data.total);
         setPageSize(data.page_size);
+      } else if (sourceFilter === 'manual') {
+        const data = await aiImageApi.getImageList({
+          page,
+          limit,
+          plugin: 'manual',
+        });
+        setImageKnowledgeList(data.list || []);
+        setTotal(data.total);
+        setPageSize(data.page_size);
       } else {
-        const data = await aiImageApi.getImageList({ 
-          page, 
-          limit, 
-          plugin: sourceFilter 
+        const data = await aiImageApi.getImageList({
+          page,
+          limit,
+          ...(pluginQuery ? { plugin: pluginQuery } : { source: 'plugin' }),
         });
         setImageKnowledgeList(data.list || []);
         setTotal(data.total);
@@ -246,11 +267,37 @@ export default function AIKnowledgePage() {
     } finally {
       setIsLoading(false);
     }
-  }, [page, limit, sourceFilter, knowledgeType, t]);
+  }, [page, limit, sourceFilter, pluginQuery, knowledgeType, t]);
 
   useEffect(() => {
     fetchKnowledgeList();
   }, [fetchKnowledgeList]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loader = knowledgeType === 'image' ? aiImageApi.getPlugins : aiKnowledgeApi.getPlugins;
+    loader()
+      .then((names) => {
+        if (cancelled) return;
+        const cleaned = Array.from(
+          new Set((names || []).map((n) => String(n || '').trim()).filter((n) => n && n !== 'manual')),
+        ).sort((a, b) => a.localeCompare(b));
+        setPluginNames(cleaned);
+      })
+      .catch(() => {
+        if (!cancelled) setPluginNames([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [knowledgeType]);
+
+  useEffect(() => {
+    if (selectedPluginFilter === ALL_PLUGINS) return;
+    if (!pluginNames.includes(selectedPluginFilter)) {
+      setSelectedPluginFilter(ALL_PLUGINS);
+    }
+  }, [pluginNames, selectedPluginFilter]);
 
   // 搜索处理
   const handleSearch = async () => {
@@ -265,10 +312,18 @@ export default function AIKnowledgePage() {
       setIsSearching(true);
       
       if (knowledgeType === 'text') {
-        const data = await aiKnowledgeApi.searchKnowledge(searchQuery, 50, sourceFilter);
+        const data = await aiKnowledgeApi.searchKnowledge(searchQuery, 50, sourceFilter, pluginQuery);
         setTextSearchResults(data.results || []);
+      } else if (sourceFilter === 'manual') {
+        const data = await aiImageApi.searchImages(searchQuery, 50, 'manual');
+        setImageSearchResults(data.results || []);
       } else {
-        const data = await aiImageApi.searchImages(searchQuery, 50, sourceFilter);
+        const data = await aiImageApi.searchImages(
+          searchQuery,
+          50,
+          pluginQuery,
+          pluginQuery ? undefined : 'plugin',
+        );
         setImageSearchResults(data.results || []);
       }
       
@@ -790,17 +845,47 @@ export default function AIKnowledgePage() {
     ? (knowledgeType === 'text' ? textSearchResults.length : imageSearchResults.length)
     : total;
 
-  // 知识类型选项
-  const knowledgeTypeOptions = [
+  const knowledgeTypeOptions = useMemo(() => [
     { value: 'text', label: t('aiKnowledge.typeText'), icon: <FileText className="w-4 h-4" /> },
     { value: 'image', label: t('aiKnowledge.typeImage'), icon: <Image className="w-4 h-4" /> },
-  ];
+  ], [t]);
 
-  // 来源选项
-  const sourceOptions = [
-    { value: 'plugin', label: t('aiKnowledge.sourcePlugin'), icon: <Sparkles className="w-4 h-4" /> },
-    { value: 'manual', label: t('aiKnowledge.sourceManual'), icon: <Pencil className="w-4 h-4" /> },
-  ];
+  const sourceOptions = useMemo(() => {
+    const isAllPlugins = selectedPluginFilter === ALL_PLUGINS;
+    return [
+      {
+        value: 'plugin',
+        label: isAllPlugins
+          ? t('aiKnowledge.sourcePlugin')
+          : t('aiKnowledge.pluginFilterLabel', { name: selectedPluginFilter }),
+        icon: isAllPlugins
+          ? <Sparkles className="w-4 h-4" />
+          : <PluginIcon pluginName={selectedPluginFilter} className="h-4 w-4" />,
+        dropdown: {
+          value: selectedPluginFilter,
+          onValueChange: (value: string) => {
+            setSelectedPluginFilter(value);
+            setPage(1);
+          },
+          allValue: ALL_PLUGINS,
+          align: 'start' as const,
+          items: [
+            {
+              value: ALL_PLUGINS,
+              label: t('aiKnowledge.allPlugins'),
+              icon: <Puzzle className="h-4 w-4 shrink-0" />,
+            },
+            ...pluginNames.map((name) => ({
+              value: name,
+              label: name,
+              icon: <PluginIcon pluginName={name} className="h-4 w-4" />,
+            })),
+          ],
+        },
+      },
+      { value: 'manual', label: t('aiKnowledge.sourceManual'), icon: <Pencil className="w-4 h-4" /> },
+    ];
+  }, [pluginNames, selectedPluginFilter, t]);
 
   return (
     <PinnedPage
@@ -815,10 +900,9 @@ export default function AIKnowledgePage() {
         </div>
       }
       toolbar={
-        /* 筛选和操作栏：以默认高度 TabButtonGroup 为基准，同行控件统一 h-11 */
-        <div className="flex flex-col xl:flex-row gap-3 items-start xl:items-center justify-between">
-          {/* 左侧：知识类型和来源筛选（保持默认高度，不压矮） */}
-          <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+        /* 两组 Tab：够宽同一行，不够第二组换行（不横滑，避免「手动添加」被裁掉）。右栏勿用 w-full */
+        <div className="flex min-w-0 flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5">
             <div className={tabToolbarGroupWrapClass}>
               <TabButtonGroup
                 options={knowledgeTypeOptions}
@@ -839,36 +923,43 @@ export default function AIKnowledgePage() {
                 onValueChange={(value) => {
                   setSourceFilter(value as SourceFilter);
                   setPage(1);
+                  if (value !== 'plugin') setSelectedPluginFilter(ALL_PLUGINS);
                 }}
                 className="shrink-0"
               />
             </div>
           </div>
 
-          {/* 右侧：搜索和操作按钮，h-11 与默认 TabButtonGroup 外壳齐平 */}
-          <div className="flex flex-wrap items-center gap-2 w-full xl:w-auto">
-            <div className="relative flex-1 min-w-[12rem] xl:flex-none xl:w-64">
+          <div className="flex min-w-0 w-full items-center gap-2 md:w-auto md:flex-1 md:justify-end">
+            <div className="relative min-w-0 flex-1 md:max-w-64 md:flex-none md:w-56">
               <Search className="pointer-events-none absolute left-3 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder={knowledgeType === 'text' ? t('aiKnowledge.searchPlaceholder') : t('aiKnowledge.searchImagePlaceholder')}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                className={cn(tabToolbarControlClass, 'pl-9')}
+                className={cn(tabToolbarControlClass, 'min-w-0 w-full pl-9')}
               />
             </div>
-            <Button className={tabToolbarControlClass} onClick={handleSearch} disabled={isSearching}>
+            <Button
+              size="icon"
+              className={cn(tabToolbarIconButtonClass, 'shrink-0')}
+              onClick={handleSearch}
+              disabled={isSearching}
+              title={t('aiKnowledge.searchPlaceholder')}
+            >
               {isSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
             </Button>
             <Button
               onClick={() => {
                 setKnowledgeType('text');
                 setSourceFilter('manual');
+                setSelectedPluginFilter(ALL_PLUGINS);
                 resetBulkDialog();
                 setBulkDialogOpen(true);
               }}
               variant="outline"
-              className={cn(tabToolbarControlClass, 'shrink-0')}
+              className={cn(tabToolbarIconButtonClass, 'shrink-0 md:w-auto md:px-3')}
               title={t('aiKnowledge.bulkImport')}
             >
               <FileUp className="h-4 w-4" />
@@ -877,7 +968,7 @@ export default function AIKnowledgePage() {
             <Button
               onClick={handleExportBackup}
               variant="outline"
-              className={cn(tabToolbarControlClass, 'shrink-0')}
+              className={cn(tabToolbarIconButtonClass, 'shrink-0 md:w-auto md:px-3')}
               title={t('aiKnowledge.exportBackup')}
             >
               <Download className="h-4 w-4" />
@@ -886,7 +977,7 @@ export default function AIKnowledgePage() {
             <Button
               onClick={() => { setBackupFile(null); setBackupDialogOpen(true); }}
               variant="outline"
-              className={cn(tabToolbarControlClass, 'shrink-0')}
+              className={cn(tabToolbarIconButtonClass, 'shrink-0 md:w-auto md:px-3')}
               title={t('aiKnowledge.importBackup')}
             >
               <FolderOpen className="h-4 w-4" />
@@ -895,7 +986,7 @@ export default function AIKnowledgePage() {
             <Button
               onClick={handleReconcile}
               variant="outline"
-              className={cn(tabToolbarControlClass, 'shrink-0')}
+              className={cn(tabToolbarIconButtonClass, 'shrink-0 md:w-auto md:px-3')}
               title={t('aiKnowledge.reconcile') ?? ''}
               disabled={reconciling}
             >

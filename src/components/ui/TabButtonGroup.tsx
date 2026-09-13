@@ -51,6 +51,12 @@ interface TabButtonGroupProps {
   className?: string;
   buttonClassName?: string;
   disabled?: boolean;
+  /**
+   * 窄屏（&lt;768px）收成「当前项 + ▾」下拉，避免一长串分段撑破边距。
+   * 形态对齐 /ai-capability-agents 的 DropdownMenu 列表（图标槽 + 文案 + ✓）。
+   * 桌面仍是分段按钮。有二级 `dropdown` 的项在收起态只切主 Tab。
+   */
+  collapseOnMobile?: boolean;
 }
 
 /**
@@ -66,11 +72,7 @@ export const tabToolbarIconButtonClass = 'h-11 w-11';
 export const tabToolbarGroupWrapClass =
   'flex shrink-0 items-center [&_.shadow-safe]:!my-0 [&_.shadow-safe]:!py-0';
 
-function tabSegmentClassName(
-  isActive: boolean,
-  isDisabled: boolean,
-  buttonClassName?: string,
-) {
+function tabSegmentClassName(isActive: boolean, isDisabled: boolean, buttonClassName?: string) {
   return cn(
     hoverIconGroupClass,
     'relative text-sm font-medium transition-all duration-200 flex items-center gap-2 whitespace-nowrap',
@@ -83,6 +85,20 @@ function tabSegmentClassName(
   );
 }
 
+/** twMerge 不能用无前缀 `p-0` 覆盖 `sm:px-*`；拆分外层不能吃到调用方的 padding。 */
+const PADDING_CLASS = /^(?:[\w-]+:)*!?p(?:[xyltrbse])?-/;
+
+function omitPaddingClasses(className?: string) {
+  if (!className) return className;
+  return (
+    className
+      .split(/\s+/)
+      .filter(Boolean)
+      .filter((token) => !PADDING_CLASS.test(token))
+      .join(' ') || undefined
+  );
+}
+
 export function TabButtonGroup({
   options,
   value,
@@ -90,19 +106,25 @@ export function TabButtonGroup({
   className,
   buttonClassName,
   disabled = false,
+  collapseOnMobile = false,
 }: TabButtonGroupProps) {
   // className 作用在按钮容器（内层）上——调用方会传 grid/w-full 等布局类改写整条布局。
   // 外层只负责阴影安全区（shadow-safe 竖直负边距），并按内层是否铺满/禁缩镜像自身尺寸行为。
   const fullWidth = typeof className === 'string' && /\b(?:w-full|grid)\b/.test(className);
   const noShrink = typeof className === 'string' && /\bshrink-0\b/.test(className);
+  const current = options.find((option) => option.value === value) ?? options[0];
 
-  return (
-    <div className={cn(fullWidth ? 'flex w-full' : 'inline-flex', noShrink && 'shrink-0', 'max-w-full shadow-safe')}>
+  const expanded = (
+    <div
+      className={cn(
+        fullWidth ? 'flex w-full' : 'inline-flex',
+        noShrink && 'shrink-0',
+        'max-w-full shadow-safe',
+        collapseOnMobile && 'hidden md:inline-flex',
+      )}
+    >
       <div
-        className={cn(
-          'inline-flex min-w-0 flex-wrap gap-1 rounded-lg p-1 glass-card',
-          className,
-        )}
+        className={cn('inline-flex min-w-0 flex-wrap gap-1 rounded-lg p-1 glass-card', className)}
       >
         {options.map((option) => {
           const isActive = value === option.value;
@@ -111,18 +133,16 @@ export function TabButtonGroup({
 
           if (dropdown && dropdown.items.length > 0) {
             const allValue = dropdown.allValue ?? dropdown.items[0]?.value;
-            const dividerClass = isActive
-              ? 'bg-primary-foreground/25'
-              : 'bg-border/70';
+            const dividerClass = isActive ? 'bg-primary-foreground/25' : 'bg-border/70';
 
             return (
               <div
                 key={option.value}
                 className={cn(
-                  'inline-flex min-w-0 items-stretch overflow-hidden rounded-md',
-                  tabSegmentClassName(isActive, isDisabled, buttonClassName),
-                  // 外层负责底色，内层按钮去掉独立圆角/底色
-                  'gap-0 p-0',
+                  tabSegmentClassName(isActive, isDisabled, omitPaddingClasses(buttonClassName)),
+                  // 外层只负责底色/对齐；padding 由内层主区 / ▾ 自己带。
+                  // 必须写在 buttonClassName 之后：无前缀 p-0 盖不住 sm:px-*。
+                  'inline-flex min-w-0 items-stretch overflow-hidden rounded-md gap-0 p-0',
                 )}
               >
                 {/* 主按钮：选中该 Tab + 二级筛选回到「全部」 */}
@@ -137,7 +157,7 @@ export function TabButtonGroup({
                     }
                   }}
                   className={cn(
-                    'flex min-w-0 items-center gap-2 pl-4 pr-2 py-2 rounded-none bg-transparent',
+                    'flex min-w-0 items-center gap-1.5 sm:gap-2 px-2.5 sm:pl-4 sm:pr-2 py-2 rounded-none bg-transparent',
                     'hover:bg-transparent focus-visible:outline-none',
                     isDisabled && 'cursor-not-allowed',
                   )}
@@ -150,7 +170,10 @@ export function TabButtonGroup({
                   <span className="truncate">{option.label}</span>
                 </button>
 
-                <span className={cn('my-1.5 w-px shrink-0 self-stretch', dividerClass)} aria-hidden />
+                <span
+                  className={cn('my-1.5 w-px shrink-0 self-stretch', dividerClass)}
+                  aria-hidden
+                />
 
                 {/* 仅箭头触发下拉 */}
                 <DropdownMenu
@@ -178,7 +201,10 @@ export function TabButtonGroup({
                   </DropdownMenuTrigger>
                   <DropdownMenuContent
                     align={dropdown.align ?? 'end'}
-                    className={cn('min-w-[12rem] max-h-72 overflow-y-auto', dropdown.contentClassName)}
+                    className={cn(
+                      'min-w-[12rem] max-h-72 overflow-y-auto',
+                      dropdown.contentClassName,
+                    )}
                   >
                     {dropdown.items.map((item) => {
                       const selected = dropdown.value === item.value;
@@ -220,7 +246,7 @@ export function TabButtonGroup({
               disabled={isDisabled}
               className={cn(
                 tabSegmentClassName(isActive, isDisabled, buttonClassName),
-                'rounded-md px-4 py-2',
+                'rounded-md px-2.5 py-2 sm:px-4',
               )}
             >
               {option.icon != null && (
@@ -234,5 +260,62 @@ export function TabButtonGroup({
         })}
       </div>
     </div>
+  );
+
+  if (!collapseOnMobile) return expanded;
+
+  return (
+    <>
+      <div className="inline-flex max-w-full shadow-safe md:hidden">
+        <div className="inline-flex min-w-0 max-w-full gap-1 rounded-lg p-1 glass-card">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild disabled={disabled}>
+              <button
+                type="button"
+                disabled={disabled}
+                className={cn(
+                  tabSegmentClassName(true, disabled, buttonClassName),
+                  'max-w-full rounded-md px-4 py-2',
+                )}
+              >
+                {current?.icon != null && (
+                  <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center">
+                    {asHoverIcon(current.icon)}
+                  </span>
+                )}
+                <span className="min-w-0 truncate">{current?.label}</span>
+                <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-70" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="min-w-[12rem] max-h-72 overflow-y-auto">
+              {options.map((option) => {
+                const selected = value === option.value;
+                const isDisabled = disabled || !!option.disabled;
+                return (
+                  <DropdownMenuItem
+                    key={option.value}
+                    disabled={isDisabled}
+                    onSelect={() => onValueChange(option.value)}
+                    className="cursor-pointer gap-2"
+                  >
+                    <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center [&>img]:h-4 [&>img]:w-4 [&>svg]:h-4 [&>svg]:w-4">
+                      {option.icon ?? null}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate">{option.label}</span>
+                    <Check
+                      className={cn(
+                        'h-4 w-4 shrink-0 text-primary',
+                        selected ? 'opacity-100' : 'opacity-0',
+                      )}
+                    />
+                  </DropdownMenuItem>
+                );
+              })}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
+      {expanded}
+    </>
   );
 }

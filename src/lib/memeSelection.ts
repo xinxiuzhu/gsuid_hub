@@ -133,6 +133,16 @@ export function memeSelectionToApi(selection: MemeSelectionState): MemeDeleteSel
   };
 }
 
+export function memeSelectionToExport(
+  selection: MemeSelectionState,
+  folder: string,
+): { ids: string[] | undefined; folder: string | undefined } | null {
+  // The export API cannot represent filter snapshots or exclusions.
+  if (selection.mode === 'allMatching') return null;
+  const ids = selection.ids.size > 0 ? Array.from(selection.ids) : undefined;
+  return { ids, folder: ids ? undefined : folder || undefined };
+}
+
 export function memeDeleteConfirmation(count: number): string {
   return `DELETE ${count}`;
 }

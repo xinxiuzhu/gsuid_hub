@@ -231,6 +231,7 @@ export interface Plugin {
   config_names?: string[];  // 配置名称列表，用于判断是否需要显�?toggle group
   service_config?: ServiceConfig;
   sv_list?: SvItem[];
+  pages?: PluginPageMeta[];
 }
 
 // Plugin config item type
@@ -798,6 +799,17 @@ export const liveChatApi = {
 // ===================
 
 // 插件列表项（轻量级）
+export interface PluginPageMeta {
+  id: string;
+  plugin: string;
+  plugin_id: string;
+  path: string;
+  title: Record<string, string>;
+  description: Record<string, string>;
+  confirm_message: Record<string, string>;
+  icon?: string;
+}
+
 export interface PluginListItem {
   id: string;
   name: string;
@@ -806,6 +818,7 @@ export interface PluginListItem {
   status: string;
   icon?: string;
   commit?: string;
+  pages?: PluginPageMeta[];
 }
 
 // ===================
@@ -1563,12 +1576,20 @@ export interface TraceDetail {
   logs: TraceLog[];
 }
 
+export interface TraceListPage {
+  rows: TraceItem[];
+  count: number;
+  page: number;
+  per_page: number;
+}
+
 export const traceApi = {
-  getTraces: (params: { date?: string; limit?: number } = {}) => {
+  getTraces: (params: { date?: string; page?: number; per_page?: number } = {}) => {
     const query = new URLSearchParams();
     if (params.date) query.set('date', params.date);
-    if (params.limit !== undefined) query.set('limit', String(params.limit));
-    return api.get<TraceItem[]>(`/api/traces?${query.toString()}`);
+    if (params.page !== undefined) query.set('page', String(params.page));
+    if (params.per_page !== undefined) query.set('per_page', String(params.per_page));
+    return api.get<TraceListPage>(`/api/traces?${query.toString()}`);
   },
 
   getTraceDetail: (traceId: string, params: { date?: string } = {}) => {
@@ -1579,6 +1600,79 @@ export const traceApi = {
 
   getDailyCounts: (days: number = 60) =>
     api.get<Array<{ date: string; count: number }>>(`/api/traces/daily_counts?days=${days}`),
+};
+
+export interface HttpTraceLog {
+  timestamp: string;
+  level: string;
+  event: string;
+  plugin: string;
+}
+
+export interface HttpTraceItem {
+  trace_id: string;
+  method: string;
+  path: string;
+  query_redacted: string;
+  client_ip: string;
+  user_id: string | null;
+  user_name: string | null;
+  start_time: number;
+  duration_ms: number | null;
+  log_count: number;
+  error_count: number;
+  status_code: number | null;
+  status: 'running' | 'completed';
+}
+
+export interface HttpTraceDetail extends HttpTraceItem {
+  client_request_id: string | null;
+  content_length: number | null;
+  response_content_type: string | null;
+  response_preview: string | null;
+  logs: HttpTraceLog[];
+}
+
+export interface HttpTraceListPage {
+  rows: HttpTraceItem[];
+  count: number;
+  page: number;
+  per_page: number;
+}
+
+export const httpTraceApi = {
+  getTraces: (params: {
+    date?: string;
+    page?: number;
+    per_page?: number;
+    method?: string;
+    path_prefix?: string;
+    status_class?: string;
+    user_id?: string;
+    errors_only?: boolean;
+  } = {}) => {
+    const query = new URLSearchParams();
+    if (params.date) query.set('date', params.date);
+    if (params.page !== undefined) query.set('page', String(params.page));
+    if (params.per_page !== undefined) query.set('per_page', String(params.per_page));
+    if (params.method) query.set('method', params.method);
+    if (params.path_prefix) query.set('path_prefix', params.path_prefix);
+    if (params.status_class) query.set('status_class', params.status_class);
+    if (params.user_id) query.set('user_id', params.user_id);
+    if (params.errors_only) query.set('errors_only', 'true');
+    return api.get<HttpTraceListPage>(`/api/http-traces?${query.toString()}`);
+  },
+  getTraceDetail: (traceId: string, params: { date?: string } = {}) => {
+    const query = new URLSearchParams();
+    if (params.date) query.set('date', params.date);
+    return api.get<HttpTraceDetail>(
+      `/api/http-traces/${encodeURIComponent(traceId)}?${query.toString()}`,
+    );
+  },
+  getDailyCounts: (days = 60) =>
+    api.get<Array<{ date: string; count: number }>>(
+      `/api/http-traces/daily_counts?days=${days}`,
+    ),
 };
 
 // ===================
@@ -2194,6 +2288,11 @@ export const personaApi = {
   addPersona: (data: PersonaAddRequest) =>
     api.post<PersonaAddResponse>('/api/persona/add', data),
 
+  copyPersona: (personaName: string) =>
+    api.post<{ name: string; source: string }>(
+      `/api/persona/${encodeURIComponent(personaName)}/copy`,
+    ),
+
   // 删除角色
   deletePersona: (personaName: string) =>
     api.delete<{ status: number; msg: string }>(`/api/persona/${encodeURIComponent(personaName)}`),
@@ -2269,9 +2368,20 @@ export const personaApi = {
   getGlobalPersona: () =>
     api.get<string | null>('/api/persona/config/global'),
 
-  // 获取所有角色配�?
+  // 获取所有角色配置
   getAllPersonaConfigs: () =>
     api.get<Record<string, PersonaConfig>>('/api/persona/config/all'),
+
+  getPersonaSettings: (personaName: string) =>
+    api.get<Record<string, PluginConfigItem>>(
+      `/api/persona/${encodeURIComponent(personaName)}/settings`,
+    ),
+
+  updatePersonaSettings: (personaName: string, values: Record<string, unknown>) =>
+    api.put<Record<string, PluginConfigItem>>(
+      `/api/persona/${encodeURIComponent(personaName)}/settings`,
+      values,
+    ),
 };
 
 // ===================
@@ -2643,14 +2753,17 @@ export interface AIKnowledgeBackupResponse {
 
 
 export const aiKnowledgeApi = {
-  // 获取知识库列表（分页�?
-  getKnowledgeList: (params: { offset?: number; limit?: number; source?: string; page?: number; doc_id?: string } = {}) => {
+  getPlugins: () => api.get<string[]>('/api/ai/knowledge/plugins'),
+
+  // 获取知识库列表（分页）
+  getKnowledgeList: (params: { offset?: number; limit?: number; source?: string; page?: number; doc_id?: string; plugin?: string } = {}) => {
     const query = new URLSearchParams();
     if (params.page !== undefined) query.set('page', String(params.page));
     if (params.offset !== undefined) query.set('offset', String(params.offset));
     if (params.limit !== undefined) query.set('limit', String(params.limit));
     if (params.source) query.set('source', params.source);
     if (params.doc_id) query.set('doc_id', params.doc_id);
+    if (params.plugin) query.set('plugin', params.plugin);
     return api.get<AIKnowledgeListResponse>(`/api/ai/knowledge/list?${query.toString()}`);
   },
 
@@ -2671,11 +2784,12 @@ export const aiKnowledgeApi = {
     api.delete<{ id: string }>(`/api/ai/knowledge/${encodeURIComponent(entityId)}`),
 
   // 搜索知识
-  searchKnowledge: (query: string, limit: number = 10, source: string = 'all') => {
+  searchKnowledge: (query: string, limit: number = 10, source: string = 'all', plugin?: string) => {
     const params = new URLSearchParams();
     params.set('query', query);
     params.set('limit', String(limit));
     params.set('source', source);
+    if (plugin) params.set('plugin', plugin);
     return api.get<AIKnowledgeSearchResponse>(`/api/ai/knowledge/search?${params.toString()}`);
   },
 
@@ -2781,6 +2895,8 @@ export interface AIImageUpdateRequest {
 }
 
 export const aiImageApi = {
+  getPlugins: () => api.get<string[]>('/api/ai/images/plugins'),
+
   // 上传图片
   uploadImage: async (file: File) => {
     const formData = new FormData();
@@ -2806,12 +2922,13 @@ export const aiImageApi = {
   },
 
   // 获取图片列表（分页）
-  getImageList: (params: { offset?: number; limit?: number; plugin?: string; page?: number } = {}) => {
+  getImageList: (params: { offset?: number; limit?: number; plugin?: string; page?: number; source?: string } = {}) => {
     const query = new URLSearchParams();
     if (params.page !== undefined) query.set('page', String(params.page));
     if (params.offset !== undefined) query.set('offset', String(params.offset));
     if (params.limit !== undefined) query.set('limit', String(params.limit));
     if (params.plugin) query.set('plugin', params.plugin);
+    if (params.source) query.set('source', params.source);
     return api.get<AIImageListResponse>(`/api/ai/images/list?${query.toString()}`);
   },
 
@@ -2851,11 +2968,12 @@ export const aiImageApi = {
     api.delete<{ id: string }>(`/api/ai/images/${encodeURIComponent(entityId)}`),
 
   // 搜索图片
-  searchImages: (query: string, limit: number = 10, plugin?: string) => {
+  searchImages: (query: string, limit: number = 10, plugin?: string, source?: string) => {
     const params = new URLSearchParams();
     params.set('query', query);
     params.set('limit', String(limit));
     if (plugin) params.set('plugin', plugin);
+    if (source) params.set('source', source);
     return api.get<AIImageSearchResponse>(`/api/ai/images/search?${params.toString()}`);
   },
 

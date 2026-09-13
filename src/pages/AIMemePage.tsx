@@ -94,6 +94,7 @@ import {
   memeDeleteConfirmation,
   memeFilterKey,
   memeSelectionToApi,
+  memeSelectionToExport,
   normalizeMemeFilter,
   selectAllMatching,
   selectedMemeCount,
@@ -1488,13 +1489,16 @@ export default function AIMemePage() {
     if (deletePollTimerRef.current) clearTimeout(deletePollTimerRef.current);
   }, []);
 
-  // Export current filter view (or selection) to .meme archive
+  // Export explicit selection, or the folder/library when nothing is selected.
   const handleExportDotMeme = async () => {
-    const ids = selectedIds.size > 0 ? Array.from(selectedIds) : undefined;
-    const folder = ids ? undefined : filterFolder || undefined;
+    const request = memeSelectionToExport(selection, filterFolder);
+    if (!request) {
+      toast.info(t('aiMeme.selection.exportExplicitOnly'));
+      return;
+    }
     try {
       setIsExporting(true);
-      const blob = await memeApi.exportMemes(ids, folder);
+      const blob = await memeApi.exportMemes(request.ids, request.folder);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -1831,7 +1835,7 @@ export default function AIMemePage() {
         );
       }
       setShowPurgeAllDialog(false);
-      setSelectedIds(new Set());
+      setSelection(emptyMemeSelection());
       setPage(1);
       fetchMemes();
       fetchStats();

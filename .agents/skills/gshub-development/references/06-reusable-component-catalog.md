@@ -86,6 +86,7 @@ interface TabButtonGroupProps {
   className?: string;            // 作用在内层 glass-card 容器
   buttonClassName?: string;      // 作用在每个分段（含拆分外层）
   disabled?: boolean;            // 整组禁用
+  collapseOnMobile?: boolean;    // <768px 收成「当前项 + ▾」下拉（/plugin-store）
 }
 
 // 同行对齐常量（导出）
@@ -113,7 +114,7 @@ export const tabToolbarGroupWrapClass =
 
 实现要点（源码契约）：
 
-- 主区与 ▾ 是**两个独立 button**，中间竖线分隔；外层容器统一 active 底色（`bg-primary`）。
+- 主区与 ▾ 是**两个独立 button**，中间竖线分隔；外层容器统一 active 底色（`bg-primary`），**不吃 padding**（`buttonClassName` 的 `px-*` / `sm:px-*` 会被剥掉）。
 - 菜单用 `DropdownMenuItem`（非 `RadioItem`），左侧固定 **20×20 图标槽**，避免插件 PNG 被挤没。
 - 子项 `icon` 推荐 `PluginIcon`（`h-4 w-4`）或 lucide；无图标时槽位仍占位，避免文字错位。
 - 「全部」哨兵用 **`__all__`**（与 Radix Select 空值约定一致，见 [§05 §5.5](./05-components-and-form-controls.md)），**禁止** `value=""`。
@@ -235,16 +236,20 @@ profiles.filter((p) => {
 7. **禁止**为「带筛选的 Tab」再手搓一层 `Select` + 外挂 Button；应给对应 `TabButtonOption` 加 `dropdown`。
 8. **禁止**把整个拆分按钮都做成 `DropdownMenuTrigger`——用户期望点主区 = 全部，只有 ▾ 才展开。
 9. 二级 state 由**调用方**持有；列表刷新后若当前插件名消失，应自行回退 `__all__`（参考页已有 `useEffect`）。
+10. 分段过多、窄屏会撑破边距时，加 `collapseOnMobile`：&lt;768px 收成「当前项 + ▾」DropdownMenu（图标槽 + 文案 + ✓），桌面仍是分段。参考 `/plugin-store`。
+11. **拆分按钮不要靠 `buttonClassName` 传 `px-*`**。外层需要 `p-0`，内层主区 / ▾ 自带 padding。`twMerge` 无法用无前缀 `p-0` 覆盖 `sm:px-4`，会在图标前、箭头后各多出一截留空（`/ai-knowledge` 插件知识曾中招）。组件已剥掉拆分外层的 padding 类。
 
 ### 6.1.7 全站使用面（按页面）
 
 | 页面 | 用途 | 是否用 dropdown |
 |------|------|-----------------|
 | `/ai-capability-agents` | 来源 builtin / **plugin（下拉按插件）** / user | ✅ plugin 项 |
-| `/ai-knowledge` | 文本/图片知识；来源筛选 | 否 |
+| `/ai-knowledge` | 文本/图片知识；来源 **plugin（下拉按插件）** / manual | ✅ plugin 项 |
 | `/ai-tools` `/ai-meme` `/ai-budget` `/ai-approvals` | 主 Tab / 筛选 | 否 |
 | `/ai-statistics` `/ai-memory` `/ai-ops` `/ai-debug` | 多 Tab | 否 |
-| `/ai-kanban` `/batch-push` `/backup` `/database` `/git-update` `/plugins` 等 | 插件选择 / 类型筛选 | 否（`/git-update` 插件 Tab 用 `PluginIcon` 作 **主 icon**） |
+| `/ai-kanban` `/batch-push` `/backup` `/database` `/git-update` 等 | 插件选择 / 类型筛选 | 否（`/git-update` 插件 Tab 用 `PluginIcon` 作 **主 icon**） |
+| `/plugin-store` | 全部/已装/更新/娱乐/工具 | `collapseOnMobile` |
+| `/plugins` | 本地插件选择 / 配置分组 | `collapseOnMobile` |
 | `/themes` `/framework-config` 等 | 二级切换 | 否 |
 
 新增「主分类 + 再按实体细分」的筛选时，**优先复制 `/ai-capability-agents` 的 dropdown 写法**。
@@ -438,7 +443,7 @@ import { DynamicConfigPanel } from '@/components/config';
 位置：`src/components/ui/plugin-icon.tsx`。  
 URL 构建：`getPluginIconUrl(name)`（`src/lib/api.ts`）。
 
-**禁止**在页面里再复制一份「`img` + onError 回退 Package」；`/plugins`、`/git-update`、`/database`、`/ai-capability-agents` 等均应 `import { PluginIcon } from '@/components/ui/plugin-icon'`。
+**禁止**在页面里再复制一份「`img` + onError 回退 Package」；`/plugins`、`/git-update`（含镜像源管理弹窗）、`/database`、`/ai-capability-agents` 等均应 `import { PluginIcon } from '@/components/ui/plugin-icon'`。
 
 ```ts
 export interface PluginIconProps {

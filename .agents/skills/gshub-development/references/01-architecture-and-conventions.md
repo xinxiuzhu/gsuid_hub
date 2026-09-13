@@ -50,17 +50,23 @@ src/
 使用 `react-router-dom`，页面组件位于 `src/pages/`。`AppLayout` 提供整体布局（侧边栏 + Header），业务页面作为其子路由：
 
 ```tsx
-// App.tsx
-<Routes>
-  <Route path="/login" element={<Login />} />
-  <Route path="/" element={<AppLayout />}>
-    <Route index element={<Dashboard />} />
-    <Route path="dashboard" element={<Dashboard />} />
-    <Route path="ai-budget" element={<AIBudgetPage />} />
-    {/* 更多路由… */}
-  </Route>
-</Routes>
+// App.tsx —— 业务页必须 lazy，避免主包打进全部页面与重库
+const Dashboard = lazy(() => import('@/pages/Dashboard'));
+const AIBudgetPage = lazy(() => import('@/pages/AIBudgetPage'));
+
+<Suspense fallback={<PageSpinner fullPage />}>
+  <Routes>
+    <Route path="/login" element={<Login />} />
+    <Route path="/" element={<AppLayout />}>
+      <Route index element={<Dashboard />} />
+      <Route path="dashboard" element={<Dashboard />} />
+      <Route path="ai-budget" element={<AIBudgetPage />} />
+    </Route>
+  </Routes>
+</Suspense>
 ```
+
+`Login` 保持静态 import。`AppLayout` 本身也 lazy；其内部 `<Outlet />` 再包一层 `Suspense`（见 `PageSpinner`），切页只转内容区。
 
 ## 1.4 代码风格要点
 
@@ -258,12 +264,15 @@ window.location.href = getLoginPath();  // 开发 → /login，生产 → /app/l
 | `src/components/layout/AppSidebar.tsx` | 侧边栏导航（`getNavItems` / `ICON_MAP`） |
 | `src/components/live-chat/` | Live Chat 展示组件 |
 | `src/pages/LiveChatPage.tsx` | Live Chat 编排页（`/live-chat`，page-fill） |
+| `src/pages/PluginViewPage.tsx` | 插件自带页 iframe（`/plugin-view/:pluginId/:pageId?`，page-fill，进页收起侧栏） |
+| `src/lib/pluginPage.ts` | 插件页确认框「下次不再弹出」+ iframe src + Hub 主题 `postMessage`（`gshub:theme`） |
+| `public/gshub-plugin.js` | 插件 iframe SDK 源文件；build 进 dist，Core 挂 `/plugin-pages/_sdk/gshub-plugin.js` |
 | `src/pages/AISkillsPage.tsx` `AIMemoryPage.tsx` | **排版标准参考页**（见 [§04](./04-page-layout-spec.md)） |
 
 ## 1.9 新增页面标准步骤
 
 1. 创建 `src/pages/XXXPage.tsx`（严格遵循 [§04 排版铁律](./04-page-layout-spec.md)）。
-2. 在 `src/App.tsx` 注册 `<Route>`（`AppLayout` 子路由）。
+2. 在 `src/App.tsx` 用 `lazy(() => import('@/pages/XXXPage'))` 注册 `<Route>`（`AppLayout` 子路由；禁止静态 import 页面）。
 3. 三语言补翻译（见 [§02](./02-i18n.md)）。
 4. `AppSidebar.tsx` 的 `getNavItems` 增加导航项 + `ICON_MAP` 登记图标（见 [§09](./09-sidebar-navigation.md)）。
 5. 复用已有封装组件拼装页面（见 [§05](./05-components-and-form-controls.md)、[§06](./06-reusable-component-catalog.md)）。

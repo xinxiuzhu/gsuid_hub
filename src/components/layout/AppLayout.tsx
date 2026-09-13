@@ -1,6 +1,6 @@
-import { Outlet } from 'react-router-dom';
-import { useNavigate } from 'react-router-dom';
-import { useEffect, useMemo, useState } from 'react';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Suspense, useEffect, useMemo, useState } from 'react';
+import { PageSpinner } from '@/components/layout/PageSpinner';
 import { useTheme } from '@/contexts/ThemeContext';
 import { SidebarProvider, SidebarInset, useSidebar } from '@/components/ui/sidebar';
 import { AppSidebar } from './AppSidebar';
@@ -19,9 +19,9 @@ function LayoutHeader() {
   const { user } = useAuth();
   const { title: brandTitle, iconUrl: brandIconUrl } = useBrand();
   const navigate = useNavigate();
-  
+
   if (!isMobile) return null;
-  
+
   return (
     <div className="sticky top-0 z-10 w-full bg-background/80 backdrop-blur-sm border-b border-border/40 px-4 py-2 flex items-center justify-between">
       <div className="flex items-center gap-3">
@@ -39,13 +39,22 @@ function LayoutHeader() {
           </div>
           <span className="font-semibold">{brandTitle}</span>
           {/* rounded-md 挂 --radius，与侧栏版本号一致随主题圆角强度变化 */}
-          <Badge variant="default" className="rounded-md text-xs font-medium ml-1">v{import.meta.env.PACKAGE_VERSION || '0.1.2'}</Badge>
+          <Badge variant="default" className="rounded-md text-xs font-medium ml-1">
+            v{import.meta.env.PACKAGE_VERSION || '0.2.0'}
+          </Badge>
         </div>
       </div>
-      <button onClick={() => navigate('/settings')} className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity">
+      <button
+        onClick={() => navigate('/settings')}
+        className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity"
+      >
         <Avatar className="w-8 h-8">
           {user?.avatar ? (
-            <img src={user.avatar} alt={user.name} className="w-full h-full object-cover rounded-full" />
+            <img
+              src={user.avatar}
+              alt={user.name}
+              className="w-full h-full object-cover rounded-full"
+            />
           ) : (
             <AvatarFallback className="bg-primary/20 text-primary text-xs font-medium">
               {user?.name?.charAt(0) || 'U'}
@@ -147,9 +156,9 @@ function LayoutContent() {
       <AppSidebar />
       <SidebarInset
         className={cn(
-          "flex flex-col overflow-hidden",
+          'flex flex-col overflow-hidden',
           // 使用transform代替transition-all，减少重绘
-          "transform-gpu"
+          'transform-gpu',
         )}
       >
         <LayoutHeader />
@@ -161,7 +170,9 @@ function LayoutContent() {
         */}
         <main className="flex-1 min-h-0 flex flex-col overflow-auto">
           <div className="layout-page-inner">
-            <Outlet />
+            <Suspense fallback={<PageSpinner />}>
+              <Outlet />
+            </Suspense>
           </div>
         </main>
       </SidebarInset>
@@ -171,12 +182,20 @@ function LayoutContent() {
 
 export function AppLayout() {
   const { sidebarDefaultCollapsed } = useTheme();
+  const location = useLocation();
+  const isPluginView = location.pathname.startsWith('/plugin-view');
   // 受控 open：主题「默认收起」偏好驱动初始态；用户手动折叠/展开走 onOpenChange
   const [open, setOpen] = useState(() => !sidebarDefaultCollapsed);
 
   useEffect(() => {
     setOpen(!sidebarDefaultCollapsed);
   }, [sidebarDefaultCollapsed]);
+
+  useEffect(() => {
+    if (isPluginView) {
+      setOpen(false);
+    }
+  }, [isPluginView]);
 
   return (
     <SidebarProvider open={open} onOpenChange={setOpen} className="h-dvh overflow-hidden">
