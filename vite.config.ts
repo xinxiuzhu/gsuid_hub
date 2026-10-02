@@ -11,6 +11,80 @@ const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
 
 const PLUGIN_SDK_DEV_URL = '/plugin-pages/_sdk/gshub-plugin.js';
 
+/** 开发目录 fonts/ 里的 Twemoji。MiSans 只用 public/misans-vf 的 WOFF2 切片，永不请求后端 TTF。 */
+const HUB_FONT_FILES = [{ name: 'TwemojiMozilla-colr.woff2', type: 'font/woff2' }] as const;
+
+/**
+ * Twemoji 样式表写 /__console_font__/，这个路径在仓库里不存在，Vite 不会把它打进 dist。
+ * dev：中间件从仓库 fonts/ 读文件（也认 /fonts/）。
+ * 正式构建：改成 ../../../utils/fonts/。产物在 webconsole/dist/assets/*.css 时请求 /utils/fonts/。
+ * demo 构建：改成 ../fonts/，并把文件拷进 dist-demo/fonts。
+ */
+function hubFontsPlugin(isDemo: boolean): Plugin {
+  const fontDir = path.resolve(__dirname, 'fonts');
+  let outDir = '';
+  return {
+    name: 'hub-fonts',
+    configResolved(config) {
+      outDir = path.resolve(config.root, config.build.outDir);
+    },
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const url = (req.url ?? '').split('?')[0];
+        if (url.endsWith('/MiSansVF.ttf')) {
+          res.statusCode = 404;
+          res.end();
+          return;
+        }
+        const font = HUB_FONT_FILES.find(
+          (item) => url === `/fonts/${item.name}` || url === `/__console_font__/${item.name}`,
+        );
+        if (!font) {
+          next();
+          return;
+        }
+        const file = path.join(fontDir, font.name);
+        if (!fs.existsSync(file)) {
+          next();
+          return;
+        }
+        res.setHeader('Content-Type', font.type);
+        res.setHeader('Cache-Control', 'public, max-age=3600');
+        fs.createReadStream(file).pipe(res);
+      });
+    },
+    generateBundle(_options, bundle) {
+      const replacementPrefix = isDemo ? '../fonts/' : '../../../utils/fonts/';
+      for (const item of Object.values(bundle)) {
+        if (item.type !== 'asset' || !item.fileName.endsWith('.css')) continue;
+        const source =
+          typeof item.source === 'string' ? item.source : Buffer.from(item.source).toString('utf8');
+        const pattern =
+          /url\(\s*(['"]?)(?:\/(?:app|hub))?\/__console_font__\/(TwemojiMozilla-colr\.woff2)\1\s*\)/g;
+        const next = source.replace(
+          pattern,
+          (_match, quote: string, name: string) =>
+            `url(${quote}${replacementPrefix}${name}${quote})`,
+        );
+        if (next !== source) item.source = next;
+      }
+    },
+    closeBundle() {
+      if (!isDemo) return;
+      const dest = path.join(outDir, 'fonts');
+      fs.mkdirSync(dest, { recursive: true });
+      for (const font of HUB_FONT_FILES) {
+        const src = path.join(fontDir, font.name);
+        if (!fs.existsSync(src)) {
+          console.warn(`[hub-fonts] 缺少 ${src}`);
+          continue;
+        }
+        fs.copyFileSync(src, path.join(dest, font.name));
+      }
+    },
+  };
+}
+
 /** Hub-dev 下 /plugin-pages 会代理到 Core；SDK 源在 public/，必须先于代理本地提供。 */
 function pluginSdkDevPlugin(): Plugin {
   const sdkFile = path.resolve(__dirname, 'public/gshub-plugin.js');
@@ -245,6 +319,10 @@ export default defineConfig(({ command, mode }) => {
   const isDemo = mode === 'demo';
   return {
     base: isDemo ? (command === 'serve' ? '/' : '/hub/') : mode === 'development' ? '/' : '/app/',
+    esbuild: {
+      drop: ['console', 'debugger'],
+      legalComments: 'none',
+    },
     define: {
       PACKAGE_VERSION: JSON.stringify(packageJson.version),
       // 编译期常量：只有 demo 模式为 true，普通 build 下为 undefined → 分支被 tree-shake。
@@ -273,31 +351,30 @@ export default defineConfig(({ command, mode }) => {
     plugins: [
       react(),
       pluginSdkDevPlugin(),
+      hubFontsPlugin(isDemo),
       mode === 'development' && componentTagger(),
       // 自定义插件：构建完成后生成 version.json
-      {
-        name: 'generate-version-json',
-        closeBundle() {
-          // 读取 package.json 获取版本号
-          const packageJsonPath = path.resolve(__dirname, 'package.json');
-          const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
-
-          const versionInfo = {
-            version: packageJson.version || '0.0.0',
-            buildTime: new Date().toISOString(),
-            mode: mode,
-          };
-
-          // 写入 version.json 到产物目录（demo 模式落到 dist-demo）
-          const distPath = path.resolve(__dirname, isDemo ? 'dist-demo' : 'dist');
-          fs.writeFileSync(
-            path.join(distPath, 'version.json'),
-            JSON.stringify(versionInfo, null, 2),
-            'utf-8',
-          );
-          console.log(`[generate-version-json] Generated version.json:`, versionInfo);
-        },
-      },
+      (() => {
+        let outDir = '';
+        return {
+          name: 'generate-version-json',
+          configResolved(config) {
+            outDir = path.resolve(config.root, config.build.outDir);
+          },
+          closeBundle() {
+            const versionInfo = {
+              version: packageJson.version || '0.0.0',
+              mode,
+            };
+            fs.writeFileSync(
+              path.join(outDir, 'version.json'),
+              JSON.stringify(versionInfo, null, 2),
+              'utf-8',
+            );
+            console.log(`[generate-version-json] Generated version.json:`, versionInfo);
+          },
+        };
+      })(),
       // ─── strip-thesvg-variants ────────────────────────────────────────────
       // 在打包阶段把 `@thesvg/react/dist/{slug}.js` 加载的「每个图标含 4-6 个
       // variants (default / mono / light / dark / color / wordmark...)」压成只
@@ -316,30 +393,40 @@ export default defineConfig(({ command, mode }) => {
       // 也会被 Vite 原样带上，白白增重。改由本插件按 mode 条件拷贝：
       //   · `vite build --mode demo` → 拷进 dist-demo/，运行时 URL 仍是 `${BASE_URL}demo-*/…`（不变）。
       //   · 普通 `vite build` → 不触发，dist/ 不含这些资源。
-      isDemo && {
-        name: 'copy-demo-assets',
-        closeBundle() {
-          const srcDir = path.resolve(__dirname, 'demo-assets');
-          const destDir = path.resolve(__dirname, 'dist-demo');
-          if (!fs.existsSync(srcDir)) {
-            console.warn(`[copy-demo-assets] 跳过：未找到 ${srcDir}`);
-            return;
-          }
-          // cpSync 把 srcDir 的子项拷进 destDir（dist-demo/demo-memes/… 等），与原 public/ 路径一致。
-          fs.cpSync(srcDir, destDir, { recursive: true });
-          console.log(`[copy-demo-assets] 已将 demo-assets/ 拷入 dist-demo/`);
-        },
-      },
+      isDemo &&
+        (() => {
+          let outDir = '';
+          return {
+            name: 'copy-demo-assets',
+            configResolved(config) {
+              outDir = path.resolve(config.root, config.build.outDir);
+            },
+            closeBundle() {
+              const srcDir = path.resolve(__dirname, 'demo-assets');
+              if (!fs.existsSync(srcDir)) {
+                console.warn(`[copy-demo-assets] 跳过：未找到 ${srcDir}`);
+                return;
+              }
+              fs.cpSync(srcDir, outDir, { recursive: true });
+              console.log(`[copy-demo-assets] 已将 demo-assets/ 拷入 ${outDir}`);
+            },
+          };
+        })(),
       // 构建后再写 .gz / .br。Core 按 Accept-Encoding 选文件；没有预压缩时仍可走动态 gzip。
-      {
-        name: 'precompress-static',
-        apply: 'build' as const,
-        async closeBundle() {
-          const distPath = path.resolve(__dirname, isDemo ? 'dist-demo' : 'dist');
-          const stats = await precompressDist(distPath);
-          console.log(`[precompress-static] gzip/brotli ${stats.files} files in ${distPath}`);
-        },
-      },
+      (() => {
+        let outDir = '';
+        return {
+          name: 'precompress-static',
+          apply: 'build' as const,
+          configResolved(config) {
+            outDir = path.resolve(config.root, config.build.outDir);
+          },
+          async closeBundle() {
+            const stats = await precompressDist(outDir);
+            console.log(`[precompress-static] gzip/brotli ${stats.files} files in ${outDir}`);
+          },
+        };
+      })(),
     ].filter(Boolean),
     resolve: {
       alias: {
@@ -347,7 +434,8 @@ export default defineConfig(({ command, mode }) => {
       },
     },
     build: {
-      outDir: isDemo ? 'dist-demo' : 'dist',
+      // 生产默认 dist/；`pnpm build:core` 用 --outDir 写到 gsuid_core/webconsole/dist。
+      outDir: isDemo ? 'dist-demo' : process.env.GSHUB_OUT_DIR || 'dist',
       emptyOutDir: true,
       // 启用tree-shaking优化
       rollupOptions: {
@@ -371,14 +459,7 @@ export default defineConfig(({ command, mode }) => {
             ) {
               return 'react-vendor';
             }
-            if (
-              id.includes('node_modules/@radix-ui/react-dialog/') ||
-              id.includes('node_modules/@radix-ui/react-dropdown-menu/') ||
-              id.includes('node_modules/@radix-ui/react-select/') ||
-              id.includes('node_modules/@radix-ui/react-tabs/')
-            ) {
-              return 'ui-vendor';
-            }
+
             if (
               id.includes('node_modules/echarts/') ||
               id.includes('node_modules/echarts-for-react/') ||
@@ -407,18 +488,13 @@ export default defineConfig(({ command, mode }) => {
             if (id.includes('node_modules/@tanstack/react-virtual/')) {
               return 'virtual';
             }
-            if (id.includes('node_modules/lucide-react/')) {
-              return 'lucide';
-            }
           },
           assetFileNames: (assetInfo) => {
             const name = assetInfo.name || '';
-            const info = name.split('.');
-            const ext = info[info.length - 1];
             if (/\.(png|jpe?g|gif|svg|webp|ico)$/i.test(name)) {
-              return `assets/images/[name]-[hash][extname]`;
+              return 'assets/images/[name]-[hash][extname]';
             }
-            return `assets/[name]-[hash][extname]`;
+            return 'assets/[name]-[hash][extname]';
           },
           chunkFileNames: 'assets/js/[name]-[hash].js',
           entryFileNames: 'assets/js/[name]-[hash].js',
@@ -426,10 +502,6 @@ export default defineConfig(({ command, mode }) => {
       },
       // 压缩选项 - 使用esbuild（Vite默认，无需额外依赖）
       minify: 'esbuild',
-      esbuildOptions: {
-        drop: ['console', 'debugger'], // 移除console和debugger
-      },
-      // 源码映射控制
       sourcemap: false,
       // CSS优化
       cssMinify: true,

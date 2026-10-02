@@ -9,6 +9,7 @@ import {
   probeAuthEncryption,
   type EncryptedPayload,
 } from './authCrypto';
+import { BackendUnreachableError, isUnreachableResponse } from './backendReachability';
 // Demo 模式：<img src> 不走 fetch（mockServer 拦不到），故图片 URL 构造函数在 VITE_DEMO 下
 // 直接返回内置 SVG 占位图，避免一墙裂图。普通构建下分支为 dead code，import 会被 tree-shake。
 import { demoPlaceholderImage, demoPluginIcon, demoMemeImageUrl } from './demoMock';
@@ -105,7 +106,7 @@ export function getApiErrorMessage(source: unknown, fallback = 'Request failed')
         .map((d) =>
           d && typeof d === 'object' && typeof (d as Record<string, unknown>).msg === 'string'
             ? ((d as Record<string, unknown>).msg as string)
-            : null
+            : null,
         )
         .filter((m): m is string => !!m);
       if (msgs.length) return msgs.join('; ');
@@ -228,7 +229,7 @@ export interface Plugin {
   icon?: string;
   config: Record<string, PluginConfigItem>;
   config_groups?: PluginConfigGroup[];
-  config_names?: string[];  // 配置名称列表，用于判断是否需要显�?toggle group
+  config_names?: string[]; // 配置名称列表，用于判断是否需要显�?toggle group
   service_config?: ServiceConfig;
   sv_list?: SvItem[];
   pages?: PluginPageMeta[];
@@ -294,6 +295,38 @@ export interface LogContextResponse {
   total_in_date: number;
   has_more_before: boolean;
   has_more_after: boolean;
+}
+
+export interface ErrorReportListItem {
+  id: string;
+  filename: string;
+  timestamp: string;
+  first_timestamp: string;
+  count: number;
+  level: string;
+  event: string;
+  pathname: string;
+  lineno: number | null;
+  size: number;
+}
+
+export interface ErrorReportOccurrence {
+  filename: string;
+  timestamp: string;
+}
+
+export interface ErrorReportDetail {
+  fingerprint: string;
+  count: number;
+  report: Record<string, unknown>;
+  occurrences: ErrorReportOccurrence[];
+}
+
+export interface ErrorReportListPage {
+  count: number;
+  rows: ErrorReportListItem[];
+  page: number;
+  per_page: number;
 }
 
 export interface SchedulerJob {
@@ -392,6 +425,9 @@ export interface ActiveBotsInfo {
   bots: ActiveBotInfo[];
 }
 
+// 通用请求超时：fetch 无内置超时，后端不返回时调用方会永远挂起
+const REQUEST_TIMEOUT_MS = 60_000;
+
 // ===================
 // API Client
 // ===================
@@ -407,10 +443,61 @@ class ApiClient {
     this.baseUrl = url;
   }
 
-  private async request<T>(
-    endpoint: string,
-    options: RequestInit = {}
-  ): Promise<T> {
+  /**
+   * 解析 `{status, msg, data}` 封套，并把「拿不到有效封套」转成 BackendUnreachableError。
+   *
+   * 代理失败（dev 下 Vite 转发到没启动的 Core）时 Vite 返回 500 + 空 body，
+   * 这里会走 `response.json()` 抛 SyntaxError 的老路；转成 BackendUnreachableError
+   * 后，调用方才能把它和后端自己的业务错误区分开。
+   */
+  private async parseEnvelope<T>(response: Response): Promise<ApiResponse<T>> {
+    let text: string;
+    try {
+      text = await response.text();
+    } catch {
+      throw new BackendUnreachableError(
+        `Backend unreachable (unreadable body, HTTP ${response.status})`,
+      );
+    }
+
+    if (!text.trim()) {
+      if (
+        !response.ok &&
+        isUnreachableResponse({
+          status: response.status,
+          bodyIsJson: false,
+          hasBody: false,
+        })
+      ) {
+        throw new BackendUnreachableError(`Backend unreachable (HTTP ${response.status})`);
+      }
+      throw new BackendUnreachableError(`Backend returned an empty body (HTTP ${response.status})`);
+    }
+
+    let data: ApiResponse<T>;
+    try {
+      data = JSON.parse(text) as ApiResponse<T>;
+    } catch {
+      if (
+        !response.ok &&
+        !isUnreachableResponse({
+          status: response.status,
+          bodyIsJson: false,
+          hasBody: true,
+        })
+      ) {
+        // 非 JSON 的错误响应：把原文回显（与 request() 行为一致）
+        throw new Error(text);
+      }
+      throw new BackendUnreachableError(
+        `Backend unreachable (invalid JSON, HTTP ${response.status})`,
+      );
+    }
+
+    return data;
+  }
+
+  private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
 
     // Get auth token
@@ -424,8 +511,12 @@ class ApiClient {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
+    // fetch 默认无超时：后端若不返回，调用方会永久挂起（如旧版 dashboard 的轮询接口）
+    const timeoutSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+
     const response = await fetch(url, {
       ...options,
+      signal: options.signal ?? timeoutSignal,
       headers: {
         ...headers,
         ...options.headers,
@@ -442,24 +533,41 @@ class ApiClient {
     if (!response.ok) {
       // Try to parse error message from response（封套 msg 与 FastAPI detail 都要回显）
       let errorMessage = `HTTP Error: ${response.status}`;
+      let bodyIsJson = false;
+      let hasBody = false;
       try {
         const text = await response.text();
+        hasBody = text.trim().length > 0;
         try {
           const errorData = JSON.parse(text);
+          bodyIsJson = true;
           errorMessage = getApiErrorMessage(errorData, errorMessage);
         } catch {
           // Not JSON, use raw text if available
-          if (text) {
+          if (hasBody) {
             errorMessage = text;
           }
         }
       } catch {
         // Ignore parsing errors
       }
+      // dev 经 Vite 代理：Core 没启动时 Vite 造一个 500 + 空 body，fetch 不会 reject。
+      // 必须在解析层就转成「不可达」，否则登录页会以为后端活着而显示正常表单。
+      if (isUnreachableResponse({ status: response.status, bodyIsJson, hasBody })) {
+        throw new BackendUnreachableError(`Backend unreachable (HTTP ${response.status})`);
+      }
       throw new Error(errorMessage);
     }
 
-    const data: ApiResponse<T> = await response.json();
+    let data: ApiResponse<T>;
+    try {
+      data = await response.json();
+    } catch {
+      // 2xx 但 body 不是 JSON：代理异常或后端返回了非 JSON 内容
+      throw new BackendUnreachableError(
+        `Backend unreachable (invalid JSON, HTTP ${response.status})`,
+      );
+    }
 
     if (data.status !== 0) {
       throw new Error(getApiErrorMessage(data, 'API request failed'));
@@ -580,7 +688,9 @@ class ApiClient {
         } catch {
           if (text) errorMessage = text;
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
       throw new Error(errorMessage);
     }
 
@@ -611,8 +721,7 @@ class ApiClient {
       handleUnauthorized();
     }
 
-    const data: ApiResponse<T> = await response.json();
-    return data;
+    return this.parseEnvelope<T>(response);
   }
 
   // POST request returning the raw {status, msg, data} envelope without
@@ -642,8 +751,7 @@ class ApiClient {
       handleUnauthorized();
     }
 
-    const data: ApiResponse<T> = await response.json();
-    return data;
+    return this.parseEnvelope<T>(response);
   }
 
   // Download file as Blob with auth header
@@ -669,7 +777,18 @@ class ApiClient {
     }
 
     if (!response.ok) {
-      throw new Error(`下载失败: HTTP ${response.status}`);
+      let errorMessage = `下载失败: HTTP ${response.status}`;
+      try {
+        const text = await response.text();
+        try {
+          errorMessage = getApiErrorMessage(JSON.parse(text), errorMessage);
+        } catch {
+          if (text) errorMessage = text.slice(0, 300);
+        }
+      } catch {
+        // ignore parse failures; keep HTTP status fallback
+      }
+      throw new Error(errorMessage);
     }
 
     return response.blob();
@@ -713,8 +832,7 @@ export const dashboardApi = {
       `/api/dashboard/daily/command-counts?days=${days}&bot_id=${encodeURIComponent(botId)}`,
     ),
 
-  getBots: () =>
-    api.get<BotItem[]>('/api/dashboard/bots'),
+  getBots: () => api.get<BotItem[]>('/api/dashboard/bots'),
 };
 
 // ===================
@@ -730,8 +848,7 @@ export interface CoreConfigOptionMeta {
 }
 
 export const configApi = {
-  getCoreConfig: () =>
-    api.get<CoreConfig>('/api/core/config'),
+  getCoreConfig: () => api.get<CoreConfig>('/api/core/config'),
 
   setCoreConfig: (config: CoreConfig) =>
     api.post<{ status: number; msg: string }>('/api/core/config', config),
@@ -777,8 +894,7 @@ export const liveChatApi = {
   /** 组装完整状态（identity + index + 各会话文件） */
   getState: () => api.get<LiveChatStateDto>('/api/live-chat/state'),
   /** 整包拆分写入多文件 */
-  putState: (state: LiveChatStateDto) =>
-    api.put<LiveChatStateDto>('/api/live-chat/state', state),
+  putState: (state: LiveChatStateDto) => api.put<LiveChatStateDto>('/api/live-chat/state', state),
   putIdentity: (identity: LiveChatIdentityDto) =>
     api.put<LiveChatIdentityDto>('/api/live-chat/identity', identity),
   putIndex: (index: {
@@ -808,6 +924,16 @@ export interface PluginPageMeta {
   description: Record<string, string>;
   confirm_message: Record<string, string>;
   icon?: string;
+}
+
+export interface PluginUsageItem {
+  name: string;
+  triggers: number;
+}
+
+export interface PluginUsageRank {
+  window_days: number;
+  plugins: PluginUsageItem[];
 }
 
 export interface PluginListItem {
@@ -860,22 +986,24 @@ export interface PluginStoreListResponse {
 
 export const pluginsApi = {
   // 获取插件列表（轻量级接口�?
-  getPluginList: () =>
-    api.get<PluginListItem[]>(`/api/plugins/list?_t=${Date.now()}`),
+  getPluginList: () => api.get<PluginListItem[]>(`/api/plugins/list?_t=${Date.now()}`),
+
+  /** 近几天命令触发热度。后端有缓存；旧后端没有这个接口时调用方自行降级。 */
+  getPluginUsage: () => api.get<PluginUsageRank>(`/api/plugins/usage`),
 
   // 获取插件详情（包含完整配置）
-  getPlugin: (pluginName: string) =>
-    api.get<Plugin>(`/api/plugins/${pluginName}?_t=${Date.now()}`),
+  getPlugin: (pluginName: string) => api.get<Plugin>(`/api/plugins/${pluginName}?_t=${Date.now()}`),
 
   // 获取所有插件（兼容旧接口）
-  getPlugins: () =>
-    api.get<Plugin[]>(`/api/plugins?_t=${Date.now()}`),
+  getPlugins: () => api.get<Plugin[]>(`/api/plugins?_t=${Date.now()}`),
 
   updatePlugin: (pluginName: string, config: Record<string, unknown>) =>
     api.post<{ status: number; msg: string }>(`/api/plugins/${pluginName}`, config),
 
   togglePlugin: (pluginName: string, enabled: boolean) =>
-    api.post<{ status: number; msg: string }>(`/api/plugins/${pluginName}/toggle?enabled=${enabled}`),
+    api.post<{ status: number; msg: string }>(
+      `/api/plugins/${pluginName}/toggle?enabled=${enabled}`,
+    ),
 
   updateServiceConfig: (pluginName: string, config: Record<string, unknown>) =>
     api.post<{ status: number; msg: string }>(`/api/plugins/${pluginName}/service`, config),
@@ -955,8 +1083,7 @@ export const frameworkConfigApi = {
     api.get<FrameworkConfigDetail>(`/api/framework-config/${configName}`),
 
   // 兼容旧接口 - 获取所有框架配置
-  getFrameworkConfigs: () =>
-    api.get<FrameworkConfig[]>('/api/framework-config'),
+  getFrameworkConfigs: () => api.get<FrameworkConfig[]>('/api/framework-config'),
 
   // 更新框架配置
   updateFrameworkConfig: (configName: string, config: Record<string, unknown>) =>
@@ -964,7 +1091,10 @@ export const frameworkConfigApi = {
 
   // 更新单个框架配置�?
   updateFrameworkConfigItem: (configName: string, itemName: string, value: unknown) =>
-    api.post<{ status: number; msg: string }>(`/api/framework-config/${configName}/item/${itemName}`, { value }),
+    api.post<{ status: number; msg: string }>(
+      `/api/framework-config/${configName}/item/${itemName}`,
+      { value },
+    ),
 };
 
 // ===================
@@ -1066,8 +1196,7 @@ export interface OpenAIConfigListResponse {
 
 export const openaiConfigApi = {
   // 获取 OpenAI 配置文件列表
-  getConfigList: () =>
-    api.get<OpenAIConfigListResponse>('/api/openai_config/list'),
+  getConfigList: () => api.get<OpenAIConfigListResponse>('/api/openai_config/list'),
 
   // 获取 OpenAI 配置详情
   getConfig: (configName: string) =>
@@ -1075,7 +1204,10 @@ export const openaiConfigApi = {
 
   // 创建或更�?OpenAI 配置文件
   saveConfig: (configName: string, config: OpenAIConfigData) =>
-    api.post<{ status: number; msg: string; data: { name: string } }>(`/api/openai_config/${configName}`, { config }),
+    api.post<{ status: number; msg: string; data: { name: string } }>(
+      `/api/openai_config/${configName}`,
+      { config },
+    ),
 
   // 创建默认配置�?OpenAI 配置文件
   createDefault: (configName: string) =>
@@ -1088,20 +1220,20 @@ export const openaiConfigApi = {
   // 重命�?OpenAI 配置文件
   renameConfig: (oldName: string, newName: string) =>
     api.post<{ status: number; msg: string; data: { old_name: string; new_name: string } }>(
-      `/api/openai_config/${oldName}/rename?new_name=${encodeURIComponent(newName)}`
+      `/api/openai_config/${oldName}/rename?new_name=${encodeURIComponent(newName)}`,
     ),
 
   // 获取当前激活的 OpenAI 配置
-  getCurrentConfig: () =>
-    api.get<OpenAIConfigDetail>('/api/openai_config/current'),
+  getCurrentConfig: () => api.get<OpenAIConfigDetail>('/api/openai_config/current'),
 
   // 切换 OpenAI 配置文件（热切换�?
   switchConfig: (configName: string) =>
-    api.post<{ status: number; msg: string; data: { name: string } }>(`/api/openai_config/${configName}/switch`),
+    api.post<{ status: number; msg: string; data: { name: string } }>(
+      `/api/openai_config/${configName}/switch`,
+    ),
 
   // 获取 OpenAI 配置可选项
-  getOptions: () =>
-    api.get<OpenAIConfigOptions>('/api/openai_config/options'),
+  getOptions: () => api.get<OpenAIConfigOptions>('/api/openai_config/options'),
 };
 
 // ===================
@@ -1129,7 +1261,7 @@ export interface ProviderConfigField {
 }
 
 export interface ProviderConfigDetail {
-  name: string;       // provider++name 格式
+  name: string; // provider++name 格式
   provider: string;
   config_name: string; // 纯配置名
   config: Record<string, ProviderConfigField>;
@@ -1144,7 +1276,7 @@ export interface TaskConfigResponse {
 }
 
 export interface AllConfigItem {
-  name: string;       // provider++name 格式
+  name: string; // provider++name 格式
   provider: string;
   config_name: string; // 纯配置名
   model_name: string;
@@ -1154,8 +1286,8 @@ export interface AllConfigItem {
 export interface AllConfigsSummary {
   configs: AllConfigItem[];
   current_provider: string;
-  high_level_config: string;   // provider++name 格式
-  low_level_config: string;    // provider++name 格式
+  high_level_config: string; // provider++name 格式
+  low_level_config: string; // provider++name 格式
 }
 
 export interface ProviderConfigOptions {
@@ -1189,13 +1321,12 @@ export interface ProviderConfigOptions {
 
 export const providerConfigApi = {
   // 获取 Provider 列表
-  getProviders: () =>
-    api.get<ProviderListData>('/api/provider_config/providers'),
+  getProviders: () => api.get<ProviderListData>('/api/provider_config/providers'),
 
   // 设置 Provider
   setProvider: (provider: string) =>
     api.post<{ status: number; msg: string; data: { provider: string } }>(
-      `/api/provider_config/provider/${provider}`
+      `/api/provider_config/provider/${provider}`,
     ),
 
   // 获取任务级别配置
@@ -1204,52 +1335,64 @@ export const providerConfigApi = {
 
   // 设置任务级别配置
   setTaskConfig: (taskLevel: 'high' | 'low', configName: string, provider?: string) =>
-    api.post<{ status: number; msg: string; data: { task_level: string; config_name: string; provider: string } }>(
-      `/api/provider_config/task_config/${taskLevel}`,
-      { config_name: configName, provider }
-    ),
+    api.post<{
+      status: number;
+      msg: string;
+      data: { task_level: string; config_name: string; provider: string };
+    }>(`/api/provider_config/task_config/${taskLevel}`, { config_name: configName, provider }),
 
   // 清除任务级别配置
   clearTaskConfig: (taskLevel: 'high' | 'low') =>
-    api.delete<{ status: number; msg: string }>(
-      `/api/provider_config/task_config/${taskLevel}`
-    ),
+    api.delete<{ status: number; msg: string }>(`/api/provider_config/task_config/${taskLevel}`),
 
   // 获取所有配置摘�?
-  getAllConfigs: () =>
-    api.get<AllConfigsSummary>('/api/provider_config/all_configs'),
+  getAllConfigs: () => api.get<AllConfigsSummary>('/api/provider_config/all_configs'),
 
   // 获取配置详情
   getConfigDetail: (provider: string, configName: string) =>
-    api.get<{ name: string; provider: string; config_name: string; config: Record<string, ProviderConfigField> }>(
-      `/api/provider_config/config/${provider}/${configName}`
-    ),
+    api.get<{
+      name: string;
+      provider: string;
+      config_name: string;
+      config: Record<string, ProviderConfigField>;
+    }>(`/api/provider_config/config/${provider}/${configName}`),
 
   // 创建或更新配�?
   saveConfig: (provider: string, configName: string, config: Record<string, { data: unknown }>) =>
-    api.post<{ status: number; msg: string; data: { name: string; provider: string; config_name: string } }>(
-      `/api/provider_config/config/${provider}/${configName}`,
-      { config }
-    ),
+    api.post<{
+      status: number;
+      msg: string;
+      data: { name: string; provider: string; config_name: string };
+    }>(`/api/provider_config/config/${provider}/${configName}`, { config }),
 
   // 创建默认配置
   createDefaultConfig: (provider: string, configName: string) =>
-    api.post<{ status: number; msg: string; data: { name: string; provider: string; config_name: string } }>(
-      `/api/provider_config/config/${provider}/${configName}/create_default`
-    ),
+    api.post<{
+      status: number;
+      msg: string;
+      data: { name: string; provider: string; config_name: string };
+    }>(`/api/provider_config/config/${provider}/${configName}/create_default`),
 
   // 删除配置
   deleteConfig: (provider: string, configName: string) =>
     api.delete<{ status: number; msg: string }>(
-      `/api/provider_config/config/${provider}/${configName}`
+      `/api/provider_config/config/${provider}/${configName}`,
     ),
 
   // 重命名配置（通过创建新配�?删除旧配置实现）
-  renameConfig: async (provider: string, oldName: string, newName: string, apiClient: typeof api): Promise<{ status: number; msg: string }> => {
+  renameConfig: async (
+    provider: string,
+    oldName: string,
+    newName: string,
+    apiClient: typeof api,
+  ): Promise<{ status: number; msg: string }> => {
     // 1. 获取旧配置详�?
-    const detail = await apiClient.get<{ name: string; provider: string; config_name: string; config: Record<string, ProviderConfigField> }>(
-      `/api/provider_config/config/${provider}/${oldName}`
-    );
+    const detail = await apiClient.get<{
+      name: string;
+      provider: string;
+      config_name: string;
+      config: Record<string, ProviderConfigField>;
+    }>(`/api/provider_config/config/${provider}/${oldName}`);
     // 2. 用新名字保存配置
     const configData: Record<string, { data: unknown }> = {};
     for (const [key, field] of Object.entries(detail.config)) {
@@ -1257,11 +1400,11 @@ export const providerConfigApi = {
     }
     await apiClient.post<{ status: number; msg: string }>(
       `/api/provider_config/config/${provider}/${newName}`,
-      { config: configData }
+      { config: configData },
     );
     // 3. 删除旧配�?
     return apiClient.delete<{ status: number; msg: string }>(
-      `/api/provider_config/config/${provider}/${oldName}`
+      `/api/provider_config/config/${provider}/${oldName}`,
     );
   },
 
@@ -1271,26 +1414,26 @@ export const providerConfigApi = {
 
   // --- 兼容旧接�?---
   // 获取高级任务配置 (兼容旧版)
-  getHighLevelConfig: () =>
-    api.get<TaskConfigResponse>('/api/provider_config/task_config/high'),
+  getHighLevelConfig: () => api.get<TaskConfigResponse>('/api/provider_config/task_config/high'),
 
   // 获取低级任务配置 (兼容旧版)
-  getLowLevelConfig: () =>
-    api.get<TaskConfigResponse>('/api/provider_config/task_config/low'),
+  getLowLevelConfig: () => api.get<TaskConfigResponse>('/api/provider_config/task_config/low'),
 
   // 设置高级任务配置 (兼容旧版)
   setHighLevelConfig: (configName: string, provider?: string) =>
-    api.post<{ status: number; msg: string; data: { task_level: string; config_name: string; provider: string } }>(
-      `/api/provider_config/task_config/high`,
-      { config_name: configName, provider }
-    ),
+    api.post<{
+      status: number;
+      msg: string;
+      data: { task_level: string; config_name: string; provider: string };
+    }>(`/api/provider_config/task_config/high`, { config_name: configName, provider }),
 
   // 设置低级任务配置 (兼容旧版)
   setLowLevelConfig: (configName: string, provider?: string) =>
-    api.post<{ status: number; msg: string; data: { task_level: string; config_name: string; provider: string } }>(
-      `/api/provider_config/task_config/low`,
-      { config_name: configName, provider }
-    ),
+    api.post<{
+      status: number;
+      msg: string;
+      data: { task_level: string; config_name: string; provider: string };
+    }>(`/api/provider_config/task_config/low`, { config_name: configName, provider }),
 
   // 获取模型列表（OpenAI 兼容格式�?
   fetchOpenAIModels: async (baseUrl: string, apiKey: string): Promise<string[]> => {
@@ -1298,7 +1441,7 @@ export const providerConfigApi = {
     const response = await fetch(url, {
       method: 'GET',
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
+        Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
     });
@@ -1343,9 +1486,7 @@ export const providerConfigApi = {
     const data = await response.json();
     const models = (data.models || []) as Array<{ name?: string }>;
     // name 形如 "models/gemini-2.5-flash"，去掉前缀取模型 id
-    return models
-      .map((m) => (m.name || '').replace(/^models\//, ''))
-      .filter(Boolean);
+    return models.map((m) => (m.name || '').replace(/^models\//, '')).filter(Boolean);
   },
 };
 
@@ -1394,14 +1535,13 @@ export interface EmbeddingConfigSummary {
 
 export const embeddingConfigApi = {
   // 获取当前嵌入模型提供�?
-  getProvider: () =>
-    api.get<EmbeddingProviderData>('/api/embedding_config/provider'),
+  getProvider: () => api.get<EmbeddingProviderData>('/api/embedding_config/provider'),
 
   // 设置嵌入模型提供�?
   setProvider: (provider: string) =>
     api.post<{ status: number; msg: string; data: { provider: string } }>(
       '/api/embedding_config/provider',
-      { provider }
+      { provider },
     ),
 
   // 获取本地嵌入模型配置
@@ -1421,8 +1561,7 @@ export const embeddingConfigApi = {
     api.post<{ status: number; msg: string }>('/api/embedding_config/openai', config),
 
   // 获取嵌入模型配置摘要（一次性获取所有配置）
-  getSummary: () =>
-    api.get<EmbeddingConfigSummary>('/api/embedding_config/summary'),
+  getSummary: () => api.get<EmbeddingConfigSummary>('/api/embedding_config/summary'),
 };
 
 // ===================
@@ -1430,11 +1569,12 @@ export const embeddingConfigApi = {
 // ===================
 
 export const pluginStoreApi = {
-  getPluginList: () =>
-    api.get<PluginStoreListResponse>('/api/plugin-store/list'),
+  getPluginList: () => api.get<PluginStoreListResponse>('/api/plugin-store/list'),
 
   installPlugin: (pluginId: string, repoUrl?: string) =>
-    api.post<{ status: number; msg: string }>(`/api/plugin-store/install/${pluginId}`, { repo_url: repoUrl || '' }),
+    api.post<{ status: number; msg: string }>(`/api/plugin-store/install/${pluginId}`, {
+      repo_url: repoUrl || '',
+    }),
 
   /**
    * 通过 git 仓库 URL 安装任意插件（不必在插件商店白名单内）。
@@ -1463,16 +1603,18 @@ export const pluginStoreApi = {
 // ===================
 
 export const logsApi = {
-  getLogs: (params: {
-    date?: string;
-    start_date?: string;
-    end_date?: string;
-    level?: string;
-    source?: string;
-    search?: string;
-    page?: number;
-    per_page?: number;
-  } = {}) => {
+  getLogs: (
+    params: {
+      date?: string;
+      start_date?: string;
+      end_date?: string;
+      level?: string;
+      source?: string;
+      search?: string;
+      page?: number;
+      per_page?: number;
+    } = {},
+  ) => {
     const query = new URLSearchParams();
     if (params.date) query.set('date', params.date);
     if (params.start_date) query.set('start_date', params.start_date);
@@ -1486,18 +1628,19 @@ export const logsApi = {
     return api.get<LogResponse>(`/api/logs?${query.toString()}`);
   },
 
-  getSources: () =>
-    api.get<string[]>('/api/logs/sources'),
+  getSources: () => api.get<string[]>('/api/logs/sources'),
 
-  getStats: (params: {
-    date?: string;
-    start_date?: string;
-    end_date?: string;
-    level?: string;
-    source?: string;
-    search?: string;
-    per_page?: number;
-  } = {}) => {
+  getStats: (
+    params: {
+      date?: string;
+      start_date?: string;
+      end_date?: string;
+      level?: string;
+      source?: string;
+      search?: string;
+      per_page?: number;
+    } = {},
+  ) => {
     const query = new URLSearchParams();
     if (params.date) query.set('date', params.date);
     if (params.start_date) query.set('start_date', params.start_date);
@@ -1518,15 +1661,9 @@ export const logsApi = {
     }>(`/api/logs/stats?${query.toString()}`);
   },
 
-  getAvailableDates: () =>
-    api.get<string[]>('/api/logs/available-dates'),
+  getAvailableDates: () => api.get<string[]>('/api/logs/available-dates'),
 
-  getContext: (params: {
-    log_id: number;
-    date: string;
-    before?: number;
-    after?: number;
-  }) => {
+  getContext: (params: { log_id: number; date: string; before?: number; after?: number }) => {
     const query = new URLSearchParams();
     query.set('log_id', String(params.log_id));
     query.set('date', params.date);
@@ -1536,8 +1673,47 @@ export const logsApi = {
     return api.get<LogContextResponse>(`/api/logs/context?${query.toString()}`);
   },
 
-  getLevels: () =>
-    api.get<Array<{ label: string; value: string }>>('/api/logs/levels'),
+  getLevels: () => api.get<Array<{ label: string; value: string }>>('/api/logs/levels'),
+
+  getErrorReports: (
+    params: {
+      page?: number;
+      per_page?: number;
+      search?: string;
+      level?: string;
+      date?: string;
+      start_date?: string;
+      end_date?: string;
+    } = {},
+  ) => {
+    const query = new URLSearchParams();
+    if (params.page) query.set('page', String(params.page));
+    if (params.per_page) query.set('per_page', String(params.per_page));
+    if (params.search) query.set('search', params.search);
+    if (params.level) query.set('level', params.level);
+    if (params.date) query.set('date', params.date);
+    if (params.start_date) query.set('start_date', params.start_date);
+    if (params.end_date) query.set('end_date', params.end_date);
+    const qs = query.toString();
+    return api.get<ErrorReportListPage>(
+      qs ? `/api/logs/error-reports?${qs}` : '/api/logs/error-reports',
+    );
+  },
+
+  getErrorReportDates: () => api.get<string[]>('/api/logs/error-reports/available-dates'),
+
+  getErrorReport: (
+    reportId: string,
+    params: { date?: string; start_date?: string; end_date?: string } = {},
+  ) => {
+    const query = new URLSearchParams();
+    if (params.date) query.set('date', params.date);
+    if (params.start_date) query.set('start_date', params.start_date);
+    if (params.end_date) query.set('end_date', params.end_date);
+    const qs = query.toString();
+    const path = `/api/logs/error-reports/${encodeURIComponent(reportId)}`;
+    return api.get<ErrorReportDetail>(qs ? `${path}?${qs}` : path);
+  },
 };
 
 // ===================
@@ -1641,16 +1817,18 @@ export interface HttpTraceListPage {
 }
 
 export const httpTraceApi = {
-  getTraces: (params: {
-    date?: string;
-    page?: number;
-    per_page?: number;
-    method?: string;
-    path_prefix?: string;
-    status_class?: string;
-    user_id?: string;
-    errors_only?: boolean;
-  } = {}) => {
+  getTraces: (
+    params: {
+      date?: string;
+      page?: number;
+      per_page?: number;
+      method?: string;
+      path_prefix?: string;
+      status_class?: string;
+      user_id?: string;
+      errors_only?: boolean;
+    } = {},
+  ) => {
     const query = new URLSearchParams();
     if (params.date) query.set('date', params.date);
     if (params.page !== undefined) query.set('page', String(params.page));
@@ -1670,9 +1848,7 @@ export const httpTraceApi = {
     );
   },
   getDailyCounts: (days = 60) =>
-    api.get<Array<{ date: string; count: number }>>(
-      `/api/http-traces/daily_counts?days=${days}`,
-    ),
+    api.get<Array<{ date: string; count: number }>>(`/api/http-traces/daily_counts?days=${days}`),
 };
 
 // ===================
@@ -1680,8 +1856,7 @@ export const httpTraceApi = {
 // ===================
 
 export const schedulerApi = {
-  getJobs: () =>
-    api.get<SchedulerJob[]>('/api/scheduler/jobs'),
+  getJobs: () => api.get<SchedulerJob[]>('/api/scheduler/jobs'),
 
   runJob: (jobId: string) =>
     api.post<{ status: number; msg: string }>(`/api/scheduler/jobs/${jobId}/run`),
@@ -1700,32 +1875,54 @@ export const schedulerApi = {
 // Backup APIs
 // ===================
 
+export type BackupFileTreeSort = 'size' | 'count';
+
 export interface FileTreeNode {
   id: string;
   name: string;
   type: 'file' | 'directory';
   path: string;
+  size_bytes: number;
+  file_count: number;
+  has_children: boolean;
+}
+
+export interface FileTreeListing {
+  path: string;
+  name: string;
+  type: 'directory';
+  size_bytes: number;
+  file_count: number;
+  child_total: number;
+  offset: number;
+  limit: number;
+  truncated: boolean;
+  omitted_count: number;
+  sort: BackupFileTreeSort;
   children: FileTreeNode[];
 }
 
 export const backupApi = {
-  getFiles: () =>
-    api.get<BackupFile[]>('/api/backup/files'),
+  getFiles: () => api.get<BackupFile[]>('/api/backup/files'),
 
-  createBackup: () =>
-    api.post<{ status: number; msg: string }>('/api/backup/create'),
+  createBackup: () => api.post<{ status: number; msg: string }>('/api/backup/create'),
 
   deleteFile: (fileId: string) =>
     api.delete<{ status: number; msg: string }>(`/api/backup/${fileId}`),
 
   getConfig: () =>
-    api.get<Record<string, {
-      type: string;
-      title?: string;
-      desc?: string;
-      data: unknown;
-      options?: string[];
-    }>>('/api/backup/config'),
+    api.get<
+      Record<
+        string,
+        {
+          type: string;
+          title?: string;
+          desc?: string;
+          data: unknown;
+          options?: string[];
+        }
+      >
+    >('/api/backup/config'),
 
   setConfig: (config: {
     backup_time?: string;
@@ -1734,11 +1931,19 @@ export const backupApi = {
     webdav_url?: string;
     webdav_username?: string;
     webdav_password?: string;
-  }) =>
-    api.post<{ status: number; msg: string }>('/api/backup/config', config),
+  }) => api.post<{ status: number; msg: string }>('/api/backup/config', config),
 
-  getFileTree: () =>
-    api.get<FileTreeNode[]>('/api/backup/file-tree'),
+  getFileTree: (
+    opts: { path?: string; sort?: BackupFileTreeSort; offset?: number; limit?: number } = {},
+  ) => {
+    const params = new URLSearchParams();
+    if (opts.path) params.set('path', opts.path);
+    if (opts.sort) params.set('sort', opts.sort);
+    if (opts.offset != null && opts.offset > 0) params.set('offset', String(opts.offset));
+    if (opts.limit != null) params.set('limit', String(opts.limit));
+    const qs = params.toString();
+    return api.get<FileTreeListing>(qs ? `/api/backup/file-tree?${qs}` : '/api/backup/file-tree');
+  },
 
   downloadFile: (fileId: string): Promise<Blob> =>
     api.downloadBlob(`/api/backup/download?file_id=${encodeURIComponent(fileId)}`),
@@ -1749,11 +1954,9 @@ export const backupApi = {
 // ===================
 
 export const databaseApi = {
-  getTables: () =>
-    api.get<DatabaseTable[]>('/api/database/tables'),
+  getTables: () => api.get<DatabaseTable[]>('/api/database/tables'),
 
-  getPlugins: () =>
-    api.get<PluginDatabaseInfo[]>('/api/database/plugins'),
+  getPlugins: () => api.get<PluginDatabaseInfo[]>('/api/database/plugins'),
 
   getPluginTables: (pluginId: string) =>
     api.get<PluginDatabaseInfo>(`/api/database/${pluginId}/tables`),
@@ -1768,12 +1971,12 @@ export const databaseApi = {
     search?: string,
     searchColumns?: string[],
     filterColumns?: string[],
-    filterValues?: string[]
+    filterValues?: string[],
   ) => {
     const params = new URLSearchParams();
     params.set('page', String(page));
     params.set('per_page', String(perPage));
-    
+
     if (search) {
       params.set('search', search);
     }
@@ -1786,8 +1989,29 @@ export const databaseApi = {
     if (filterValues && filterValues.length > 0) {
       params.set('filter_values', filterValues.join(','));
     }
-    
+
     return api.get<PaginatedData>(`/api/database/table/${tableName}/data?${params.toString()}`);
+  },
+
+  exportCsv: (
+    tableName: string,
+    search?: string,
+    filterColumns?: string[],
+    filterValues?: string[],
+  ) => {
+    const params = new URLSearchParams();
+    if (search) {
+      params.set('search', search);
+    }
+    if (filterColumns && filterColumns.length > 0) {
+      params.set('filter_columns', filterColumns.join(','));
+    }
+    if (filterValues && filterValues.length > 0) {
+      params.set('filter_values', filterValues.join(','));
+    }
+    const qs = params.toString();
+    const path = `/api/database/table/${tableName}/export.csv`;
+    return api.downloadBlob(qs ? `${path}?${qs}` : path);
   },
 
   createRecord: (tableName: string, data: Record<string, unknown>) =>
@@ -1823,19 +2047,13 @@ export const databaseApi = {
  *  `authEncryptionSupported` 仅作为「上一次加密是否成功」的诊断标记保留
  *  （成功置 `true`，失败置 `false`），不再用作是否走明文的判据。
  */
-async function postAuthRequest<T>(
-  endpoint: string,
-  payload: Record<string, unknown>
-): Promise<T> {
+async function postAuthRequest<T>(endpoint: string, payload: Record<string, unknown>): Promise<T> {
   // 第一次尝试：使用（可能缓存的）公钥
   let firstReason: string;
   try {
     const { key } = await fetchAuthPubkey(getCustomApiHost());
     const encPayload: EncryptedPayload = encryptAuthPayload(payload, key);
-    const result = await api.post<T>(
-      endpoint,
-      encPayload as unknown as Record<string, unknown>,
-    );
+    const result = await api.post<T>(endpoint, encPayload as unknown as Record<string, unknown>);
     authEncryptionSupported = true;
     return result;
   } catch (err) {
@@ -1847,10 +2065,7 @@ async function postAuthRequest<T>(
   try {
     const { key } = await fetchAuthPubkey(getCustomApiHost(), true);
     const encPayload: EncryptedPayload = encryptAuthPayload(payload, key);
-    const result = await api.post<T>(
-      endpoint,
-      encPayload as unknown as Record<string, unknown>,
-    );
+    const result = await api.post<T>(endpoint, encPayload as unknown as Record<string, unknown>);
     authEncryptionSupported = true;
     return result;
   } catch (retryErr) {
@@ -1879,7 +2094,7 @@ export const authApi = {
     email: string,
     password: string,
     registerCode: string = '',
-    isAdmin: boolean = false
+    isAdmin: boolean = false,
   ) =>
     postAuthRequest<{
       user: User;
@@ -1894,15 +2109,12 @@ export const authApi = {
       is_admin: isAdmin,
     }),
 
-  logout: () =>
-    api.post<void>('/api/auth/logout'),
+  logout: () => api.post<void>('/api/auth/logout'),
 
-  getCurrentUser: () =>
-    api.get<User>('/api/auth/me'),
+  getCurrentUser: () => api.get<User>('/api/auth/me'),
 
   // 检查是否已存在管理员账�?
-  checkAdminExists: () =>
-    api.get<{ is_admin_exist: boolean }>('/api/auth/admin/exists'),
+  checkAdminExists: () => api.get<{ is_admin_exist: boolean }>('/api/auth/admin/exists'),
 
   uploadAvatar: async (file: File) => {
     const formData = new FormData();
@@ -1911,7 +2123,7 @@ export const authApi = {
     const token = getAuthToken();
     const response = await fetch(`${getCustomApiHost()}/api/auth/avatar`, {
       method: 'POST',
-      headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
       body: formData,
       credentials: 'include',
     });
@@ -1928,8 +2140,7 @@ export const authApi = {
     return data.data;
   },
 
-  updateName: (name: string) =>
-    api.post<{ name: string }>('/api/auth/name', { name }),
+  updateName: (name: string) => api.post<{ name: string }>('/api/auth/name', { name }),
 
   updatePassword: (oldPassword: string, newPassword: string) =>
     postAuthRequest<void>('/api/auth/password', {
@@ -1966,12 +2177,14 @@ export const assetsApi = {
       image: base64,
       filename: file.name,
       upload_to: uploadTo,
-      target_filename: targetFilename
+      target_filename: targetFilename,
     });
   },
 
   delete: async (path: string) => {
-    return api.delete<{ status: number; msg: string }>(`/api/assets/delete?path=${encodeURIComponent(path)}`);
+    return api.delete<{ status: number; msg: string }>(
+      `/api/assets/delete?path=${encodeURIComponent(path)}`,
+    );
   },
 
   getPreviewUrl: (path: string) => {
@@ -1981,7 +2194,7 @@ export const assetsApi = {
     try {
       // 使用更健壮的 Base64 编码方式处理中文路径
       const bytes = new TextEncoder().encode(path);
-      const binString = Array.from(bytes, (byte) => String.fromCharCode(byte)).join("");
+      const binString = Array.from(bytes, (byte) => String.fromCharCode(byte)).join('');
       const encodedPath = btoa(binString);
 
       const token = getAuthToken();
@@ -1993,7 +2206,7 @@ export const assetsApi = {
       console.error('Failed to encode path:', e);
       return '';
     }
-  }
+  },
 };
 
 // ===================
@@ -2001,17 +2214,13 @@ export const assetsApi = {
 // ===================
 
 export const systemApi = {
-  getInfo: () =>
-    api.get<SystemInfo>('/api/system/info'),
+  getInfo: () => api.get<SystemInfo>('/api/system/info'),
 
-  restartCore: () =>
-    api.post<{ status: number; msg: string }>('/api/system/restart'),
+  restartCore: () => api.post<{ status: number; msg: string }>('/api/system/restart'),
 
-  stopCore: () =>
-    api.post<{ status: number; msg: string }>('/api/system/stop'),
+  stopCore: () => api.post<{ status: number; msg: string }>('/api/system/stop'),
 
-  resumeCore: () =>
-    api.post<{ status: number; msg: string }>('/api/system/resume'),
+  resumeCore: () => api.post<{ status: number; msg: string }>('/api/system/resume'),
 };
 
 // ===================
@@ -2024,8 +2233,7 @@ export interface RemoteCommandResponse {
 }
 
 export const remoteCommandApi = {
-  execute: (command: string) =>
-    api.post<RemoteCommandResponse>('/api/remoteCommand', { command }),
+  execute: (command: string) => api.post<RemoteCommandResponse>('/api/remoteCommand', { command }),
 };
 
 // ===================
@@ -2111,22 +2319,19 @@ export interface ApplyPresetResult {
 }
 
 export const themeApi = {
-  getConfig: () =>
-    api.getRaw<ThemeConfig>('/api/theme/config'),
+  getConfig: () => api.getRaw<ThemeConfig>('/api/theme/config'),
 
   saveConfig: (config: ThemeConfig) =>
     api.post<{ status: number; msg: string }>('/api/theme/config', config),
 
   // 主题预设：列表（公开）/ 保存 / 应用 / 删除
-  getPresets: () =>
-    api.getRaw<ThemePresetsData>('/api/theme/presets'),
+  getPresets: () => api.getRaw<ThemePresetsData>('/api/theme/presets'),
 
   // 用 postRaw 取回原始 {status,msg,data}，以便区分「同名需覆盖」(status=1) 等非异常分支
   savePreset: (payload: SavePresetPayload) =>
     api.postRaw<SavePresetResult>('/api/theme/presets/save', payload),
 
-  applyPreset: (name: string) =>
-    api.post<ApplyPresetResult>('/api/theme/presets/apply', { name }),
+  applyPreset: (name: string) => api.post<ApplyPresetResult>('/api/theme/presets/apply', { name }),
 
   deletePreset: (name: string) =>
     api.delete<{ name: string }>(`/api/theme/presets/${encodeURIComponent(name)}`),
@@ -2219,8 +2424,11 @@ export interface PersonaConfig {
   target_groups: string[];
   inspect_interval?: number; // 定时巡检间隔（分钟）�?, 10, 15, 30, 60
   keywords?: string[]; // 触发关键词列表（用于提及应答模式�?
-  tool_packs?: string[]; // 工具能力族（dynamic / task_basics / capability_domain 族名）
-  tool_names?: string[]; // 显式工具白名单（并入保底池）
+  /** 启用工具（按插件）：`*` 全开；`!插件名` 排除；只列具体名则仅这些进检索池 */
+  enabled_tools?: string[];
+  tool_names?: string[]; // 显式工具白名单（常驻直装，不经向量检索）
+  /** `*` 全开；`!node_id` 排除。缺省按全开。 */
+  capability_agents?: string[];
 }
 
 export interface PersonaConfigResponse {
@@ -2235,14 +2443,41 @@ export interface PersonaConfigUpdateRequest {
   target_groups?: string[];
   inspect_interval?: number;
   keywords?: string[];
-  tool_packs?: string[];
+  enabled_tools?: string[];
   tool_names?: string[];
+  capability_agents?: string[];
 }
 
 export interface PersonaConfigUpdateResponse {
   status: number;
   msg: string;
   data: PersonaConfig;
+}
+
+// ===================
+// 人格工具装配目录
+// ===================
+
+/** 目录里的单个工具。`always_mounted` = 常驻直装，不经向量检索。 */
+export interface PersonaToolCatalogItem {
+  name: string;
+  description: string;
+  category: string;
+  capability_domain: string;
+  always_mounted: boolean;
+}
+
+export interface PersonaToolCatalogPlugin {
+  name: string;
+  tool_count: number;
+  always_mounted: string[];
+}
+
+export interface PersonaToolCatalog {
+  plugins: PersonaToolCatalogPlugin[];
+  tools: Record<string, PersonaToolCatalogItem[]>;
+  known_plugins: string[];
+  capability_domains: string[];
 }
 
 export interface AllPersonaConfigsResponse {
@@ -2273,8 +2508,7 @@ export const personaApi = {
     }>('/api/persona/heartbeat/status'),
 
   // 获取角色列表
-  getPersonaList: () =>
-    api.get<PersonaListItem[]>('/api/persona/list'),
+  getPersonaList: () => api.get<PersonaListItem[]>('/api/persona/list'),
 
   // 获取角色详情
   getPersona: (personaName: string) =>
@@ -2285,8 +2519,7 @@ export const personaApi = {
     api.post<PersonaCreateResponse>('/api/persona/create', data),
 
   // 直接添加角色
-  addPersona: (data: PersonaAddRequest) =>
-    api.post<PersonaAddResponse>('/api/persona/add', data),
+  addPersona: (data: PersonaAddRequest) => api.post<PersonaAddResponse>('/api/persona/add', data),
 
   copyPersona: (personaName: string) =>
     api.post<{ name: string; source: string }>(
@@ -2299,15 +2532,22 @@ export const personaApi = {
 
   // 上传角色头像
   uploadAvatar: (personaName: string, imageData: string) =>
-    api.post<PersonaAvatarResponse>(`/api/persona/${encodeURIComponent(personaName)}/avatar`, { image: imageData }),
+    api.post<PersonaAvatarResponse>(`/api/persona/${encodeURIComponent(personaName)}/avatar`, {
+      image: imageData,
+    }),
 
   // 上传角色立绘
   uploadImage: (personaName: string, imageData: string) =>
-    api.post<PersonaImageResponse>(`/api/persona/${encodeURIComponent(personaName)}/image`, { image: imageData }),
+    api.post<PersonaImageResponse>(`/api/persona/${encodeURIComponent(personaName)}/image`, {
+      image: imageData,
+    }),
 
   // 上传角色音频
   uploadAudio: (personaName: string, audioData: string, format: string = 'mp3') =>
-    api.post<PersonaAudioResponse>(`/api/persona/${encodeURIComponent(personaName)}/audio`, { audio: audioData, format }),
+    api.post<PersonaAudioResponse>(`/api/persona/${encodeURIComponent(personaName)}/audio`, {
+      audio: audioData,
+      format,
+    }),
 
   // 获取角色头像URL
   getAvatarUrl: (personaName: string, timestamp?: number) => {
@@ -2347,7 +2587,9 @@ export const personaApi = {
 
   // 获取人格框架配置
   getFrameworkConfig: () =>
-    api.get<PersonaFrameworkConfig>('/api/framework-config/GsCore%20AI%20%E4%BA%BA%E8%AE%BE%E9%85%8D%E7%BD%AE'),
+    api.get<PersonaFrameworkConfig>(
+      '/api/framework-config/GsCore%20AI%20%E4%BA%BA%E8%AE%BE%E9%85%8D%E7%BD%AE',
+    ),
 
   // 获取角色配置
   getPersonaConfig: (personaName: string) =>
@@ -2361,16 +2603,17 @@ export const personaApi = {
   updatePersonaContent: (personaName: string, content: string) =>
     api.put<{ name: string; content: string }>(
       `/api/persona/${encodeURIComponent(personaName)}/content`,
-      { content }
+      { content },
     ),
 
   // 获取全局启用的角�?
-  getGlobalPersona: () =>
-    api.get<string | null>('/api/persona/config/global'),
+  getGlobalPersona: () => api.get<string | null>('/api/persona/config/global'),
 
   // 获取所有角色配置
-  getAllPersonaConfigs: () =>
-    api.get<Record<string, PersonaConfig>>('/api/persona/config/all'),
+  getAllPersonaConfigs: () => api.get<Record<string, PersonaConfig>>('/api/persona/config/all'),
+
+  // 工具装配目录：启用工具（按插件）/ 显式工具白名单 两个选择器的数据源
+  getToolCatalog: () => api.get<PersonaToolCatalog>('/api/persona/tools/catalog'),
 
   getPersonaSettings: (personaName: string) =>
     api.get<Record<string, PluginConfigItem>>(
@@ -2445,8 +2688,7 @@ export interface AISkillCloneResponse {
 
 export const aiSkillsApi = {
   // 获取 AI 技能列�?
-  getSkillsList: () =>
-    api.get<AISkillsListResponse>('/api/ai/skills/list'),
+  getSkillsList: () => api.get<AISkillsListResponse>('/api/ai/skills/list'),
 
   // 获取指定技能详�?
   getSkillDetail: (skillName: string) =>
@@ -2516,8 +2758,7 @@ export const aiToolsApi = {
   },
 
   // 获取工具分类列表
-  getToolCategories: () =>
-    api.get<AIToolCategoriesResponse>('/api/ai/tools/categories'),
+  getToolCategories: () => api.get<AIToolCategoriesResponse>('/api/ai/tools/categories'),
 
   // 获取指定工具详情
   getToolDetail: (toolName: string) =>
@@ -2528,8 +2769,7 @@ export const aiToolsApi = {
     api.post<AIToolAssemblePreviewResponse>('/api/ai/tools/assemble_preview', { query }),
 
   /** 导出实体身份索引（L0 路由） */
-  getEntityIndex: () =>
-    api.get<AIEntityIndexResponse>('/api/ai/entity_index'),
+  getEntityIndex: () => api.get<AIEntityIndexResponse>('/api/ai/entity_index'),
 };
 
 // ===================
@@ -2598,9 +2838,14 @@ export interface AgentNodeUpdateRequest {
 }
 
 export const capabilityAgentsApi = {
-  getList: (source?: AgentNodeSource) => {
-    const query = source ? `?source=${encodeURIComponent(source)}` : '';
-    return api.get<AgentNodeListResponse>(`/api/ai/capability-agents/list${query}`);
+  getList: (source?: AgentNodeSource, opts?: { delegable?: boolean }) => {
+    const params = new URLSearchParams();
+    if (source) params.set('source', source);
+    if (opts?.delegable) params.set('delegable', '1');
+    const query = params.toString();
+    return api.get<AgentNodeListResponse>(
+      `/api/ai/capability-agents/list${query ? `?${query}` : ''}`,
+    );
   },
 
   getDetail: (nodeId: string) =>
@@ -2654,10 +2899,10 @@ export const aiApprovalsApi = {
 
   // postRaw：resolve 的人类可读结果在顶层 msg 里（如"✅ 已批准 #ab12…"），post 会丢掉它
   resolve: (requestId: string, approved: boolean, note = '') =>
-    api.postRaw<AIApprovalItem>(
-      `/api/ai/approvals/${encodeURIComponent(requestId)}/resolve`,
-      { approved, note },
-    ),
+    api.postRaw<AIApprovalItem>(`/api/ai/approvals/${encodeURIComponent(requestId)}/resolve`, {
+      approved,
+      note,
+    }),
 };
 
 // ===================
@@ -2751,12 +2996,20 @@ export interface AIKnowledgeBackupResponse {
   skipped: number;
 }
 
-
 export const aiKnowledgeApi = {
   getPlugins: () => api.get<string[]>('/api/ai/knowledge/plugins'),
 
   // 获取知识库列表（分页）
-  getKnowledgeList: (params: { offset?: number; limit?: number; source?: string; page?: number; doc_id?: string; plugin?: string } = {}) => {
+  getKnowledgeList: (
+    params: {
+      offset?: number;
+      limit?: number;
+      source?: string;
+      page?: number;
+      doc_id?: string;
+      plugin?: string;
+    } = {},
+  ) => {
     const query = new URLSearchParams();
     if (params.page !== undefined) query.set('page', String(params.page));
     if (params.offset !== undefined) query.set('offset', String(params.offset));
@@ -2799,9 +3052,7 @@ export const aiKnowledgeApi = {
 
   // 删除整篇文档（按 doc_id）
   deleteDoc: (docId: string) =>
-    api.delete<AIKnowledgeDocDeleteResponse>(
-      `/api/ai/knowledge/doc/${encodeURIComponent(docId)}`
-    ),
+    api.delete<AIKnowledgeDocDeleteResponse>(`/api/ai/knowledge/doc/${encodeURIComponent(docId)}`),
 
   // 导出全部手动知识（JSONL 文件下载）
   exportBackup: async (): Promise<Blob> => {
@@ -2809,7 +3060,7 @@ export const aiKnowledgeApi = {
     const token = getAuthToken();
     const response = await fetch(url, {
       method: 'GET',
-      headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
       credentials: 'include',
     });
     if (!response.ok) {
@@ -2905,7 +3156,7 @@ export const aiImageApi = {
     const token = getAuthToken();
     const response = await fetch(`${getCustomApiHost()}/api/ai/images/upload`, {
       method: 'POST',
-      headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
       body: formData,
       credentials: 'include',
     });
@@ -2922,7 +3173,15 @@ export const aiImageApi = {
   },
 
   // 获取图片列表（分页）
-  getImageList: (params: { offset?: number; limit?: number; plugin?: string; page?: number; source?: string } = {}) => {
+  getImageList: (
+    params: {
+      offset?: number;
+      limit?: number;
+      plugin?: string;
+      page?: number;
+      source?: string;
+    } = {},
+  ) => {
     const query = new URLSearchParams();
     if (params.page !== undefined) query.set('page', String(params.page));
     if (params.offset !== undefined) query.set('offset', String(params.offset));
@@ -2940,13 +3199,13 @@ export const aiImageApi = {
     formData.set('path', data.path);
     formData.set('tags', data.tags);
     if (data.content) formData.set('content', data.content);
-    
+
     const token = getAuthToken();
     const response = await fetch(`${getCustomApiHost()}/api/ai/images`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
-        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: formData.toString(),
       credentials: 'include',
@@ -3072,30 +3331,32 @@ export interface HistoryStats {
   };
   ai_router_sessions: {
     count: number;
-    sessions: Record<string, {
-      session_id: string;
-      last_access: number;
-      created_at: number;
-      history_length: number;
-    }>;
+    sessions: Record<
+      string,
+      {
+        session_id: string;
+        last_access: number;
+        created_at: number;
+        history_length: number;
+      }
+    >;
   };
 }
 
 export const historyApi = {
   // 获取所�?Session 列表
-  getSessions: () =>
-    api.get<SessionInfo[]>('/api/history/sessions'),
+  getSessions: () => api.get<SessionInfo[]>('/api/history/sessions'),
 
   // 获取指定 Session 的历史记�?
   getSessionHistory: (sessionId: string, formatType: 'text' | 'json' | 'messages' = 'text') =>
     api.get<SessionHistoryTextResponse | SessionHistoryJSONResponse | SessionHistoryOpenAIResponse>(
-      `/api/history/${encodeURIComponent(sessionId)}?format_type=${formatType}`
+      `/api/history/${encodeURIComponent(sessionId)}?format_type=${formatType}`,
     ),
 
   // 清空指定 Session 的历史记�?
   clearSessionHistory: (sessionId: string, deleteSession: boolean = false) =>
     api.delete<ClearHistoryResponse>(
-      `/api/history/${encodeURIComponent(sessionId)}?delete_session=${deleteSession}`
+      `/api/history/${encodeURIComponent(sessionId)}?delete_session=${deleteSession}`,
     ),
 
   // 获取指定 Session �?Persona 内容
@@ -3110,12 +3371,14 @@ export const historyApi = {
     data.images?.forEach((image) => formData.append('images', image));
     data.image_urls?.forEach((url) => formData.append('image_urls', url));
 
-    return api.postFormData<SendSessionMessageResponse>(`/api/history/${encodeURIComponent(sessionId)}/send`, formData);
+    return api.postFormData<SendSessionMessageResponse>(
+      `/api/history/${encodeURIComponent(sessionId)}/send`,
+      formData,
+    );
   },
 
   // 获取历史管理器统计信�?
-  getStats: () =>
-    api.get<HistoryStats>('/api/history/stats'),
+  getStats: () => api.get<HistoryStats>('/api/history/stats'),
 };
 
 // ===================
@@ -3178,7 +3441,9 @@ export const aiScheduledTasksApi = {
     if (params?.status) query.set('status', params.status);
     if (params?.task_type) query.set('task_type', params.task_type);
     const queryString = query.toString();
-    return api.get<AIScheduledTask[]>(`/api/ai/scheduled_tasks${queryString ? `?${queryString}` : ''}`);
+    return api.get<AIScheduledTask[]>(
+      `/api/ai/scheduled_tasks${queryString ? `?${queryString}` : ''}`,
+    );
   },
 
   // 获取任务详情
@@ -3191,37 +3456,52 @@ export const aiScheduledTasksApi = {
 
   // 修改任务
   updateTask: (taskId: string, data: UpdateScheduledTaskRequest) =>
-    api.put<{ status: number; msg: string }>(`/api/ai/scheduled_tasks/${encodeURIComponent(taskId)}`, data),
+    api.put<{ status: number; msg: string }>(
+      `/api/ai/scheduled_tasks/${encodeURIComponent(taskId)}`,
+      data,
+    ),
 
   // 删除任务（软删除/取消�?
   deleteTask: (taskId: string) =>
-    api.delete<{ status: number; msg: string }>(`/api/ai/scheduled_tasks/${encodeURIComponent(taskId)}`),
+    api.delete<{ status: number; msg: string }>(
+      `/api/ai/scheduled_tasks/${encodeURIComponent(taskId)}`,
+    ),
 
   // 硬删除任务（彻底移除�?
   hardDeleteTask: (taskId: string) =>
     api.delete<{ task_id: string }>(`/api/ai/scheduled_tasks/${encodeURIComponent(taskId)}/hard`),
 
   // 批量清空任务（硬删除�?
-  clearTasks: (params: { confirm: true; user_id?: string; status?: string; task_type?: string }) => {
+  clearTasks: (params: {
+    confirm: true;
+    user_id?: string;
+    status?: string;
+    task_type?: string;
+  }) => {
     const query = new URLSearchParams();
     query.set('confirm', String(params.confirm));
     if (params.user_id) query.set('user_id', params.user_id);
     if (params.status) query.set('status', params.status);
     if (params.task_type) query.set('task_type', params.task_type);
-    return api.delete<{ deleted: number; matched: number }>(`/api/ai/scheduled_tasks?${query.toString()}`);
+    return api.delete<{ deleted: number; matched: number }>(
+      `/api/ai/scheduled_tasks?${query.toString()}`,
+    );
   },
 
   // 暂停任务
   pauseTask: (taskId: string) =>
-    api.post<{ status: number; msg: string }>(`/api/ai/scheduled_tasks/${encodeURIComponent(taskId)}/pause`),
+    api.post<{ status: number; msg: string }>(
+      `/api/ai/scheduled_tasks/${encodeURIComponent(taskId)}/pause`,
+    ),
 
   // 恢复任务
   resumeTask: (taskId: string) =>
-    api.post<{ status: number; msg: string }>(`/api/ai/scheduled_tasks/${encodeURIComponent(taskId)}/resume`),
+    api.post<{ status: number; msg: string }>(
+      `/api/ai/scheduled_tasks/${encodeURIComponent(taskId)}/resume`,
+    ),
 
   // 获取任务统计
-  getStats: () =>
-    api.get<AIScheduledTaskStats>('/api/ai/scheduled_tasks/stats/overview'),
+  getStats: () => api.get<AIScheduledTaskStats>('/api/ai/scheduled_tasks/stats/overview'),
 };
 
 // ===================
@@ -3271,8 +3551,7 @@ export interface GitMirrorSetPluginResponse {
 
 export const gitMirrorApi = {
   // 获取 Git 镜像信息
-  getInfo: () =>
-    api.get<GitMirrorInfo>('/api/git-mirror/info'),
+  getInfo: () => api.get<GitMirrorInfo>('/api/git-mirror/info'),
 
   // 批量设置所有插件的镜像源（同时更新配置�?
   setAll: (mirrorPrefix: string) =>
@@ -3280,11 +3559,13 @@ export const gitMirrorApi = {
 
   // 设置单个插件的镜像源
   setPlugin: (pluginName: string, mirrorPrefix: string) =>
-    api.post<GitMirrorSetPluginResponse>(`/api/git-mirror/set-plugin/${encodeURIComponent(pluginName)}`, { mirror_prefix: mirrorPrefix }),
+    api.post<GitMirrorSetPluginResponse>(
+      `/api/git-mirror/set-plugin/${encodeURIComponent(pluginName)}`,
+      { mirror_prefix: mirrorPrefix },
+    ),
 
   // 获取可用镜像源列�?
-  getAvailable: () =>
-    api.get<GitMirrorOption[]>('/api/git-mirror/available'),
+  getAvailable: () => api.get<GitMirrorOption[]>('/api/git-mirror/available'),
 
   // 仅保存镜像源配置（不影响已安装插件，仅影响后续新安装的插件）
   saveConfig: (mirrorPrefix: string) =>
@@ -3444,8 +3725,7 @@ export interface MCPToolsConfigUpdateResponse {
 
 export const mcpConfigApi = {
   // 获取 MCP 配置列表
-  getList: () =>
-    api.get<MCPConfigListResponse>('/api/ai/mcp/list'),
+  getList: () => api.get<MCPConfigListResponse>('/api/ai/mcp/list'),
 
   // 获取 MCP 配置详情
   getDetail: (configId: string) =>
@@ -3465,11 +3745,12 @@ export const mcpConfigApi = {
 
   // 切换启用/禁用状�?
   toggle: (configId: string) =>
-    api.post<{ config_id: string; enabled: boolean }>(`/api/ai/mcp/${encodeURIComponent(configId)}/toggle`),
+    api.post<{ config_id: string; enabled: boolean }>(
+      `/api/ai/mcp/${encodeURIComponent(configId)}/toggle`,
+    ),
 
   // 热重载所有配�?
-  reload: () =>
-    api.post<MCPReloadResponse>('/api/ai/mcp/reload'),
+  reload: () => api.post<MCPReloadResponse>('/api/ai/mcp/reload'),
 
   // 从已配置�?MCP 服务器发现工�?
   discoverTools: (configId: string) =>
@@ -3484,24 +3765,21 @@ export const mcpConfigApi = {
     env?: Record<string, string>;
     url?: string;
     headers?: Record<string, string>;
-  }) =>
-    api.post<MCPDiscoverToolsResponse>('/api/ai/mcp/tools/discover', data),
+  }) => api.post<MCPDiscoverToolsResponse>('/api/ai/mcp/tools/discover', data),
 
   // �?JSON 导入 MCP 配置
   importConfig: (data: MCPImportRequest) =>
     api.post<MCPImportResponse>('/api/ai/mcp/tools/import', data),
 
   // 获取 MCP 预设列表
-  getPresets: () =>
-    api.get<MCPPresetsResponse>('/api/ai/mcp/presets'),
+  getPresets: () => api.get<MCPPresetsResponse>('/api/ai/mcp/presets'),
 
   // ===================
   // MCP 工具参数映射配置 (mcp-tools-config)
   // ===================
 
   // 获取 MCP 工具配置列表
-  getToolsConfigList: () =>
-    api.get<MCPToolsConfigListResponse>('/api/ai/mcp-tools-config/list'),
+  getToolsConfigList: () => api.get<MCPToolsConfigListResponse>('/api/ai/mcp-tools-config/list'),
 
   // 获取指定 MCP 工具配置详情
   getToolsConfigDetail: (itemKey: string) =>
@@ -3509,7 +3787,10 @@ export const mcpConfigApi = {
 
   // 更新 MCP 工具配置（含 details 参数映射�?
   updateToolsConfig: (itemKey: string, data: MCPToolsConfigUpdateRequest) =>
-    api.put<MCPToolsConfigUpdateResponse>(`/api/ai/mcp-tools-config/${encodeURIComponent(itemKey)}`, data),
+    api.put<MCPToolsConfigUpdateResponse>(
+      `/api/ai/mcp-tools-config/${encodeURIComponent(itemKey)}`,
+      data,
+    ),
 };
 
 // ===================
@@ -3560,8 +3841,7 @@ export interface GitForceUpdateResponse {
 
 export const gitUpdateApi = {
   // 获取所有插件的 Git 状�?
-  getStatus: () =>
-    api.get<GitPluginStatus[]>('/api/git-update/status'),
+  getStatus: () => api.get<GitPluginStatus[]>('/api/git-update/status'),
 
   // 获取单个插件�?Git 状�?
   getPluginStatus: (pluginName: string) =>
@@ -3570,18 +3850,24 @@ export const gitUpdateApi = {
   // 获取远程 Commit 列表
   getRemoteCommits: (pluginName: string, maxCount?: number) => {
     const query = maxCount ? `?max_count=${maxCount}` : '';
-    return api.get<GitCommitListResponse>(`/api/git-update/commits/${encodeURIComponent(pluginName)}${query}`);
+    return api.get<GitCommitListResponse>(
+      `/api/git-update/commits/${encodeURIComponent(pluginName)}${query}`,
+    );
   },
 
   // 获取本地 Commit 历史
   getLocalCommits: (pluginName: string, maxCount?: number) => {
     const query = maxCount ? `?max_count=${maxCount}` : '';
-    return api.get<GitLocalCommitListResponse>(`/api/git-update/local-commits/${encodeURIComponent(pluginName)}${query}`);
+    return api.get<GitLocalCommitListResponse>(
+      `/api/git-update/local-commits/${encodeURIComponent(pluginName)}${query}`,
+    );
   },
 
   // 回退到指�?Commit
   checkout: (pluginName: string, commitHash: string) =>
-    api.post<GitCheckoutResponse>(`/api/git-update/checkout/${encodeURIComponent(pluginName)}`, { commit_hash: commitHash }),
+    api.post<GitCheckoutResponse>(`/api/git-update/checkout/${encodeURIComponent(pluginName)}`, {
+      commit_hash: commitHash,
+    }),
 
   // 普通更新（git fetch + git pull）
   // 注意：api.post 已解包信封，返回的是内层 data（GitForceUpdateResponse），不是 {status,msg,data}
@@ -3590,11 +3876,12 @@ export const gitUpdateApi = {
 
   // 强制更新（git reset --hard + git pull）
   forceUpdate: (pluginName: string) =>
-    api.post<GitForceUpdateResponse>(`/api/git-update/force-update/${encodeURIComponent(pluginName)}`),
+    api.post<GitForceUpdateResponse>(
+      `/api/git-update/force-update/${encodeURIComponent(pluginName)}`,
+    ),
 
   // 更新全部插件
-  updateAll: () =>
-    api.post('/api/git-update/update-all'),
+  updateAll: () => api.post('/api/git-update/update-all'),
 };
 
 // ===================
@@ -3763,8 +4050,7 @@ export const memeApi = {
   getPersonas: () => api.get<MemePersona[]>('/api/meme/personas'),
 
   // 获取单条记录详情
-  getDetail: (memeId: string) =>
-    api.get<MemeRecord>(`/api/meme/${memeId}`),
+  getDetail: (memeId: string) => api.get<MemeRecord>(`/api/meme/${memeId}`),
 
   // 获取原始图片 URL
   getImageUrl: (memeId: string) => {
@@ -3774,8 +4060,7 @@ export const memeApi = {
   },
 
   // 更新标签/描述/归属
-  update: (memeId: string, data: MemeUpdateData) =>
-    api.put<null>(`/api/meme/${memeId}`, data),
+  update: (memeId: string, data: MemeUpdateData) => api.put<null>(`/api/meme/${memeId}`, data),
 
   // 移动表情包到目标文件�?
   move: (memeId: string, targetFolder: string) => {
@@ -3785,8 +4070,7 @@ export const memeApi = {
   },
 
   // 删除表情�?
-  delete: (memeId: string) =>
-    api.delete<null>(`/api/meme/${memeId}`),
+  delete: (memeId: string) => api.delete<null>(`/api/meme/${memeId}`),
 
   // 手动上传表情�?
   upload: async (file: File, folder: string = 'common', autoTag: boolean = true) => {
@@ -3818,7 +4102,9 @@ export const memeApi = {
       try {
         const data = await response.json();
         if (data.msg) errorMessage = data.msg;
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
       throw new Error(errorMessage);
     }
 
@@ -3828,18 +4114,16 @@ export const memeApi = {
   },
 
   // 重新触发 VLM 打标
-  retag: (memeId: string) =>
-    api.post<null>(`/api/meme/${memeId}/retag`),
+  retag: (memeId: string) => api.post<null>(`/api/meme/${memeId}/retag`),
 
   // 统计概览
-  getStats: () =>
-    api.get<MemeStatsData>('/api/meme/stats'),
+  getStats: () => api.get<MemeStatsData>('/api/meme/stats'),
 
   // 批量删除表情�?
   batchDelete: (memeIds: string[]) =>
     api.post<{ success_count: number; failed: Array<{ meme_id: string; reason: string }> }>(
       '/api/meme/batch_delete',
-      { meme_ids: memeIds }
+      { meme_ids: memeIds },
     ),
 
   previewDelete: (request: MemeDeletePreviewRequest) =>
@@ -3873,7 +4157,7 @@ export const memeApi = {
     file: File,
     skipExisting: boolean = true,
     autoTag: boolean = false,
-    personaHint?: string
+    personaHint?: string,
   ) => {
     const formData = new FormData();
     formData.append('file', file);
@@ -3906,7 +4190,9 @@ export const memeApi = {
       try {
         const data = await response.json();
         if (data.msg) errorMessage = data.msg;
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
       throw new Error(errorMessage);
     }
 
@@ -3931,21 +4217,21 @@ export const memeApi = {
   }) =>
     api.post<{ purged_count: number; failed: Array<{ meme_id: string; reason: string }> }>(
       '/api/meme/purge',
-      params
+      params,
     ),
 
   // 清除所有已拒绝的表情包（兼容旧接口）
   purgeRejected: () =>
     api.post<{ purged_count: number; failed: Array<{ meme_id: string; reason: string }> }>(
       '/api/meme/purge_rejected',
-      {}
+      {},
     ),
 
   // 批量重新打标（待手动处理状态）
   batchRetagPending: () =>
     api.post<{ retag_count: number; failed: Array<{ meme_id: string; reason: string }> }>(
       '/api/meme/batch_retag_pending',
-      {}
+      {},
     ),
 };
 
@@ -4109,17 +4395,19 @@ export interface LinkedAgentsResponse {
 
 export const aiSessionLogsApi = {
   // 获取统一日志列表（合并内存活�?+ 磁盘持久化）
-  getLogs: (params: {
-    session_id?: string;
-    search?: string;
-    create_by?: string;
-    persona_name?: string;
-    is_active?: boolean;
-    date_from?: string;
-    date_to?: string;
-    limit?: number;
-    offset?: number;
-  } = {}) => {
+  getLogs: (
+    params: {
+      session_id?: string;
+      search?: string;
+      create_by?: string;
+      persona_name?: string;
+      is_active?: boolean;
+      date_from?: string;
+      date_to?: string;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ) => {
     const query = new URLSearchParams();
     if (params.session_id) query.set('session_id', params.session_id);
     if (params.search) query.set('search', params.search);
@@ -4151,16 +4439,16 @@ export const aiSessionLogsApi = {
     const query = new URLSearchParams();
     if (agentType) query.set('agent_type', agentType);
     const queryStr = query.toString();
-    return api.get<LinkedAgentsResponse>(`/api/ai/session_logs/${encodeURIComponent(sessionId)}/linked_agents${queryStr ? `?${queryStr}` : ''}`);
+    return api.get<LinkedAgentsResponse>(
+      `/api/ai/session_logs/${encodeURIComponent(sessionId)}/linked_agents${queryStr ? `?${queryStr}` : ''}`,
+    );
   },
 
   // 获取日志统计概览
-  getStatsOverview: () =>
-    api.get<SessionLogStatsOverview>('/api/ai/session_logs/stats/overview'),
+  getStatsOverview: () => api.get<SessionLogStatsOverview>('/api/ai/session_logs/stats/overview'),
 
   // 获取日志分类（按会话来源聚合�?
-  getCategories: () =>
-    api.get<SessionLogCategoriesResponse>('/api/ai/session_logs/categories'),
+  getCategories: () => api.get<SessionLogCategoriesResponse>('/api/ai/session_logs/categories'),
 };
 
 // ===================
@@ -4210,19 +4498,24 @@ export const agentDebugApi = {
   getMemoryEdges: (params: { scope_key: string; include_invalid?: boolean; limit?: number }) => {
     const query = new URLSearchParams();
     query.set('scope_key', params.scope_key);
-    if (params.include_invalid !== undefined) query.set('include_invalid', String(params.include_invalid));
+    if (params.include_invalid !== undefined)
+      query.set('include_invalid', String(params.include_invalid));
     if (params.limit !== undefined) query.set('limit', String(params.limit));
     return api.get<AgentDebugMemoryEdge[]>(`/api/agent_debug/memory/edges?${query.toString()}`);
   },
 
   invalidateMemoryEdge: (edgeId: string) =>
-    api.post<{ edge_id: string }>(`/api/agent_debug/memory/edge/${encodeURIComponent(edgeId)}/invalidate`),
+    api.post<{ edge_id: string }>(
+      `/api/agent_debug/memory/edge/${encodeURIComponent(edgeId)}/invalidate`,
+    ),
 
   getMemoryConflicts: (params: { scope_key: string; limit?: number }) => {
     const query = new URLSearchParams();
     query.set('scope_key', params.scope_key);
     if (params.limit !== undefined) query.set('limit', String(params.limit));
-    return api.get<AgentDebugMemoryConflict[]>(`/api/agent_debug/memory/conflicts?${query.toString()}`);
+    return api.get<AgentDebugMemoryConflict[]>(
+      `/api/agent_debug/memory/conflicts?${query.toString()}`,
+    );
   },
 
   // ── Orchestration Board ──
@@ -4235,18 +4528,16 @@ export const agentDebugApi = {
   },
 
   getTask: (taskId: string) =>
-    api.get<AgentDebugTaskDetail>(
-      `/api/agent_debug/tasks/${encodeURIComponent(taskId)}`,
-    ),
+    api.get<AgentDebugTaskDetail>(`/api/agent_debug/tasks/${encodeURIComponent(taskId)}`),
 
   abortTask: (taskId: string) =>
-    api.post<{ task_id: string }>(
-      `/api/agent_debug/tasks/${encodeURIComponent(taskId)}/abort`,
-    ),
+    api.post<{ task_id: string }>(`/api/agent_debug/tasks/${encodeURIComponent(taskId)}/abort`),
 
   // ── Persona Evolution Inspector ──
   getSelfModel: (botId = 'default') =>
-    api.get<Record<string, unknown>>(`/api/agent_debug/self_model?bot_id=${encodeURIComponent(botId)}`),
+    api.get<Record<string, unknown>>(
+      `/api/agent_debug/self_model?bot_id=${encodeURIComponent(botId)}`,
+    ),
 
   setSelfModel: (data: { bot_id?: string; field: string; items: string[] }) =>
     api.post<{ field: string; count: number }>(`/api/agent_debug/self_model`, data),
@@ -4450,20 +4741,32 @@ export interface AIKanbanBulkDeleteResponse {
 }
 
 export const aiKanbanApi = {
-  getBoard: (params: { scope_key?: string; bot_id?: string; group_id?: string; owner_user_id?: string; include_children?: boolean; status?: string } = {}) => {
+  getBoard: (
+    params: {
+      scope_key?: string;
+      bot_id?: string;
+      group_id?: string;
+      owner_user_id?: string;
+      include_children?: boolean;
+      status?: string;
+    } = {},
+  ) => {
     const query = new URLSearchParams();
     if (params.scope_key) query.set('scope_key', params.scope_key);
     if (params.bot_id) query.set('bot_id', params.bot_id);
     if (params.group_id) query.set('group_id', params.group_id);
     if (params.owner_user_id) query.set('owner_user_id', params.owner_user_id);
-    if (params.include_children !== undefined) query.set('include_children', String(params.include_children));
+    if (params.include_children !== undefined)
+      query.set('include_children', String(params.include_children));
     if (params.status) query.set('status', params.status);
     const queryStr = query.toString();
     return api.get<AIKanbanBoardResponse>(`/api/ai/kanban/board${queryStr ? `?${queryStr}` : ''}`);
   },
 
   getTaskDetail: (taskId: string, logLimit = 200) =>
-    api.get<AIKanbanTaskDetail>(`/api/ai/kanban/tasks/${encodeURIComponent(taskId)}?log_limit=${logLimit}`),
+    api.get<AIKanbanTaskDetail>(
+      `/api/ai/kanban/tasks/${encodeURIComponent(taskId)}?log_limit=${logLimit}`,
+    ),
 
   createTaskTree: (data: AIKanbanCreateTaskRequest) =>
     api.post<AIKanbanCreateTaskResponse>('/api/ai/kanban/tasks', data),
@@ -4477,10 +4780,15 @@ export const aiKanbanApi = {
   failTask: (taskId: string, data: { reason: string; cascade?: boolean }) =>
     api.post<{ task_id: string }>(`/api/ai/kanban/tasks/${encodeURIComponent(taskId)}/fail`, data),
 
-  hardDeleteTask: (taskId: string, options?: { delete_files?: boolean; include_instances?: boolean }) => {
+  hardDeleteTask: (
+    taskId: string,
+    options?: { delete_files?: boolean; include_instances?: boolean },
+  ) => {
     const query = new URLSearchParams();
-    if (options?.delete_files !== undefined) query.set('delete_files', String(options.delete_files));
-    if (options?.include_instances !== undefined) query.set('include_instances', String(options.include_instances));
+    if (options?.delete_files !== undefined)
+      query.set('delete_files', String(options.delete_files));
+    if (options?.include_instances !== undefined)
+      query.set('include_instances', String(options.include_instances));
     const queryStr = query.toString();
     return api.delete<{
       tasks_deleted: number;
@@ -4500,15 +4808,29 @@ export const aiKanbanApi = {
     if (params.owner_user_id) query.set('owner_user_id', params.owner_user_id);
     if (params.status) query.set('status', params.status);
     if (params.delete_files !== undefined) query.set('delete_files', String(params.delete_files));
-    if (params.include_instances !== undefined) query.set('include_instances', String(params.include_instances));
+    if (params.include_instances !== undefined)
+      query.set('include_instances', String(params.include_instances));
     return api.delete<AIKanbanBulkDeleteResponse>(`/api/ai/kanban/tasks?${query.toString()}`);
   },
 
-  respawnSubtask: (taskId: string, data: { new_description?: string; new_params?: Record<string, unknown>; new_agent_profile?: string }) =>
-    api.post<{ task_id: string }>(`/api/ai/kanban/subtasks/${encodeURIComponent(taskId)}/respawn`, data),
+  respawnSubtask: (
+    taskId: string,
+    data: {
+      new_description?: string;
+      new_params?: Record<string, unknown>;
+      new_agent_profile?: string;
+    },
+  ) =>
+    api.post<{ task_id: string }>(
+      `/api/ai/kanban/subtasks/${encodeURIComponent(taskId)}/respawn`,
+      data,
+    ),
 
   approveSubtask: (taskId: string, data: { approved: boolean; note?: string }) =>
-    api.post<{ task_id: string }>(`/api/ai/kanban/subtasks/${encodeURIComponent(taskId)}/approve`, data),
+    api.post<{ task_id: string }>(
+      `/api/ai/kanban/subtasks/${encodeURIComponent(taskId)}/approve`,
+      data,
+    ),
 
   patchSubtask: (taskId: string, data: AIKanbanPatchSubtaskRequest) =>
     api.patch<AIKanbanCard>(`/api/ai/kanban/subtasks/${encodeURIComponent(taskId)}`, data),
@@ -4533,7 +4855,9 @@ export const aiKanbanApi = {
     api.delete<{ id: string }>(`/api/ai/artifacts/${encodeURIComponent(resId)}`),
 
   extendArtifactTtl: (resId: string, days = 30) =>
-    api.post<{ id: string }>(`/api/ai/artifacts/${encodeURIComponent(resId)}/extend-ttl?days=${days}`),
+    api.post<{ id: string }>(
+      `/api/ai/artifacts/${encodeURIComponent(resId)}/extend-ttl?days=${days}`,
+    ),
 
   downloadArtifactRaw: (resId: string) =>
     api.downloadBlob(`/api/ai/artifacts/${encodeURIComponent(resId)}/raw`),
@@ -4557,10 +4881,7 @@ export const aiKanbanApi = {
       path: string;
       size_bytes: number;
       artifact_ids: string[];
-    }>(
-      `/api/ai/kanban/tasks/${encodeURIComponent(taskId)}/workspace/import${query}`,
-      formData,
-    );
+    }>(`/api/ai/kanban/tasks/${encodeURIComponent(taskId)}/workspace/import${query}`, formData);
   },
 
   submitPatch: (taskId: string, data: { patch_text: string; summary: string; mime?: string }) =>
@@ -4628,25 +4949,17 @@ export const aiToolOutputsApi = {
     if (opts?.limit !== undefined) query.set('limit', String(opts.limit));
     if (opts?.offset !== undefined) query.set('offset', String(opts.offset));
     const qs = query.toString();
-    return api.get<AIToolOutputListResponse>(
-      `/api/ai/tool-outputs${qs ? `?${qs}` : ''}`,
-    );
+    return api.get<AIToolOutputListResponse>(`/api/ai/tool-outputs${qs ? `?${qs}` : ''}`);
   },
-  toolNames: () =>
-    api.get<{ tool_names: string[] }>('/api/ai/tool-outputs/meta/tool-names'),
+  toolNames: () => api.get<{ tool_names: string[] }>('/api/ai/tool-outputs/meta/tool-names'),
   getDetail: (id: string, previewChars = 12000) =>
     api.get<AIToolOutputDetail>(
       `/api/ai/tool-outputs/${encodeURIComponent(id)}?preview_chars=${previewChars}`,
     ),
   delete: (id: string) =>
-    api.delete<{ id: string; deleted: number }>(
-      `/api/ai/tool-outputs/${encodeURIComponent(id)}`,
-    ),
+    api.delete<{ id: string; deleted: number }>(`/api/ai/tool-outputs/${encodeURIComponent(id)}`),
   batchDelete: (ids: string[]) =>
-    api.post<{ deleted: number; ids: string[] }>(
-      '/api/ai/tool-outputs/batch-delete',
-      { ids },
-    ),
+    api.post<{ deleted: number; ids: string[] }>('/api/ai/tool-outputs/batch-delete', { ids }),
   downloadRaw: (id: string) =>
     api.downloadBlob(`/api/ai/tool-outputs/${encodeURIComponent(id)}/raw`),
 };
@@ -4672,18 +4985,14 @@ export const aiArtifactsApi = {
     if (opts?.includeExpired) query.set('include_expired', 'true');
     if (opts?.limit !== undefined) query.set('limit', String(opts.limit));
     const qs = query.toString();
-    return api.get<AIArtifactListResponse>(
-      `/api/ai/artifacts${qs ? `?${qs}` : ''}`,
-    );
+    return api.get<AIArtifactListResponse>(`/api/ai/artifacts${qs ? `?${qs}` : ''}`);
   },
   listByTask: (taskId: string, opts?: { includeExpired?: boolean; limit?: number }) => {
     const query = new URLSearchParams();
     query.set('task_id', taskId);
     if (opts?.includeExpired) query.set('include_expired', 'true');
     if (opts?.limit !== undefined) query.set('limit', String(opts.limit));
-    return api.get<AIArtifactListResponse>(
-      `/api/ai/artifacts?${query.toString()}`,
-    );
+    return api.get<AIArtifactListResponse>(`/api/ai/artifacts?${query.toString()}`);
   },
   getDetail: (resId: string) =>
     api.get<AIArtifactDetail>(`/api/ai/artifacts/${encodeURIComponent(resId)}`),
@@ -4777,9 +5086,7 @@ export const batchPushApi = {
     if (opts?.limit !== undefined) query.set('limit', String(opts.limit));
     if (opts?.offset !== undefined) query.set('offset', String(opts.offset));
     const qs = query.toString();
-    return api.get<BatchPushTargetsResponse>(
-      `/api/BatchPush/targets${qs ? `?${qs}` : ''}`,
-    );
+    return api.get<BatchPushTargetsResponse>(`/api/BatchPush/targets${qs ? `?${qs}` : ''}`);
   },
 
   // 实际推送
@@ -4855,10 +5162,7 @@ export const memoryApi = {
       ? api.get(`/api/ai/memory/hiergraph/status?scope_key=${encodeURIComponent(scopeKey)}`)
       : api.get('/api/ai/memory/hiergraph/status'),
   rebuildHierGraph: (scopeKey?: string) =>
-    api.post(
-      '/api/ai/memory/hiergraph/rebuild',
-      scopeKey ? { scope_key: scopeKey } : {},
-    ),
+    api.post('/api/ai/memory/hiergraph/rebuild', scopeKey ? { scope_key: scopeKey } : {}),
   /** 双路检索试跑 */
   search: (body: MemorySearchRequest) =>
     api.post<MemorySearchResponse>('/api/ai/memory/search', body),
@@ -5004,15 +5308,15 @@ export interface AIStateStoreBatchDeleteResponse {
 
 export const aiStateStoreApi = {
   // 列出所�?scope
-  getScopes: () =>
-    api.get<AIStateStoreScopesResponse>('/api/ai/state-store/scopes'),
+  getScopes: () => api.get<AIStateStoreScopesResponse>('/api/ai/state-store/scopes'),
 
   // 列出�?scope 下的 keys
   getKeys: (params: { scope: string; prefix?: string; include_expired?: boolean }) => {
     const query = new URLSearchParams();
     query.set('scope', params.scope);
     if (params.prefix) query.set('prefix', params.prefix);
-    if (params.include_expired !== undefined) query.set('include_expired', String(params.include_expired));
+    if (params.include_expired !== undefined)
+      query.set('include_expired', String(params.include_expired));
     return api.get<AIStateStoreKeysResponse>(`/api/ai/state-store/keys?${query.toString()}`);
   },
 
@@ -5025,7 +5329,14 @@ export const aiStateStoreApi = {
   },
 
   // record_* 集合分页展开
-  getRecords: (params: { scope: string; collection: string; limit?: number; offset?: number; where_field?: string; where_value?: string }) => {
+  getRecords: (params: {
+    scope: string;
+    collection: string;
+    limit?: number;
+    offset?: number;
+    where_field?: string;
+    where_value?: string;
+  }) => {
     const query = new URLSearchParams();
     query.set('scope', params.scope);
     query.set('collection', params.collection);
@@ -5045,7 +5356,11 @@ export const aiStateStoreApi = {
   },
 
   // 批量删除（模�?A: entries 列表; 模式 B: scope + state_keys�?
-  batchDeleteEntries: (params: { entries?: Array<{ scope: string; state_key: string }>; scope?: string; state_keys?: string[] }) =>
+  batchDeleteEntries: (params: {
+    entries?: Array<{ scope: string; state_key: string }>;
+    scope?: string;
+    state_keys?: string[];
+  }) =>
     api.post<AIStateStoreBatchDeleteResponse>('/api/ai/state-store/entries/batch-delete', params),
 };
 
@@ -5168,8 +5483,7 @@ export const aiWizardApi = {
     api.get<AIWizardChecklistResponse>(`/api/ai/wizard/checklist?_t=${Date.now()}`),
 
   // 获取 AI 配置详细状态（包含人格范围信息�?
-  getStatus: () =>
-    api.get<AIWizardStatusResponse>(`/api/ai/wizard/status?_t=${Date.now()}`),
+  getStatus: () => api.get<AIWizardStatusResponse>(`/api/ai/wizard/status?_t=${Date.now()}`),
 };
 
 // ===================
@@ -5342,14 +5656,18 @@ export const aiStatisticsApi = {
     const query = new URLSearchParams();
     if (date) query.set('date', date);
     const queryStr = query.toString();
-    return api.get<StatisticsSummaryData>(`/api/ai/statistics/summary${queryStr ? `?${queryStr}` : ''}`);
+    return api.get<StatisticsSummaryData>(
+      `/api/ai/statistics/summary${queryStr ? `?${queryStr}` : ''}`,
+    );
   },
 
   getTokenByModel: (date?: string) => {
     const query = new URLSearchParams();
     if (date) query.set('date', date);
     const queryStr = query.toString();
-    return api.get<TokenByModelItem[]>(`/api/ai/statistics/token-by-model${queryStr ? `?${queryStr}` : ''}`);
+    return api.get<TokenByModelItem[]>(
+      `/api/ai/statistics/token-by-model${queryStr ? `?${queryStr}` : ''}`,
+    );
   },
 
   /** 近 N 天每日 token（日历：展示 input_tokens 压缩文案，0 可禁用） */
@@ -5374,14 +5692,18 @@ export const aiStatisticsApi = {
     const query = new URLSearchParams();
     if (date) query.set('date', date);
     const queryStr = query.toString();
-    return api.get<TriggerDistributionData>(`/api/ai/statistics/trigger-distribution${queryStr ? `?${queryStr}` : ''}`);
+    return api.get<TriggerDistributionData>(
+      `/api/ai/statistics/trigger-distribution${queryStr ? `?${queryStr}` : ''}`,
+    );
   },
 
   getIntentDistribution: (date?: string) => {
     const query = new URLSearchParams();
     if (date) query.set('date', date);
     const queryStr = query.toString();
-    return api.get<IntentDistributionData>(`/api/ai/statistics/intent-distribution${queryStr ? `?${queryStr}` : ''}`);
+    return api.get<IntentDistributionData>(
+      `/api/ai/statistics/intent-distribution${queryStr ? `?${queryStr}` : ''}`,
+    );
   },
 
   getErrors: (date?: string) => {
@@ -5395,7 +5717,9 @@ export const aiStatisticsApi = {
     const query = new URLSearchParams();
     if (date) query.set('date', date);
     const queryStr = query.toString();
-    return api.get<HeartbeatStatsData>(`/api/ai/statistics/heartbeat${queryStr ? `?${queryStr}` : ''}`);
+    return api.get<HeartbeatStatsData>(
+      `/api/ai/statistics/heartbeat${queryStr ? `?${queryStr}` : ''}`,
+    );
   },
 
   getRag: (date?: string) => {
@@ -5405,8 +5729,7 @@ export const aiStatisticsApi = {
     return api.get<RagStatsData>(`/api/ai/statistics/rag${queryStr ? `?${queryStr}` : ''}`);
   },
 
-  getRagDocuments: () =>
-    api.get<RagDocumentItem[]>('/api/ai/statistics/rag/documents'),
+  getRagDocuments: () => api.get<RagDocumentItem[]>('/api/ai/statistics/rag/documents'),
 
   getHistory: (days: number = 7) =>
     api.get<
@@ -5505,7 +5828,9 @@ export const aiPerformanceApi = {
     const query = new URLSearchParams();
     if (date) query.set('date', date);
     const queryStr = query.toString();
-    return api.get<HourlyPerformanceItem[]>(`/api/ai/performance/hourly${queryStr ? `?${queryStr}` : ''}`);
+    return api.get<HourlyPerformanceItem[]>(
+      `/api/ai/performance/hourly${queryStr ? `?${queryStr}` : ''}`,
+    );
   },
 
   getHourlyRange: (startDate?: string, endDate?: string) => {
@@ -5513,7 +5838,9 @@ export const aiPerformanceApi = {
     if (startDate) query.set('start_date', startDate);
     if (endDate) query.set('end_date', endDate);
     const queryStr = query.toString();
-    return api.get<HourlyPerformanceRangeItem[]>(`/api/ai/performance/hourly/range${queryStr ? `?${queryStr}` : ''}`);
+    return api.get<HourlyPerformanceRangeItem[]>(
+      `/api/ai/performance/hourly/range${queryStr ? `?${queryStr}` : ''}`,
+    );
   },
 };
 
@@ -5650,20 +5977,26 @@ export interface AIBudgetScopeUsage {
   enabled: boolean;
   exempt: boolean;
   exempt_reason: string;
-  rules: { rule_id: number; scope_label: string; blocked: boolean; windows: AIBudgetWindowUsage[] }[];
+  rules: {
+    rule_id: number;
+    scope_label: string;
+    blocked: boolean;
+    windows: AIBudgetWindowUsage[];
+  }[];
 }
 
 export const aiBudgetApi = {
   // 41.1 获取全局配置
-  getConfig: () =>
-    api.get<AIBudgetConfig>('/api/ai/budget/config'),
+  getConfig: () => api.get<AIBudgetConfig>('/api/ai/budget/config'),
 
   // 41.2 更新全局配置
   updateConfig: (data: Partial<AIBudgetConfig>) =>
     api.put<AIBudgetConfig>('/api/ai/budget/config', data),
 
   // 41.3 规则列表
-  getRules: (params: { scope_type?: string; enabled?: string; q?: string; with_usage?: boolean } = {}) => {
+  getRules: (
+    params: { scope_type?: string; enabled?: string; q?: string; with_usage?: boolean } = {},
+  ) => {
     const query = new URLSearchParams();
     if (params.scope_type) query.set('scope_type', params.scope_type);
     if (params.enabled) query.set('enabled', params.enabled);
@@ -5674,12 +6007,10 @@ export const aiBudgetApi = {
   },
 
   // 41.4 创建规则
-  createRule: (data: Partial<AIBudgetRule>) =>
-    api.post<AIBudgetRule>('/api/ai/budget/rules', data),
+  createRule: (data: Partial<AIBudgetRule>) => api.post<AIBudgetRule>('/api/ai/budget/rules', data),
 
   // 41.5 规则详情（含实时用量）
-  getRule: (ruleId: number) =>
-    api.get<AIBudgetRule>(`/api/ai/budget/rules/${ruleId}`),
+  getRule: (ruleId: number) => api.get<AIBudgetRule>(`/api/ai/budget/rules/${ruleId}`),
 
   // 41.6 更新规则
   updateRule: (ruleId: number, data: Partial<AIBudgetRule>) =>
@@ -5690,8 +6021,7 @@ export const aiBudgetApi = {
     api.post<{ id: number; enabled: boolean }>(`/api/ai/budget/rules/${ruleId}/toggle`, {}),
 
   // 41.8 删除规则
-  deleteRule: (ruleId: number) =>
-    api.delete<{ id: number }>(`/api/ai/budget/rules/${ruleId}`),
+  deleteRule: (ruleId: number) => api.delete<{ id: number }>(`/api/ai/budget/rules/${ruleId}`),
 
   // 41.9 白名单列表
   getWhitelist: (params: { user_id?: string; group_id?: string } = {}) => {
@@ -5699,7 +6029,9 @@ export const aiBudgetApi = {
     if (params.user_id) query.set('user_id', params.user_id);
     if (params.group_id) query.set('group_id', params.group_id);
     const queryStr = query.toString();
-    return api.get<AIBudgetWhitelistEntry[]>(`/api/ai/budget/whitelist${queryStr ? `?${queryStr}` : ''}`);
+    return api.get<AIBudgetWhitelistEntry[]>(
+      `/api/ai/budget/whitelist${queryStr ? `?${queryStr}` : ''}`,
+    );
   },
 
   // 41.10 新增白名单
@@ -5715,18 +6047,30 @@ export const aiBudgetApi = {
     api.delete<{ id: number }>(`/api/ai/budget/whitelist/${entryId}`),
 
   // 41.12 用量排行
-  getUsageTop: (params: { dimension: string; window: string; limit?: number; bot_id?: string; include_exempt?: boolean }) => {
+  getUsageTop: (params: {
+    dimension: string;
+    window: string;
+    limit?: number;
+    bot_id?: string;
+    include_exempt?: boolean;
+  }) => {
     const query = new URLSearchParams();
     query.set('dimension', params.dimension);
     query.set('window', params.window);
     if (params.limit) query.set('limit', String(params.limit));
     if (params.bot_id) query.set('bot_id', params.bot_id);
-    if (params.include_exempt !== undefined) query.set('include_exempt', String(params.include_exempt));
+    if (params.include_exempt !== undefined)
+      query.set('include_exempt', String(params.include_exempt));
     return api.get<AIBudgetUsageTopResult>(`/api/ai/budget/usage?${query.toString()}`);
   },
 
   // 41.13 查看 scope 逐窗口用量
-  getScopeUsage: (params: { scope_type: AIBudgetConcreteScopeType; scope_id: string; member_id?: string; bot_id?: string }) => {
+  getScopeUsage: (params: {
+    scope_type: AIBudgetConcreteScopeType;
+    scope_id: string;
+    member_id?: string;
+    bot_id?: string;
+  }) => {
     const query = new URLSearchParams();
     query.set('scope_type', params.scope_type);
     query.set('scope_id', params.scope_id);
@@ -5740,12 +6084,16 @@ export const aiBudgetApi = {
     api.post<AIBudgetCheckResult>('/api/ai/budget/check', data),
 
   // 41.15 手动放行
-  reset: (data: { scope_type: AIBudgetConcreteScopeType; scope_id: string; member_id?: string; bot_id?: string; window?: string }) =>
-    api.post<{ deleted: number }>('/api/ai/budget/reset', data),
+  reset: (data: {
+    scope_type: AIBudgetConcreteScopeType;
+    scope_id: string;
+    member_id?: string;
+    bot_id?: string;
+    window?: string;
+  }) => api.post<{ deleted: number }>('/api/ai/budget/reset', data),
 
   // 41.16 看板汇总
-  getOverview: () =>
-    api.get<AIBudgetOverview>('/api/ai/budget/overview'),
+  getOverview: () => api.get<AIBudgetOverview>('/api/ai/budget/overview'),
 };
 
 // ===================
@@ -5787,8 +6135,7 @@ export function getBrandIconUrl(timestamp?: number): string {
 
 export const brandApi = {
   // 42.1 获取品牌信息（公开）
-  getBrand: () =>
-    api.getRaw<BrandInfo>('/api/brand'),
+  getBrand: () => api.getRaw<BrandInfo>('/api/brand'),
 
   // 42.2 更新品牌标题/副标题
   updateBrand: (data: { title?: string; subtitle?: string }) =>
@@ -5802,7 +6149,7 @@ export const brandApi = {
     const token = getAuthToken();
     const response = await fetch(`${getCustomApiHost()}/api/brand/icon`, {
       method: 'POST',
-      headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
       body: formData,
       credentials: 'include',
     });
@@ -5819,8 +6166,7 @@ export const brandApi = {
   },
 
   // 42.4 删除品牌 ICON（回退到默认）
-  deleteIcon: () =>
-    api.delete<{ icon_source: 'default' }>('/api/brand/icon'),
+  deleteIcon: () => api.delete<{ icon_source: 'default' }>('/api/brand/icon'),
 };
 
 // ===================
@@ -5829,22 +6175,17 @@ export const brandApi = {
 
 export const versionApi = {
   // 获取框架版本与后端环境信�?
-  getVersion: () =>
-    api.get<VersionInfo>('/api/version'),
+  getVersion: () => api.get<VersionInfo>('/api/version'),
 
   // 获取当前 active_bot 列表与数�?
-  getBots: () =>
-    api.get<ActiveBotsInfo>('/api/version/bots'),
+  getBots: () => api.get<ActiveBotsInfo>('/api/version/bots'),
 
   // 获取当前 active_bot 数量
-  getBotsCount: () =>
-    api.get<{ count: number }>('/api/version/bots/count'),
+  getBotsCount: () => api.get<{ count: number }>('/api/version/bots/count'),
 
   // 获取当前 active_bot 名称列表
-  getBotNames: () =>
-    api.get<{ names: string[] }>('/api/version/bots/names'),
+  getBotNames: () => api.get<{ names: string[] }>('/api/version/bots/names'),
 };
-
 
 // ===================
 // Ops Diagnostics API - /api/ops/*
@@ -5988,8 +6329,7 @@ export const opsApi = {
       body,
     ),
 
-  getAccess: () =>
-    api.get<{ black_list: string[]; white_list: string[] }>('/api/ops/access'),
+  getAccess: () => api.get<{ black_list: string[]; white_list: string[] }>('/api/ops/access'),
 
   setAccess: (body: { black_list?: string[]; white_list?: string[] }) =>
     api.put<{ black_list: string[]; white_list: string[] }>('/api/ops/access', body),
@@ -6132,7 +6472,11 @@ export interface CognitionArticlePreview {
  */
 function unwrapConsolePayload<T>(raw: ApiResponse<T> | Record<string, unknown>): T {
   const rec = raw as unknown as Record<string, unknown>;
-  if ((raw as ApiResponse<T>).status === 0 && (raw as ApiResponse<T>).data !== undefined && (raw as ApiResponse<T>).data !== null) {
+  if (
+    (raw as ApiResponse<T>).status === 0 &&
+    (raw as ApiResponse<T>).data !== undefined &&
+    (raw as ApiResponse<T>).data !== null
+  ) {
     return (raw as ApiResponse<T>).data as T;
   }
   if (rec.status_code === 200 && rec.data !== undefined && rec.data !== null) {
@@ -6160,28 +6504,21 @@ export const relationshipApi = {
     const query = new URLSearchParams();
     query.set('user_id', params.user_id);
     if (params.bot_id) query.set('bot_id', params.bot_id);
-    return getConsolePayload<RelationshipViewData>(
-      `/api/relationship/view?${query.toString()}`,
-    );
+    return getConsolePayload<RelationshipViewData>(`/api/relationship/view?${query.toString()}`);
   },
 };
 
 export const cognitionApi = {
-  getNodes: (params: {
-    keyword?: string;
-    scope_key?: string;
-    owner_user_id?: string;
-    limit?: number;
-  } = {}) => {
+  getNodes: (
+    params: { keyword?: string; scope_key?: string; owner_user_id?: string; limit?: number } = {},
+  ) => {
     const query = new URLSearchParams();
     if (params.keyword) query.set('keyword', params.keyword);
     if (params.scope_key) query.set('scope_key', params.scope_key);
     if (params.owner_user_id) query.set('owner_user_id', params.owner_user_id);
     if (params.limit !== undefined) query.set('limit', String(params.limit));
     const qs = query.toString();
-    return getConsolePayload<CognitionNodesData>(
-      `/api/cognition/nodes${qs ? `?${qs}` : ''}`,
-    );
+    return getConsolePayload<CognitionNodesData>(`/api/cognition/nodes${qs ? `?${qs}` : ''}`);
   },
 
   readArticle: (handle: string, limit = 20000) => {
@@ -6193,19 +6530,13 @@ export const cognitionApi = {
     );
   },
 
-  getNode: (
-    nodeId: number,
-    params: { scope_key?: string; owner_user_id?: string } = {},
-  ) => {
+  getNode: (nodeId: number, params: { scope_key?: string; owner_user_id?: string } = {}) => {
     const query = new URLSearchParams();
     if (params.scope_key) query.set('scope_key', params.scope_key);
     if (params.owner_user_id) query.set('owner_user_id', params.owner_user_id);
     const qs = query.toString();
-    return getConsolePayload<CognitionNode>(
-      `/api/cognition/nodes/${nodeId}${qs ? `?${qs}` : ''}`,
-    );
+    return getConsolePayload<CognitionNode>(`/api/cognition/nodes/${nodeId}${qs ? `?${qs}` : ''}`);
   },
 
-  rebuildMount: () =>
-    postConsolePayload<CognitionRebuildMountData>('/api/cognition/rebuild_mount'),
+  rebuildMount: () => postConsolePayload<CognitionRebuildMountData>('/api/cognition/rebuild_mount'),
 };

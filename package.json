@@ -1,11 +1,12 @@
 {
   "name": "vite_react_shadcn_ts",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:core": "vite build --outDir ../gsuid_core/gsuid_core/webconsole/dist",
     "build:dev": "vite build --mode development",
     "dev:demo": "vite --mode demo --port 8080 --strictPort",
     "build:demo": "vite build --mode demo",

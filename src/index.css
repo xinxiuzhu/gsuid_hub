@@ -1,16 +1,8 @@
 /*
- * 字体方案：
- * 之前从 fonts.lug.ustc.edu.cn（USTC LUG Google Fonts 镜像）按需加载
- * Poppins / Merriweather / JetBrains Mono。部分网络环境下 Chrome 会对该
- * 镜像进行二次代理（例如 fonts.proxy.ustclug.org），若代理 SSL/TLS
- * 配置陈旧会出现 `ERR_SSL_VERSION_OR_CIPHER_MISMATCH`，导致字体加载
- * 失败并刷出控制台错误。这里改用系统字体回退：
- *   - Sans:  ui-sans-serif / system-ui / -apple-system / Segoe UI / Roboto ...
- *   - Serif: ui-serif / Georgia / Cambria ...
- *   - Mono:  ui-monospace / SFMono-Regular / Menlo / Monaco ...
- * 不影响视觉效果（CSS 变量 --font-sans/--font-serif/--font-mono 已配置
- * 完整回退栈），同时消除外部字体依赖与 SSL 错误。
+ * MiSans VF：index.html 引入 public/misans-vf 的 WOFF2 unicode-range 切片，不走后端 TTF。
+ * Twemoji：fonts.css，首次绘制后再加载。
  */
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -94,11 +86,11 @@ All colors MUST be HSL.
 
     --sidebar: 0 0% 98%;
 
-    --font-sans: 'Poppins', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+    --font-sans: 'MiSans VF', 'Twemoji Mozilla', sans-serif;
 
-    --font-serif: 'Merriweather', ui-serif, Georgia, Cambria, 'Times New Roman', Times, serif;
+    --font-serif: 'MiSans VF', 'Twemoji Mozilla', sans-serif;
 
-    --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+    --font-mono: 'MiSans VF', 'Twemoji Mozilla', sans-serif;
 
     --shadow-2xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
 
@@ -185,6 +177,7 @@ All colors MUST be HSL.
 
   body {
     @apply bg-background text-foreground;
+    font-family: var(--font-sans);
     padding-right: 0 !important;
     overflow-x: hidden;
   }
@@ -399,11 +392,11 @@ All colors MUST be HSL.
   -webkit-backdrop-filter: none;
 }
 
-/* Glass effect for badge and tag elements - only apply in glassmorphism mode */
+/* Glass effect for badge and tag elements - only apply in glassmorphism mode
+ * 只留半透明底色，不再给每个徽标挂 backdrop-filter：这种元素在弹层里动辄几十上百个，
+ * 每个都要独立采样+模糊一次，是「叠很多层毛玻璃」卡顿的主要来源。 */
 [data-style="glassmorphism"] [class*="bg-secondary"] {
   background: hsl(var(--secondary) / 0.3) !important;
-  backdrop-filter: blur(8px) !important;
-  -webkit-backdrop-filter: blur(8px) !important;
 }
 
 [data-style="solid"] [class*="bg-secondary"] {
@@ -412,11 +405,9 @@ All colors MUST be HSL.
   -webkit-backdrop-filter: none !important;
 }
 
-/* Glass effect for add button in tag inputs */
+/* Tint for the add button in tag inputs（同 bg-secondary：只上色，不挂 blur） */
 [data-style="glassmorphism"] button.rounded-full {
   background: hsl(var(--accent) / 0.3) !important;
-  backdrop-filter: blur(8px) !important;
-  -webkit-backdrop-filter: blur(8px) !important;
 }
 
 .glass-sidebar {
@@ -749,7 +740,17 @@ main:has(.page-fill) .layout-page-inner {
   -webkit-backdrop-filter: blur(var(--blur-intensity, 12px)) !important;
   background: hsl(var(--popover) / 0.7) !important;
   border: 1px solid hsl(var(--border) / 0.5) !important;
-  will-change: backdrop-filter;
+}
+
+/*
+ * glass-card 的毛玻璃已经画在 ::before 上。弹层（Dialog/Sheet）若同时带 glass-card，
+ * 宿主会被上面的 [role="dialog"] 再糊一层——同一区域两次 blur，且弹层里往往还嵌着
+ * 输入框/浮层的 blur，滚动时层层重采样，掉帧非常明显。这里只保留 ::before 那一层。
+ */
+[data-style="glassmorphism"] .glass-card[role="dialog"],
+[data-style="glassmorphism"] .glass-card[role="alertdialog"] {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
 /* Dark mode glass dialog/popover */
@@ -771,8 +772,6 @@ main:has(.page-fill) .layout-page-inner {
 [data-style="glassmorphism"] .glass-terminal {
   backdrop-filter: blur(var(--blur-intensity, 12px));
   -webkit-backdrop-filter: blur(var(--blur-intensity, 12px));
-  will-change: backdrop-filter;
-  transform: translateZ(0);
 }
 
 /* Icon color variations based on data-icon-color attribute */
@@ -835,8 +834,6 @@ main:has(.page-fill) .layout-page-inner {
   [data-style="glassmorphism"] .ui-select-trigger {
     backdrop-filter: blur(10px) !important;
     -webkit-backdrop-filter: blur(10px) !important;
-    /* 限制输入框的will-change，避免过多GPU层 */
-    will-change: backdrop-filter;
   }
   
   input:focus,
@@ -900,12 +897,21 @@ main:has(.page-fill) .layout-page-inner {
   background: hsl(var(--background)) !important;
 }
 
+/*
+  冻结态：上面对 [role="combobox"] 的背景/边框是 !important（还带 dark / data-style 变体），
+  组件里的 `data-[disabled]:*` 工具类一律被压制。禁用的下拉只能在这里补一条同优先级规则，
+  放在 solid 段之后，保证 light / dark / solid 三套都压得住。
+  语义：字段本身不消失，只是所属模式没开 → 虚线 + muted 底，读起来是"冻结"而非"出错"。
+*/
+[role="combobox"]:disabled {
+  background: hsl(var(--muted) / 0.5) !important;
+  border: 1px dashed hsl(var(--border) / 0.9) !important;
+}
+
 .glass-input {
   background: hsl(var(--background) / 0.5);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
-  will-change: backdrop-filter;
-  transform: translateZ(0);
 }
 
 /* Custom scrollbar */
