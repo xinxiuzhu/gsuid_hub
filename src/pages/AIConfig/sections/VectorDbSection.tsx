@@ -13,13 +13,18 @@ import {
   Cog,
   SlidersHorizontal,
 } from 'lucide-react';
+import { GlassAlert } from '@/components/ui/glass-alert';
 import { Label } from '@/components/ui/label';
-import { Separator } from '@/components/ui/separator';
+
 import { Switch } from '@/components/ui/switch';
 import { ChipGroup } from '@/components/ui/MultiSelectChipGroup';
-import { DynamicConfigPanel, ConfigField, type ConfigFieldType, type ConfigValue } from '@/components/config';
+import {
+  DynamicConfigPanel,
+  ConfigField,
+  type ConfigFieldType,
+  type ConfigValue,
+} from '@/components/config';
 import { InputWithDropdown } from '@/components/ui/input-with-dropdown';
-import { cn } from '@/lib/utils';
 import { renderRichText } from '../shared/renderRichText';
 import { LabelWithHelp } from '../shared';
 import type { EmbeddingExtraProviderConfig, PluginConfigItem } from '@/lib/api';
@@ -37,7 +42,6 @@ import {
 
 export interface VectorDbSectionProps {
   t: (key: string) => string;
-  isGlass: boolean;
   aiConfigId: string;
 
   // Qdrant
@@ -86,7 +90,6 @@ export interface VectorDbSectionProps {
  */
 export function VectorDbSection({
   t,
-  isGlass,
   aiConfigId,
   qdrantProvider,
   qdrantProviderOptions,
@@ -112,8 +115,12 @@ export function VectorDbSection({
   // —— 记录初始值，用于判断是否真正发生了变更 ——
   const initialQdrantRef = useRef(qdrantProvider);
   const initialEmbeddingRef = useRef(embeddingProvider);
-  useEffect(() => { initialQdrantRef.current = qdrantProvider; }, []);
-  useEffect(() => { initialEmbeddingRef.current = embeddingProvider; }, []);
+  useEffect(() => {
+    initialQdrantRef.current = qdrantProvider;
+  }, []);
+  useEffect(() => {
+    initialEmbeddingRef.current = embeddingProvider;
+  }, []);
 
   // —— Qdrant 部署方式切换确认弹窗 ——
   const [isQdrantSwitchDialogOpen, setIsQdrantSwitchDialogOpen] = useState(false);
@@ -179,167 +186,128 @@ export function VectorDbSection({
           <Database className="w-5 h-5 text-primary" />
           {t('aiConfig.vectorDb.title')}
         </h2>
-        <p className="text-sm text-muted-foreground">
-          {t('aiConfig.vectorDb.description')}
-        </p>
+        <p className="text-sm text-muted-foreground">{t('aiConfig.vectorDb.description')}</p>
       </div>
 
-      {/* 1. Qdrant 部署方式 */}
-      <div className="space-y-3">
-        <LabelWithHelp
-          icon={<Server className="w-4 h-4 text-primary" />}
-          label={t('aiConfig.vectorDb.qdrantProvider')}
-          description={qdrantProviderDesc || t('aiConfig.vectorDb.qdrantProviderDesc')}
-        />
-        <ChipGroup
-          options={qdrantProviderOptions.map((p) => ({
-            value: p,
-            label:
-              p === 'local'
-                ? t('aiConfig.vectorDb.qdrantLocal')
-                : p === 'remote'
-                  ? t('aiConfig.vectorDb.qdrantRemote')
-                  : p,
-            icon:
-              p === 'local' ? (
-                <Database className="w-3.5 h-3.5" />
-              ) : (
-                <Globe className="w-3.5 h-3.5" />
-              ),
-          }))}
-          value={qdrantProvider ? [qdrantProvider] : []}
-          onValueChange={handleQdrantProviderChange}
-          selectMode="single"
-          showRadioIndicator
-        />
-        {qdrantChanged && (
-          <div
-            className={cn(
-              'rounded-lg p-3 flex items-start gap-2',
-              isGlass
-                ? 'border border-amber-500/40 bg-amber-500/10'
-                : 'border border-amber-300 bg-amber-50 dark:border-amber-800/60 dark:bg-amber-950/40',
-            )}
-          >
-            <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
-            <p className="text-xs text-amber-700 dark:text-amber-400">
-              {renderRichText(t('aiConfig.vectorDb.switchWarning'))}
-            </p>
-          </div>
-        )}
-        {qdrantProvider !== 'remote' && (
-          <div
-            className={cn(
-              'rounded-lg p-3 flex items-start gap-2',
-              isGlass
-                ? 'border border-blue-500/40 bg-blue-500/10'
-                : 'border border-blue-200 bg-blue-50 dark:border-blue-800/60 dark:bg-blue-950/40',
-            )}
-          >
-            <HelpCircle className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
-            <div className="text-xs text-blue-700 dark:text-blue-400 space-y-1.5">
-              <p>{t('aiConfig.vectorDb.qdrantRecommendTip')}</p>
-              <div className="flex flex-wrap gap-2">
-                <a
-                  href="https://github.com/qdrant/qdrant/releases"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 underline underline-offset-2 hover:text-blue-600 dark:hover:text-blue-300 transition-colors"
-                >
-                  GitHub Releases
-                </a>
-                <span className="text-blue-400 dark:text-blue-600">·</span>
-                <a
-                  href="https://cloud.qdrant.io/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 underline underline-offset-2 hover:text-blue-600 dark:hover:text-blue-300 transition-colors"
-                >
-                  Qdrant Cloud
-                </a>
-              </div>
-            </div>
-          </div>
-        )}
-        {qdrantProvider === 'remote' && qdrantConfig && (
-          <div className="pt-3 border-t border-border/30">
-            <DynamicConfigPanel
-              config={qdrantConfig.config}
-              configId={qdrantConfig.id}
-              onChange={onUpdateConfig}
-              layout={[['url'], ['api_key']]}
-            />
-          </div>
-        )}
-      </div>
-
-      <Separator className="bg-border/30" />
-
-      {/* 2. 嵌入模型提供方 */}
-      <div className="space-y-3">
-        <div className="flex items-center gap-2">
-          <Cpu className="w-4 h-4 text-primary" />
-          <Label className="text-sm font-semibold">
-            {t('aiConfig.serviceProvider.embeddingService')}
-          </Label>
-        </div>
-        <ChipGroup
-          options={(availableProviders || embeddingProviderOptions).map((p) => {
-            const extra = extraProviders?.[p];
-            return {
+      <div className="grid items-start gap-6 lg:grid-cols-2">
+        {/* 1. Qdrant 部署方式 */}
+        <div className="space-y-3">
+          <LabelWithHelp
+            icon={<Server className="w-4 h-4 text-primary" />}
+            label={t('aiConfig.vectorDb.qdrantProvider')}
+            description={qdrantProviderDesc || t('aiConfig.vectorDb.qdrantProviderDesc')}
+          />
+          <ChipGroup
+            options={qdrantProviderOptions.map((p) => ({
               value: p,
-              label: extra?.display_name
-                ? extra.display_name
-                : p === 'local'
-                  ? t('aiConfig.serviceProvider.localModel')
-                  : p === 'openai'
-                    ? t('aiConfig.serviceProvider.openaiModel')
+              label:
+                p === 'local'
+                  ? t('aiConfig.vectorDb.qdrantLocal')
+                  : p === 'remote'
+                    ? t('aiConfig.vectorDb.qdrantRemote')
                     : p,
-              icon: extra
-                ? <Globe className="w-3.5 h-3.5" />
-                : p === 'local'
-                  ? <Database className="w-3.5 h-3.5" />
-                  : <Globe className="w-3.5 h-3.5" />,
-            };
-          })}
-          value={embeddingProvider ? [embeddingProvider] : []}
-          onValueChange={handleEmbeddingProviderChange}
-          selectMode="single"
-          showRadioIndicator
-        />
-        {embeddingChanged && (
-          <div
-            className={cn(
-              'rounded-lg p-3 flex items-start gap-2',
-              isGlass
-                ? 'border border-amber-500/40 bg-amber-500/10'
-                : 'border border-amber-300 bg-amber-50 dark:border-amber-800/60 dark:bg-amber-950/40',
-            )}
-          >
-            <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
-            <p className="text-xs text-amber-700 dark:text-amber-400">
+              icon:
+                p === 'local' ? (
+                  <Database className="w-3.5 h-3.5" />
+                ) : (
+                  <Globe className="w-3.5 h-3.5" />
+                ),
+            }))}
+            value={qdrantProvider ? [qdrantProvider] : []}
+            onValueChange={handleQdrantProviderChange}
+            selectMode="single"
+            showRadioIndicator
+          />
+          {qdrantChanged && (
+            <GlassAlert tone="warning" icon={AlertTriangle} contentClassName="text-xs">
               {renderRichText(t('aiConfig.vectorDb.switchWarning'))}
-            </p>
-          </div>
-        )}
-        <div className="pt-3 border-t border-border/30">
-          {isLoadingEmbeddingConfig ? (
-            <div className="flex items-center justify-center py-6">
-              <span className="text-xs text-muted-foreground">...</span>
+            </GlassAlert>
+          )}
+          {qdrantProvider !== 'remote' && (
+            <GlassAlert tone="info" icon={HelpCircle} contentClassName="text-xs">
+              <div className="space-y-1.5">
+                <p>{t('aiConfig.vectorDb.qdrantRecommendTip')}</p>
+                <div className="flex flex-wrap gap-2">
+                  <a
+                    href="https://github.com/qdrant/qdrant/releases"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 underline underline-offset-2 hover:text-blue-600 dark:hover:text-blue-300 transition-colors"
+                  >
+                    GitHub Releases
+                  </a>
+                  <span className="text-blue-400 dark:text-blue-600">·</span>
+                  <a
+                    href="https://cloud.qdrant.io/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 underline underline-offset-2 hover:text-blue-600 dark:hover:text-blue-300 transition-colors"
+                  >
+                    Qdrant Cloud
+                  </a>
+                </div>
+              </div>
+            </GlassAlert>
+          )}
+          {qdrantProvider === 'remote' && qdrantConfig && (
+            <div className="pt-3 border-t border-border/30">
+              <DynamicConfigPanel
+                config={qdrantConfig.config}
+                configId={qdrantConfig.id}
+                onChange={onUpdateConfig}
+              />
             </div>
-          ) : currentExtraProvider ? (
-            /* 插件注册的第三方 provider：只读展示 */
-            <div className="space-y-3">
-              <div
-                className={cn(
-                  'rounded-lg p-3 flex items-start gap-2',
-                  isGlass
-                    ? 'border border-violet-500/40 bg-violet-500/10'
-                    : 'border border-violet-300 bg-violet-50 dark:border-violet-800/60 dark:bg-violet-950/40',
-                )}
-              >
-                <Globe className="w-4 h-4 text-violet-500 shrink-0 mt-0.5" />
-                <div className="text-xs text-violet-700 dark:text-violet-300 space-y-1">
+          )}
+        </div>
+
+        {/* 2. 嵌入模型提供方 */}
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <Cpu className="w-4 h-4 text-primary" />
+            <Label className="text-sm font-semibold">
+              {t('aiConfig.serviceProvider.embeddingService')}
+            </Label>
+          </div>
+          <ChipGroup
+            options={(availableProviders || embeddingProviderOptions).map((p) => {
+              const extra = extraProviders?.[p];
+              return {
+                value: p,
+                label: extra?.display_name
+                  ? extra.display_name
+                  : p === 'local'
+                    ? t('aiConfig.serviceProvider.localModel')
+                    : p === 'openai'
+                      ? t('aiConfig.serviceProvider.openaiModel')
+                      : p,
+                icon: extra ? (
+                  <Globe className="w-3.5 h-3.5" />
+                ) : p === 'local' ? (
+                  <Database className="w-3.5 h-3.5" />
+                ) : (
+                  <Globe className="w-3.5 h-3.5" />
+                ),
+              };
+            })}
+            value={embeddingProvider ? [embeddingProvider] : []}
+            onValueChange={handleEmbeddingProviderChange}
+            selectMode="single"
+            showRadioIndicator
+          />
+          {embeddingChanged && (
+            <GlassAlert tone="warning" icon={AlertTriangle} contentClassName="text-xs">
+              {renderRichText(t('aiConfig.vectorDb.switchWarning'))}
+            </GlassAlert>
+          )}
+          <div className="pt-3 border-t border-border/30">
+            {isLoadingEmbeddingConfig ? (
+              <div className="flex items-center justify-center py-6">
+                <span className="text-xs text-muted-foreground">...</span>
+              </div>
+            ) : currentExtraProvider ? (
+              /* 插件注册的第三方 provider：只读展示 */
+              <div className="space-y-3">
+                <GlassAlert tone="accent" icon={Globe} contentClassName="text-xs">
                   <p className="font-semibold">
                     {renderRichText(
                       t('aiConfig.vectorDb.extraProviderBanner')
@@ -348,213 +316,191 @@ export function VectorDbSection({
                         .replace('{kind}', currentExtraProvider.kind),
                     )}
                   </p>
-                  <p className="text-violet-500 dark:text-violet-400">
-                    {t('aiConfig.vectorDb.extraProviderHint')}
-                  </p>
-                </div>
-              </div>
-              {Object.entries(currentExtraProvider.config || {}).map(([key, field]) => (
-                <div key={key} className="space-y-1.5">
-                  <FieldLabel
-                    icon={getProviderFieldIcon(key)}
-                    title={field.title || key}
-                    desc={field.desc}
-                  />
-                  <div className="text-sm px-3 py-2 rounded-md border border-dashed border-border/60 bg-muted/30 text-muted-foreground">
-                    {formatExtraProviderFieldData(field.data)}
+                  <p className="mt-1 opacity-80">{t('aiConfig.vectorDb.extraProviderHint')}</p>
+                </GlassAlert>
+                {Object.entries(currentExtraProvider.config || {}).map(([key, field]) => (
+                  <div key={key} className="space-y-1.5">
+                    <FieldLabel
+                      icon={getProviderFieldIcon(key)}
+                      title={field.title || key}
+                      desc={field.desc}
+                    />
+                    <div className="text-sm px-3 py-2 rounded-md border border-dashed border-border/60 bg-muted/30 text-muted-foreground">
+                      {formatExtraProviderFieldData(field.data)}
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          ) : embeddingProvider === 'local' ? (
-            <div className="space-y-3">
-              {Object.entries(embeddingLocalConfig)
-                // 「嵌入模型支持的模态」是 framework-config 的全局字段，
-                // 会在本节末尾用 ChipGroup 渲染，这里跳过避免重复。
-                .filter(([key]) => key !== 'embedding_modalities')
-                .map(([key, field]) => (
-                <div key={key} className="space-y-1.5">
-                  <FieldLabel
-                    icon={getProviderFieldIcon(key)}
-                    title={field.title || key}
-                    desc={field.desc}
-                  />
-                  <ConfigField
-                    fieldKey={key}
-                    field={{
-                      type: (
-                        Array.isArray(field.options) && field.options.length > 0
-                          ? 'select'
-                          : 'text'
-                      ) as ConfigFieldType,
-                      label: field.title || key,
-                      value: field.data == null ? '' : String(field.data),
-                      options: (field.options || []).map((o) => String(o)),
-                      placeholder: '',
-                      description: field.desc || '',
-                    }}
-                    showLabel={false}
-                    onChange={(k, v) => onUpdateEmbeddingLocalField(k, v)}
-                  />
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {Object.entries(embeddingOpenaiConfig)
-                // 「嵌入模型支持的模态」是 framework-config 的全局字段，
-                // 会在本节末尾用 ChipGroup 渲染，这里跳过避免重复 + 错误的单值下拉。
-                .filter(([key]) => key !== 'embedding_modalities')
-                .map(([key, field]) => (
-                <div key={key} className="space-y-1.5">
-                  <FieldLabel
-                    icon={getProviderFieldIcon(key)}
-                    title={field.title || key}
-                    desc={field.desc}
-                  />
-                  {key === 'api_key' ? (
-                    <ConfigField
-                      fieldKey={key}
-                      field={{
-                        type: 'tags',
-                        label: field.title || key,
-                        value: (field.data as string[]) || [],
-                        placeholder: '输入API密钥（支持多个）',
-                        description: field.desc || '',
-                      }}
-                      showLabel={false}
-                      onChange={(k, v) => onUpdateEmbeddingOpenaiField(k, v)}
-                    />
-                  ) : (
-                    <InputWithDropdown
-                      value={field.data == null ? '' : String(field.data)}
-                      onChange={(val) => onUpdateEmbeddingOpenaiField(key, val)}
-                      options={(field.options || []).map((o) => String(o))}
-                      placeholder={`选择或输入${field.title || key}`}
-                      inputPlaceholder={
-                        field.options?.[0] != null ? String(field.options[0]) : ''
-                      }
-                    />
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-        {/*
+                ))}
+              </div>
+            ) : embeddingProvider === 'local' ? (
+              <div className="space-y-3">
+                {Object.entries(embeddingLocalConfig)
+                  // 「嵌入模型支持的模态」是 framework-config 的全局字段，
+                  // 会在本节末尾用 ChipGroup 渲染，这里跳过避免重复。
+                  .filter(([key]) => key !== 'embedding_modalities')
+                  .map(([key, field]) => (
+                    <div key={key} className="space-y-1.5">
+                      <FieldLabel
+                        icon={getProviderFieldIcon(key)}
+                        title={field.title || key}
+                        desc={field.desc}
+                      />
+                      <ConfigField
+                        fieldKey={key}
+                        field={{
+                          type: (Array.isArray(field.options) && field.options.length > 0
+                            ? 'select'
+                            : 'text') as ConfigFieldType,
+                          label: field.title || key,
+                          value: field.data == null ? '' : String(field.data),
+                          options: (field.options || []).map((o) => String(o)),
+                          placeholder: '',
+                          description: field.desc || '',
+                        }}
+                        showLabel={false}
+                        onChange={(k, v) => onUpdateEmbeddingLocalField(k, v)}
+                      />
+                    </div>
+                  ))}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {Object.entries(embeddingOpenaiConfig)
+                  // 「嵌入模型支持的模态」是 framework-config 的全局字段，
+                  // 会在本节末尾用 ChipGroup 渲染，这里跳过避免重复 + 错误的单值下拉。
+                  .filter(([key]) => key !== 'embedding_modalities')
+                  .map(([key, field]) => (
+                    <div key={key} className="space-y-1.5">
+                      <FieldLabel
+                        icon={getProviderFieldIcon(key)}
+                        title={field.title || key}
+                        desc={field.desc}
+                      />
+                      {key === 'api_key' ? (
+                        <ConfigField
+                          fieldKey={key}
+                          field={{
+                            type: 'tags',
+                            label: field.title || key,
+                            value: (field.data as string[]) || [],
+                            placeholder: '输入API密钥（支持多个）',
+                            description: field.desc || '',
+                          }}
+                          showLabel={false}
+                          onChange={(k, v) => onUpdateEmbeddingOpenaiField(k, v)}
+                        />
+                      ) : (
+                        <InputWithDropdown
+                          value={field.data == null ? '' : String(field.data)}
+                          onChange={(val) => onUpdateEmbeddingOpenaiField(key, val)}
+                          options={(field.options || []).map((o) => String(o))}
+                          placeholder={`选择或输入${field.title || key}`}
+                          inputPlaceholder={
+                            field.options?.[0] != null ? String(field.options[0]) : ''
+                          }
+                        />
+                      )}
+                    </div>
+                  ))}
+              </div>
+            )}
+          </div>
+          {/*
           「嵌入模型支持的模态」字段来自 framework-config（id="GsCore AI OpenAI嵌入模型配置"），
           是独立于 provider 的全局设置，因此放在所有 provider-specific 字段之后。
           切换 local / openai / 第三方 provider 都能看到并修改。
         */}
-        {embeddingConfig?.config.embedding_modalities && (() => {
-          const item = embeddingConfig.config.embedding_modalities;
-          const value = Array.isArray(item.value)
-            ? (item.value as string[])
-            : [];
-          return (
-            <div className="space-y-1.5">
-              <FieldLabel
-                icon={<Sparkles className="w-3 h-3" />}
-                title={item.title || t('aiConfig.vectorDb.embeddingModalities')}
-                desc={item.desc}
-              />
-              <ChipGroup
-                options={getEmbeddingModalities(t)}
-                value={value}
-                onValueChange={(v) =>
-                  onUpdateConfig(embeddingConfig.id, 'embedding_modalities', v)
-                }
-              />
+          {embeddingConfig?.config.embedding_modalities &&
+            (() => {
+              const item = embeddingConfig.config.embedding_modalities;
+              const value = Array.isArray(item.value) ? (item.value as string[]) : [];
+              return (
+                <div className="space-y-1.5">
+                  <FieldLabel
+                    icon={<Sparkles className="w-3 h-3" />}
+                    title={item.title || t('aiConfig.vectorDb.embeddingModalities')}
+                    desc={item.desc}
+                  />
+                  <ChipGroup
+                    options={getEmbeddingModalities(t)}
+                    value={value}
+                    onValueChange={(v) =>
+                      onUpdateConfig(embeddingConfig.id, 'embedding_modalities', v)
+                    }
+                  />
+                </div>
+              );
+            })()}
+        </div>
+
+        {/* 3. 重排序模型：单独占满下一行，避免挤在左栏底下留空 */}
+        <div className="space-y-3 lg:col-span-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <ArrowUpDown className="w-4 h-4 text-primary" />
+              <Label className="text-sm font-semibold">
+                {t('aiConfig.serviceProvider.rerankService')}
+              </Label>
             </div>
-          );
-        })()}
-      </div>
-
-      <Separator className="bg-border/30" />
-
-      {/* 3. 重排序模型 */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <ArrowUpDown className="w-4 h-4 text-primary" />
-            <Label className="text-sm font-semibold">
-              {t('aiConfig.serviceProvider.rerankService')}
-            </Label>
-          </div>
-          <Switch
-            checked={isRerankEnabled}
-            onCheckedChange={(checked) =>
-              onUpdateConfig(aiConfigId, 'enable_rerank', checked)
-            }
-          />
-        </div>
-        <div
-          className={cn(
-            'rounded-lg p-3 flex items-start gap-2',
-            isGlass
-              ? 'border border-amber-500/40 bg-amber-500/10'
-              : 'border border-amber-300 bg-amber-50 dark:border-amber-800/60 dark:bg-amber-950/40',
-          )}
-        >
-          <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
-          <p className="text-xs text-amber-700 dark:text-amber-400">
-            {t('aiConfig.vectorDb.rerankWarning')}
-          </p>
-        </div>
-        {isRerankEnabled && (
-          <>
-            <ChipGroup
-              options={rerankProviderOptions.map((p) => ({
-                value: p,
-                label:
-                  p === 'local'
-                    ? t('aiConfig.serviceProvider.localModel')
-                    : p === 'openai'
-                      ? t('aiConfig.serviceProvider.openaiModel')
-                      : p,
-                icon:
-                  p === 'local' ? (
-                    <Database className="w-3.5 h-3.5" />
-                  ) : (
-                    <Globe className="w-3.5 h-3.5" />
-                  ),
-              }))}
-              value={rerankProvider ? [rerankProvider] : []}
-              onValueChange={(newValue) =>
-                onUpdateConfig(aiConfigId, 'rerank_provider', newValue[0] || '')
-              }
-              selectMode="single"
-              showRadioIndicator
+            <Switch
+              checked={isRerankEnabled}
+              onCheckedChange={(checked) => onUpdateConfig(aiConfigId, 'enable_rerank', checked)}
             />
-            {rerankConfig && (
-              <div className="pt-3 border-t border-border/30">
-                <DynamicConfigPanel
-                  config={rerankConfig.config}
-                  configId={rerankConfig.id}
-                  onChange={onUpdateConfig}
-                  excludeKeys={
-                    rerankProvider === 'openai' ? [] : ['base_url', 'api_key']
-                  }
-                />
-              </div>
-            )}
-          </>
-        )}
+          </div>
+          <GlassAlert tone="warning" icon={AlertTriangle} contentClassName="text-xs">
+            {t('aiConfig.vectorDb.rerankWarning')}
+          </GlassAlert>
+          {isRerankEnabled && (
+            <>
+              <ChipGroup
+                options={rerankProviderOptions.map((p) => ({
+                  value: p,
+                  label:
+                    p === 'local'
+                      ? t('aiConfig.serviceProvider.localModel')
+                      : p === 'openai'
+                        ? t('aiConfig.serviceProvider.openaiModel')
+                        : p,
+                  icon:
+                    p === 'local' ? (
+                      <Database className="w-3.5 h-3.5" />
+                    ) : (
+                      <Globe className="w-3.5 h-3.5" />
+                    ),
+                }))}
+                value={rerankProvider ? [rerankProvider] : []}
+                onValueChange={(newValue) =>
+                  onUpdateConfig(aiConfigId, 'rerank_provider', newValue[0] || '')
+                }
+                selectMode="single"
+                showRadioIndicator
+              />
+              {rerankConfig && (
+                <div className="pt-3 border-t border-border/30">
+                  <DynamicConfigPanel
+                    config={rerankConfig.config}
+                    configId={rerankConfig.id}
+                    onChange={onUpdateConfig}
+                    excludeKeys={rerankProvider === 'openai' ? [] : ['base_url', 'api_key']}
+                  />
+                </div>
+              )}
+            </>
+          )}
+        </div>
       </div>
 
       {/* Qdrant 部署方式切换确认弹窗 */}
       <AlertDialog open={isQdrantSwitchDialogOpen} onOpenChange={setIsQdrantSwitchDialogOpen}>
-        <AlertDialogContent className="max-w-[500px]">
+        <AlertDialogContent className="max-w-[500px] glass-card">
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2">
               <AlertTriangle className="w-5 h-5 text-amber-500" />
               {t('aiConfig.vectorDb.switchWarningTitle') || '切换 Qdrant 部署方式'}
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
-              <div className="text-sm leading-relaxed text-foreground/90 rounded-md bg-amber-500/5 border border-amber-500/20 p-3 flex items-start gap-2">
-                <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-amber-500" />
+              <GlassAlert tone="warning" icon={AlertTriangle}>
                 <span>{renderRichText(t('aiConfig.vectorDb.switchWarning'))}</span>
-              </div>
+              </GlassAlert>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -570,17 +516,16 @@ export function VectorDbSection({
 
       {/* 嵌入模型提供方切换确认弹窗 */}
       <AlertDialog open={isEmbeddingSwitchDialogOpen} onOpenChange={setIsEmbeddingSwitchDialogOpen}>
-        <AlertDialogContent className="max-w-[500px]">
+        <AlertDialogContent className="max-w-[500px] glass-card">
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2">
               <AlertTriangle className="w-5 h-5 text-amber-500" />
               {t('aiConfig.vectorDb.switchWarningTitle') || '切换嵌入模型提供方'}
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
-              <div className="text-sm leading-relaxed text-foreground/90 rounded-md bg-amber-500/5 border border-amber-500/20 p-3 flex items-start gap-2">
-                <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-amber-500" />
+              <GlassAlert tone="warning" icon={AlertTriangle}>
                 <span>{renderRichText(t('aiConfig.vectorDb.switchWarning'))}</span>
-              </div>
+              </GlassAlert>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -638,15 +583,7 @@ function getProviderFieldIcon(fieldKey: string) {
  * 与 `DynamicConfigPanel` 的字段 label 风格保持一致。复用 `LabelWithHelp`，
  * 仅用 `className` 覆盖成更小、更暗的内嵌字段样式。
  */
-function FieldLabel({
-  icon,
-  title,
-  desc,
-}: {
-  icon: ReactNode;
-  title: string;
-  desc?: string;
-}) {
+function FieldLabel({ icon, title, desc }: { icon: ReactNode; title: string; desc?: string }) {
   return (
     <LabelWithHelp
       icon={<span className="text-muted-foreground/80">{icon}</span>}

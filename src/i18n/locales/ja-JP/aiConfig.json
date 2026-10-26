@@ -10,6 +10,15 @@
   "checkConfig": "設定確認",
   "manageConfig": "設定を管理",
   "manageConfigDesc": "高レベル / 低レベルタスクで使用するAIモデル設定ファイルを管理します",
+  "copyConfig": "設定を複製",
+  "copyConfigDesc": "「{name}」を複製します。キーとパラメータも一緒にコピーされます。保存前に名前を変更できます。",
+  "copyConfigName": "新しい名前",
+  "copyConfigSuccess": "{name} として複製しました",
+  "copyConfigFailed": "設定の複製に失敗しました",
+  "copyConfigNameRequired": "新しい名前を入力してください",
+  "copyConfigSameName": "新しい名前は元の設定と違う必要があります",
+  "copyConfigNamePlus": "名前に + は使えません",
+  "copyConfigSuffix": " のコピー",
   "aiHistory": "AI履歴",
   "taskConfig": {
     "title": "タスク設定",
@@ -106,7 +115,9 @@
       "low": "低",
       "medium": "中",
       "high": "高",
-      "xhigh": "超高"
+      "xhigh": "超高",
+      "adaptive": "適応",
+      "max": "最大"
     },
     "maxConcurrency": "最大同時実行数",
     "maxTokens": "最大出力トークン",
@@ -153,6 +164,41 @@
     "endUserIdSalt": "ダイジェストのソルト",
     "endUserIdSaltPlaceholder": "空欄の場合は鍵なしダイジェスト",
     "endUserIdSaltHint": "空欄では鍵なしダイジェストになります。ID 空間が小さい場合（数値のアカウント ID など）は総当たりで逆引きされ得るため、難読化にとどまります。ソルトを変更すると過去のダイジェストとの対応が失われ、上流の呼び出し元ごとの履歴が途切れます。",
+    "sectionBasic": "基本情報と接続",
+    "sectionBasicDesc": "プロバイダーの種類、設定名、エンドポイント、認証情報",
+    "sectionCapabilities": "モデルと推論",
+    "sectionCapabilitiesDesc": "機能、思考レベル、並列制御",
+    "sectionNetwork": "プロトコルと高度なネットワーク",
+    "sectionNetworkDesc": "リクエスト方式、利用統計、ID転送、リモート検索",
+    "sectionVideo": "マルチモーダル動画入力",
+    "sectionVideoDesc": "OpenAI 互換インターフェースの動画ブロック形式とサンプリング設定",
+    "sectionVideoAlert": "Xiaomi MiMo、DashScope 互換モード、OpenRouter などの全モーダルモデルに最適化されています（chat_completions のみ有効）。",
+    "videoInputFormat": "動画入力形式",
+    "videoInputFormatOptions": {
+      "file": "file（LiteLLM / Gemini などのプロキシ互換）",
+      "video_url": "video_url（MiMo / 通義千問 / OpenRouter などの全モーダル対応）"
+    },
+    "videoInputFormatDescription": {
+      "file": "LiteLLM や Gemini 中継向けの file 形式（type=file）。",
+      "video_url": "Xiaomi MiMo、DashScope 互換モード、OpenRouter など全モーダル対応の type=video_url 形式を生成（chat_completions でのみ有効）。"
+    },
+    "videoFps": "動画サンプリングFPS",
+    "videoFpsDescription": "video_url モード時のサンプリングレート（FPS）。0 より大きい場合に fps パラメータ（例: 0.5 や 2.0）を送信し、0 は未送信となります。",
+    "videoInlineMaxMb": "動画インライン上限 (MB)",
+    "videoInlineMaxMbDescription": "video_url モードで DataURI に変換する動画の最大容量（MB）。上限を超えると自動的にサンプリングやプレースホルダーへフォールバックします。",
+    "videoUrlPassthrough": "動画公网URLの直接送信",
+    "videoUrlPassthroughOptions": {
+      "off": "無効（DataURI に事前変換、既定）",
+      "on": "有効（公開 URL をそのまま送信）"
+    },
+    "videoUrlPassthroughDescription": {
+      "off": "推奨。一時リンクの有効期限切れによる会話エラー（400）を防ぐため、事前にダウンロードして DataURI に変換します。",
+      "on": "元の http(s) URL をそのまま video_url.url に設定します。永続的な公開 URL でモデル側から到達可能な場合に適しています。"
+    },
+    "videoPartExtra": "動画ブロック追加パラメータ (JSON)",
+    "videoPartExtraDescription": "video_url モードで動画ブロックにマージされる JSON オブジェクト。同層への結合（例: {\"media_resolution\":\"default\"}）または video_url 内へ結合されます。",
+    "videoPartExtraPlaceholder": "例: {\"media_resolution\": \"default\"}",
+    "videoFileModeHint": "現在は file モードです（LiteLLM / Gemini 中継互換）。video_url に切り替えることでサンプリングFPS、インライン上限、追加JSONパラメータを設定できます。",
     "capabilityText": "テキスト会話",
     "capabilityImage": "画像理解",
     "capabilityAudio": "音声処理",
@@ -184,6 +230,7 @@
     "rerankServiceDisabled": "Rerank有効にしてRAG検索品質を向上",
     "embeddingSaveWarningTitle": "ベクトルデータベース設定を変更",
     "embeddingSaveWarningDesc": "埋め込みモデルサービス / Qdrantデプロイ方式を変更すると、履歴ベクトルデータの移行・再構築が必要になります。先に data/ai_core フォルダをバックアップし、保存後はサービスの再起動が必要です。移行には時間がかかる場合があります。",
+    "webSearchFetch": "ネット検索 / 取得",
     "webSearchService": "ネット検索サービス",
     "webSearchServiceDesc": "設定ネット検索機能",
     "primaryProvider": "メイン検索ソース",
@@ -208,16 +255,23 @@
     "anysearchConfig": "AnySearch設定",
     "firecrawlConfig": "Firecrawl設定",
     "jinaConfig": "Jina 設定（s.jina.ai / r.jina.ai）",
+    "deepseekConfig": "DeepSeek 設定（検索・取得）",
     "miniMaxConfig": "MiniMax設定",
     "maxResults": "最大件数",
     "searchDepth": "検索深度",
-    "searchType": "検索タイプ",
     "apiHost": "API ホスト",
-    "resourceMode": "リソースプロバイダー式"
+    "resourceMode": "リソースプロバイダー式",
+    "renderImageSources": "出図の画像ソース",
+    "renderImageSourcesDesc": "render_agent はこの順で画像を探し、先のソースが枚数を満たしたら止まります。空なら画像検索しません。プラグイン図庫はプラグインが登録した画像、Tavily はこのページの Tavily キー、Firecrawl は公式の画像検索でキーなしは無料枠、360 は公開の画像検索でキー不要です。",
+    "renderEmbedImages": "画像をカードに埋め込む",
+    "renderEmbedImagesDesc": "オンのとき、設定されたソースで画像を探して長図に埋め込みます。オフのときは検索せずアイコンを使います。初期値はオンです。",
+    "renderCardSection": "カード画像・挿絵設定",
+    "renderCardSectionDesc": "AI 応答カード生成時の画像検索ソースと埋め込み動作を設定します。",
+    "renderEmbedImagesDisabledHint": "画像の埋め込みはオフです。画像検索は行われず、組み込みアイコンが使用されます。"
   },
   "webFetch": {
     "title": "Web 取得サービス",
-    "description": "web_fetch_tool：メイン Jina / local、エラー切替と自動分散対応。保存後すぐ反映、再起動不要。",
+    "description": "web_fetch_tool：メイン Jina / DeepSeek / local、エラー切替と自動分散対応。保存後すぐ反映、再起動不要。",
     "provider": "取得プロバイダー",
     "primaryProvider": "メイン取得ソース",
     "lbStrategy": "マルチソース戦略",
@@ -230,10 +284,13 @@
     "fallbackConfigSectionDesc": "予備取得ソースのパラメータ。メイン失敗時に使用。",
     "providerLocal": "ローカル (local)",
     "providerJina": "Jina (r.jina.ai)",
+    "providerDeepSeek": "DeepSeek (Fetch API)",
     "localHint": "aiohttp で直接続。プロキシ / UA / タイムアウト設定可。",
     "jinaHint": "r.jina.ai 経由。API Key は任意。デフォルトのメイン。",
+    "deepseekHint": "DeepSeek 公式 Fetch 経由で取得し Markdown を抽出。API Key が必要です。",
     "configNotLoaded": "Web 取得サービス設定が未読込です。バックエンドが起動し WebFetch 設定が登録されているか確認してください",
-    "jinaConfigNotLoaded": "Jina 設定が未読込です。バックエンドの Jina 検索・取得設定を確認してください"
+    "jinaConfigNotLoaded": "Jina 設定が未読込です。バックエンドの Jina 検索・取得設定を確認してください",
+    "deepseekConfigNotLoaded": "DeepSeek 設定が未読込です。バックエンドの DeepSeek 検索・取得設定を確認してください"
   },
   "relationshipSettings": {
     "title": "関係温度",
@@ -353,6 +410,9 @@
     "noActiveConfigTitle": "設定未激活",
     "noConfigFileTitle": "なし設定ファイル",
     "noConfigFileWarning": "先にクリック右上「新規設定」追加1つの設定ファイル、然後再に詳細タスクと低レベルタスク選択対応の設定"
+  },
+  "multimodal": {
+    "title": "マルチモーダル"
   },
   "imageUnderstand": {
     "title": "画像理解サービス",

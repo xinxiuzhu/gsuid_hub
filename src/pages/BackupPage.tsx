@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { HardDrive, Download, Trash2, Play, Archive, Save } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { TabButtonGroup } from '@/components/ui/TabButtonGroup';
+import { TabButtonGroup, tabToolbarControlClass } from '@/components/ui/TabButtonGroup';
+import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -34,7 +35,7 @@ import { toast } from 'sonner';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { format } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
-import { PinnedPage } from '@/components/layout/PinnedPage';
+import { headerActionRowClass, PinnedPage } from '@/components/layout/PinnedPage';
 
 // Define types for backend response
 interface BackupConfigItem {
@@ -415,25 +416,29 @@ export default function BackupPage() {
     <PinnedPage
       header={
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div className="min-w-0 overflow-x-auto">
-            <h1 className="whitespace-nowrap text-3xl font-bold flex items-center gap-3">
+          <div className="min-w-0 sm:overflow-x-auto">
+            <h1 className="sm:whitespace-nowrap text-3xl font-bold flex items-center gap-3">
               <HardDrive className="w-8 h-8 shrink-0" />
               {t('backup.title')}
             </h1>
-            <p className="whitespace-nowrap text-muted-foreground mt-1">
+            <p className="sm:whitespace-nowrap text-muted-foreground mt-1">
               {t('backup.description')}
             </p>
           </div>
-          <div className="flex flex-wrap justify-end gap-2 self-end sm:self-auto">
+          <div className={headerActionRowClass}>
             <Button
               onClick={handleSaveSettings}
               disabled={!hasChanges || isSaving}
-              className="whitespace-nowrap"
+              className={cn(tabToolbarControlClass, 'button-solid whitespace-nowrap')}
             >
               <Save className="w-4 h-4 mr-2" />
               {isSaving ? t('backup.saving') : t('backup.saveSettings')}
             </Button>
-            <Button onClick={handleBackupNow} disabled={isBackingUp} className="whitespace-nowrap">
+            <Button
+              onClick={handleBackupNow}
+              disabled={isBackingUp}
+              className={cn(tabToolbarControlClass, 'whitespace-nowrap')}
+            >
               <Play className="w-4 h-4 mr-2" />
               {isBackingUp ? t('backup.backingUp') : t('backup.backupNow')}
             </Button>

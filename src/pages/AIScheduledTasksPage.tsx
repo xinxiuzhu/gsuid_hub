@@ -3,9 +3,11 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { GlassAlert } from '@/components/ui/glass-alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { tabToolbarControlClass, tabToolbarIconButtonClass } from '@/components/ui/TabButtonGroup';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
@@ -15,7 +17,7 @@ import {
   TableCell,
   TableHead,
   TableHeader,
-  TableRow
+  TableRow,
 } from '@/components/ui/table';
 import {
   Dialog,
@@ -61,7 +63,12 @@ import {
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
-import { aiScheduledTasksApi, AIScheduledTask, AIScheduledTaskStats, CreateScheduledTaskRequest } from '@/lib/api';
+import {
+  aiScheduledTasksApi,
+  type AIScheduledTask,
+  type AIScheduledTaskStats,
+  type CreateScheduledTaskRequest,
+} from '@/lib/api';
 import { toast } from 'sonner';
 import { PinnedPage } from '@/components/layout/PinnedPage';
 
@@ -72,14 +79,14 @@ import { PinnedPage } from '@/components/layout/PinnedPage';
 export default function AIScheduledTasksPage() {
   const { style } = useTheme();
   const { t } = useLanguage();
-  const isGlass = style === 'glassmorphism';
+  const isGlass = style !== 'solid';
 
   // 状态
   const [tasks, setTasks] = useState<AIScheduledTask[]>([]);
   const [stats, setStats] = useState<AIScheduledTaskStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  
+
   // 筛选状态
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
@@ -113,7 +120,7 @@ export default function AIScheduledTasksPage() {
       const params: { status?: string; task_type?: string } = {};
       if (statusFilter !== 'all') params.status = statusFilter;
       if (typeFilter !== 'all') params.task_type = typeFilter;
-      
+
       const data = await aiScheduledTasksApi.getTasks(params);
       setTasks(data);
     } catch (err) {
@@ -141,9 +148,10 @@ export default function AIScheduledTasksPage() {
 
   // 筛选后的任务列表
   const filteredTasks = useMemo(() => {
-    return tasks.filter(task =>
-      task.task_prompt.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      task.task_id.toLowerCase().includes(searchQuery.toLowerCase())
+    return tasks.filter(
+      (task) =>
+        task.task_prompt.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        task.task_id.toLowerCase().includes(searchQuery.toLowerCase()),
     );
   }, [tasks, searchQuery]);
 
@@ -151,23 +159,46 @@ export default function AIScheduledTasksPage() {
   const getStatusBadge = (status: AIScheduledTask['status']) => {
     switch (status) {
       case 'pending':
-        return <Badge className="bg-blue-500/20 text-blue-500 border-blue-500/30">{t('aiScheduledTasks.statusPending')}</Badge>;
+        return (
+          <Badge className="bg-blue-500/20 text-blue-500 border-blue-500/30">
+            {t('aiScheduledTasks.statusPending')}
+          </Badge>
+        );
       case 'paused':
-        return <Badge className="bg-yellow-500/20 text-yellow-500 border-yellow-500/30">{t('aiScheduledTasks.statusPaused')}</Badge>;
+        return (
+          <Badge className="bg-yellow-500/20 text-yellow-500 border-yellow-500/30">
+            {t('aiScheduledTasks.statusPaused')}
+          </Badge>
+        );
       case 'executed':
-        return <Badge className="bg-green-500/20 text-green-500 border-green-500/30">{t('aiScheduledTasks.statusExecuted')}</Badge>;
+        return (
+          <Badge className="bg-green-500/20 text-green-500 border-green-500/30">
+            {t('aiScheduledTasks.statusExecuted')}
+          </Badge>
+        );
       case 'failed':
-        return <Badge className="bg-destructive/20 text-destructive border-destructive/30">{t('aiScheduledTasks.statusFailed')}</Badge>;
+        return (
+          <Badge className="bg-destructive/20 text-destructive border-destructive/30">
+            {t('aiScheduledTasks.statusFailed')}
+          </Badge>
+        );
       case 'cancelled':
-        return <Badge className="bg-gray-500/20 text-gray-500 border-gray-500/30">{t('aiScheduledTasks.statusCancelled')}</Badge>;
+        return (
+          <Badge className="bg-gray-500/20 text-gray-500 border-gray-500/30">
+            {t('aiScheduledTasks.statusCancelled')}
+          </Badge>
+        );
     }
   };
 
   // 格式化时间间隔
   const formatInterval = (seconds: number) => {
-    if (seconds < 60) return `${seconds} ${t('aiScheduledTasks.intervalMinutes').replace('{minutes}', '')}`;
-    if (seconds < 3600) return `${Math.floor(seconds / 60)} ${t('aiScheduledTasks.intervalMinutes').replace('{minutes}', '')}`;
-    if (seconds < 86400) return `${Math.floor(seconds / 3600)} ${t('aiScheduledTasks.intervalHours').replace('{hours}', '')}`;
+    if (seconds < 60)
+      return `${seconds} ${t('aiScheduledTasks.intervalMinutes').replace('{minutes}', '')}`;
+    if (seconds < 3600)
+      return `${Math.floor(seconds / 60)} ${t('aiScheduledTasks.intervalMinutes').replace('{minutes}', '')}`;
+    if (seconds < 86400)
+      return `${Math.floor(seconds / 3600)} ${t('aiScheduledTasks.intervalHours').replace('{hours}', '')}`;
     return `${Math.floor(seconds / 86400)} ${t('aiScheduledTasks.intervalDays').replace('{days}', '')}`;
   };
 
@@ -207,7 +238,11 @@ export default function AIScheduledTasksPage() {
       fetchStats();
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : '';
-      toast.error(errorMsg ? `${t('aiScheduledTasks.deleteFailed')}: ${errorMsg}` : t('aiScheduledTasks.deleteFailed'));
+      toast.error(
+        errorMsg
+          ? `${t('aiScheduledTasks.deleteFailed')}: ${errorMsg}`
+          : t('aiScheduledTasks.deleteFailed'),
+      );
     }
   };
 
@@ -223,7 +258,11 @@ export default function AIScheduledTasksPage() {
       fetchStats();
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : '';
-      toast.error(errorMsg ? `${t('aiScheduledTasks.hardDeleteFailed')}: ${errorMsg}` : t('aiScheduledTasks.hardDeleteFailed'));
+      toast.error(
+        errorMsg
+          ? `${t('aiScheduledTasks.hardDeleteFailed')}: ${errorMsg}`
+          : t('aiScheduledTasks.hardDeleteFailed'),
+      );
     }
   };
 
@@ -231,13 +270,19 @@ export default function AIScheduledTasksPage() {
   const handleClearAll = async () => {
     try {
       const result = await aiScheduledTasksApi.clearTasks({ confirm: true });
-      toast.success(t('aiScheduledTasks.clearAllSuccess').replace('{count}', String(result.deleted)));
+      toast.success(
+        t('aiScheduledTasks.clearAllSuccess').replace('{count}', String(result.deleted)),
+      );
       setClearAllDialogOpen(false);
       fetchTasks();
       fetchStats();
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : '';
-      toast.error(errorMsg ? `${t('aiScheduledTasks.clearAllFailed')}: ${errorMsg}` : t('aiScheduledTasks.clearAllFailed'));
+      toast.error(
+        errorMsg
+          ? `${t('aiScheduledTasks.clearAllFailed')}: ${errorMsg}`
+          : t('aiScheduledTasks.clearAllFailed'),
+      );
     }
   };
 
@@ -312,22 +357,26 @@ export default function AIScheduledTasksPage() {
 
   return (
     <PinnedPage
+      className="gap-3 sm:gap-4"
+      bodyClassName="space-y-2 sm:space-y-2.5"
       header={
         /* 页面标题 */
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div className="min-w-0 overflow-x-auto">
-            <h1 className="whitespace-nowrap text-3xl font-bold flex items-center gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div className="min-w-0 sm:overflow-x-auto">
+            <h1 className="sm:whitespace-nowrap text-3xl font-bold flex items-center gap-3">
               <Clock className="w-8 h-8 shrink-0" />
               {t('aiScheduledTasks.title')}
             </h1>
-            <p className="whitespace-nowrap text-muted-foreground mt-1">{t('aiScheduledTasks.description')}</p>
+            <p className="sm:whitespace-nowrap text-muted-foreground mt-1">
+              {t('aiScheduledTasks.description')}
+            </p>
           </div>
           <Button
             onClick={() => {
               resetForm();
               setCreateDialogOpen(true);
             }}
-            className="gap-2 whitespace-nowrap self-end sm:self-auto"
+            className={cn(tabToolbarControlClass, 'w-full gap-2 whitespace-nowrap sm:w-auto')}
           >
             <Plus className="w-4 h-4" />
             {t('aiScheduledTasks.createTask')}
@@ -337,79 +386,91 @@ export default function AIScheduledTasksPage() {
     >
       {/* 统计卡片 */}
       {stats && (
-        <div className="glass-card-grid grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
-          <Card className={cn(isGlass ? "glass-card" : "border border-border/50")}>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <Timer className="w-8 h-8 text-primary" />
+        <div className="glass-card-grid grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2 sm:gap-2.5">
+          <Card className={cn('glass-card')}>
+            <CardContent className="p-3">
+              <div className="flex items-center gap-2.5">
+                <Timer className="w-7 h-7 text-primary shrink-0" />
                 <div>
-                  <p className="text-2xl font-bold">{stats.total}</p>
-                  <p className="text-xs text-muted-foreground">{t('aiScheduledTasks.totalTasks')}</p>
+                  <p className="text-xl font-bold">{stats.total}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {t('aiScheduledTasks.totalTasks')}
+                  </p>
                 </div>
               </div>
             </CardContent>
           </Card>
-          <Card className={cn(isGlass ? "glass-card" : "border border-border/50")}>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <Clock className="w-8 h-8 text-blue-500" />
+          <Card className={cn('glass-card')}>
+            <CardContent className="p-3">
+              <div className="flex items-center gap-2.5">
+                <Clock className="w-7 h-7 text-blue-500 shrink-0" />
                 <div>
-                  <p className="text-2xl font-bold">{stats.pending}</p>
-                  <p className="text-xs text-muted-foreground">{t('aiScheduledTasks.pendingTasks')}</p>
+                  <p className="text-xl font-bold">{stats.pending}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {t('aiScheduledTasks.pendingTasks')}
+                  </p>
                 </div>
               </div>
             </CardContent>
           </Card>
-          <Card className={cn(isGlass ? "glass-card" : "border border-border/50")}>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <Pause className="w-8 h-8 text-yellow-500" />
+          <Card className={cn('glass-card')}>
+            <CardContent className="p-3">
+              <div className="flex items-center gap-2.5">
+                <Pause className="w-7 h-7 text-yellow-500 shrink-0" />
                 <div>
-                  <p className="text-2xl font-bold">{stats.paused}</p>
-                  <p className="text-xs text-muted-foreground">{t('aiScheduledTasks.pausedTasks')}</p>
+                  <p className="text-xl font-bold">{stats.paused}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {t('aiScheduledTasks.pausedTasks')}
+                  </p>
                 </div>
               </div>
             </CardContent>
           </Card>
-          <Card className={cn(isGlass ? "glass-card" : "border border-border/50")}>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <CheckCircle className="w-8 h-8 text-green-500" />
+          <Card className={cn('glass-card')}>
+            <CardContent className="p-3">
+              <div className="flex items-center gap-2.5">
+                <CheckCircle className="w-7 h-7 text-green-500 shrink-0" />
                 <div>
-                  <p className="text-2xl font-bold">{stats.executed}</p>
-                  <p className="text-xs text-muted-foreground">{t('aiScheduledTasks.executedTasks')}</p>
+                  <p className="text-xl font-bold">{stats.executed}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {t('aiScheduledTasks.executedTasks')}
+                  </p>
                 </div>
               </div>
             </CardContent>
           </Card>
-          <Card className={cn(isGlass ? "glass-card" : "border border-border/50")}>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <XCircle className="w-8 h-8 text-destructive" />
+          <Card className={cn('glass-card')}>
+            <CardContent className="p-3">
+              <div className="flex items-center gap-2.5">
+                <XCircle className="w-7 h-7 text-destructive shrink-0" />
                 <div>
-                  <p className="text-2xl font-bold">{stats.failed}</p>
-                  <p className="text-xs text-muted-foreground">{t('aiScheduledTasks.failedTasks')}</p>
+                  <p className="text-xl font-bold">{stats.failed}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {t('aiScheduledTasks.failedTasks')}
+                  </p>
                 </div>
               </div>
             </CardContent>
           </Card>
-          <Card className={cn(isGlass ? "glass-card" : "border border-border/50")}>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <RefreshCw className="w-8 h-8 text-purple-500" />
+          <Card className={cn('glass-card')}>
+            <CardContent className="p-3">
+              <div className="flex items-center gap-2.5">
+                <RefreshCw className="w-7 h-7 text-purple-500 shrink-0" />
                 <div>
-                  <p className="text-2xl font-bold">{stats.interval_count}</p>
-                  <p className="text-xs text-muted-foreground">{t('aiScheduledTasks.intervalTasks')}</p>
+                  <p className="text-xl font-bold">{stats.interval_count}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {t('aiScheduledTasks.intervalTasks')}
+                  </p>
                 </div>
               </div>
             </CardContent>
           </Card>
-          <Card className={cn(isGlass ? "glass-card" : "border border-border/50")}>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <Calendar className="w-8 h-8 text-orange-500" />
+          <Card className={cn('glass-card')}>
+            <CardContent className="p-3">
+              <div className="flex items-center gap-2.5">
+                <Calendar className="w-7 h-7 text-orange-500 shrink-0" />
                 <div>
-                  <p className="text-2xl font-bold">{stats.once_count}</p>
+                  <p className="text-xl font-bold">{stats.once_count}</p>
                   <p className="text-xs text-muted-foreground">{t('aiScheduledTasks.onceTasks')}</p>
                 </div>
               </div>
@@ -419,21 +480,26 @@ export default function AIScheduledTasksPage() {
       )}
 
       {/* 筛选栏 */}
-      <Card className={cn(isGlass ? "glass-card" : "border border-border/50")}>
-        <CardContent className="p-4">
-          <div className="flex flex-col md:flex-row gap-4">
+      <Card className={cn('glass-card')}>
+        <CardContent className="p-2.5 sm:p-3">
+          <div className="flex flex-col md:flex-row gap-2.5 sm:gap-3">
             <div className="relative flex-1">
               <Search className="pointer-events-none absolute left-3 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder={t('aiScheduledTasks.taskPromptPlaceholder')}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10"
+                className={cn(tabToolbarControlClass, 'pl-10')}
               />
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2 sm:flex-nowrap">
               <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger className="w-[160px]">
+                <SelectTrigger
+                  className={cn(
+                    tabToolbarControlClass,
+                    'w-full min-w-[140px] flex-1 sm:w-[160px] sm:flex-none',
+                  )}
+                >
                   <Filter className="w-4 h-4 mr-2" />
                   <SelectValue placeholder={t('aiScheduledTasks.filterByStatus')} />
                 </SelectTrigger>
@@ -447,7 +513,12 @@ export default function AIScheduledTasksPage() {
                 </SelectContent>
               </Select>
               <Select value={typeFilter} onValueChange={setTypeFilter}>
-                <SelectTrigger className="w-[160px]">
+                <SelectTrigger
+                  className={cn(
+                    tabToolbarControlClass,
+                    'w-full min-w-[140px] flex-1 sm:w-[160px] sm:flex-none',
+                  )}
+                >
                   <Filter className="w-4 h-4 mr-2" />
                   <SelectValue placeholder={t('aiScheduledTasks.filterByType')} />
                 </SelectTrigger>
@@ -457,7 +528,12 @@ export default function AIScheduledTasksPage() {
                   <SelectItem value="interval">{t('aiScheduledTasks.taskTypeInterval')}</SelectItem>
                 </SelectContent>
               </Select>
-              <Button variant="outline" size="icon" onClick={fetchTasks}>
+              <Button
+                variant="outline"
+                size="icon"
+                className={tabToolbarIconButtonClass}
+                onClick={fetchTasks}
+              >
                 <RefreshCw className="w-4 h-4" />
               </Button>
             </div>
@@ -467,22 +543,16 @@ export default function AIScheduledTasksPage() {
 
       {/* 错误提示 */}
       {error && (
-        <Card className={cn(
-          "border-destructive/50",
-          isGlass ? "glass-card" : "border border-border/50"
-        )}>
-          <CardContent className="flex items-center gap-3 p-4 text-destructive">
-            <AlertCircle className="w-5 h-5" />
-            <span>{error}</span>
-          </CardContent>
-        </Card>
+        <GlassAlert tone="danger" icon={AlertCircle}>
+          {error}
+        </GlassAlert>
       )}
 
       {/* 任务列表 */}
       {isLoading ? (
         <div className="space-y-4">
           {[1, 2, 3].map((i) => (
-            <Card key={i} className={cn(isGlass ? "glass-card" : "border border-border/50")}>
+            <Card key={i} className={cn('glass-card')}>
               <CardContent className="p-4">
                 <Skeleton className="h-20 w-full" />
               </CardContent>
@@ -490,19 +560,23 @@ export default function AIScheduledTasksPage() {
           ))}
         </div>
       ) : filteredTasks.length === 0 ? (
-        <Card className={cn(isGlass ? "glass-card" : "border border-border/50")}>
-          <CardContent className="flex flex-col items-center justify-center p-8 text-muted-foreground">
+        <Card className={cn('glass-card')}>
+          <CardContent className="flex flex-col items-center justify-center !p-8 text-center text-muted-foreground">
             <Clock className="w-12 h-12 mb-4 opacity-50" />
             <p className="text-lg font-medium">{t('aiScheduledTasks.noTasks')}</p>
             <p className="text-sm">{t('aiScheduledTasks.noTasksDescription')}</p>
           </CardContent>
         </Card>
       ) : (
-        <Card className={cn(isGlass ? "glass-card" : "border border-border/50")}>
-          <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0">
+        <Card className={cn('glass-card')}>
+          <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0 p-3.5 sm:px-5 sm:py-2.5">
             <div>
-              <CardTitle>{t('aiScheduledTasks.taskList')}</CardTitle>
-              <CardDescription>{t('aiScheduledTasks.taskListDescription')}</CardDescription>
+              <CardTitle className="text-base sm:text-lg">
+                {t('aiScheduledTasks.taskList')}
+              </CardTitle>
+              <CardDescription className="text-xs sm:text-sm">
+                {t('aiScheduledTasks.taskListDescription')}
+              </CardDescription>
             </div>
             <Button
               variant="destructive"
@@ -518,11 +592,21 @@ export default function AIScheduledTasksPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>{t('aiScheduledTasks.taskPrompt')}</TableHead>
-                  <TableHead className="hidden md:table-cell">{t('aiScheduledTasks.taskType')}</TableHead>
-                  <TableHead className="hidden lg:table-cell">{t('aiScheduledTasks.status')}</TableHead>
-                  <TableHead className="hidden lg:table-cell">{t('aiScheduledTasks.nextRunTime')}</TableHead>
-                  <TableHead className="text-right">{t('aiScheduledTasks.actions')}</TableHead>
+                  <TableHead className="py-2 px-3 sm:py-2.5 sm:px-4">
+                    {t('aiScheduledTasks.taskPrompt')}
+                  </TableHead>
+                  <TableHead className="hidden md:table-cell py-2 px-3 sm:py-2.5 sm:px-4">
+                    {t('aiScheduledTasks.taskType')}
+                  </TableHead>
+                  <TableHead className="hidden lg:table-cell py-2 px-3 sm:py-2.5 sm:px-4">
+                    {t('aiScheduledTasks.status')}
+                  </TableHead>
+                  <TableHead className="hidden lg:table-cell py-2 px-3 sm:py-2.5 sm:px-4">
+                    {t('aiScheduledTasks.nextRunTime')}
+                  </TableHead>
+                  <TableHead className="text-right py-2 px-3 sm:py-2.5 sm:px-4">
+                    {t('aiScheduledTasks.actions')}
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -532,32 +616,33 @@ export default function AIScheduledTasksPage() {
                     className="cursor-pointer hover:bg-muted/50"
                     onClick={() => openDetailDialog(task)}
                   >
-                    <TableCell>
+                    <TableCell className="py-2 px-3 sm:py-2.5 sm:px-4">
                       <div>
                         <p className="font-medium truncate max-w-[300px]">{task.task_prompt}</p>
-                        <p className="text-xs text-muted-foreground font-mono">
-                          {task.task_id}
-                        </p>
+                        <p className="text-xs text-muted-foreground font-mono">{task.task_id}</p>
                       </div>
                     </TableCell>
-                    <TableCell className="hidden md:table-cell">
+                    <TableCell className="hidden md:table-cell py-2 px-3 sm:py-2.5 sm:px-4">
                       <Badge variant="outline">
-                        {task.task_type === 'interval' 
+                        {task.task_type === 'interval'
                           ? t('aiScheduledTasks.taskTypeInterval')
                           : t('aiScheduledTasks.taskTypeOnce')}
                       </Badge>
                     </TableCell>
-                    <TableCell className="hidden lg:table-cell">
+                    <TableCell className="hidden lg:table-cell py-2 px-3 sm:py-2.5 sm:px-4">
                       {getStatusBadge(task.status)}
                     </TableCell>
-                    <TableCell className="hidden lg:table-cell">
+                    <TableCell className="hidden lg:table-cell py-2 px-3 sm:py-2.5 sm:px-4">
                       <div className="text-sm">
                         {task.next_run_time
                           ? format(new Date(task.next_run_time), 'MM-dd HH:mm', { locale: zhCN })
                           : '-'}
                       </div>
                     </TableCell>
-                    <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                    <TableCell
+                      className="text-right py-2 px-3 sm:py-2.5 sm:px-4"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       <div className="flex items-center justify-end gap-1">
                         {task.status === 'pending' && (
                           <Button
@@ -636,7 +721,9 @@ export default function AIScheduledTasksPage() {
               <Label>{t('aiScheduledTasks.taskType')}</Label>
               <Select
                 value={formData.task_type}
-                onValueChange={(value: 'once' | 'interval') => setFormData({ ...formData, task_type: value })}
+                onValueChange={(value: 'once' | 'interval') =>
+                  setFormData({ ...formData, task_type: value })
+                }
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -655,23 +742,32 @@ export default function AIScheduledTasksPage() {
                   <div className="flex gap-2">
                     <Select
                       value={formData.interval_type}
-                      onValueChange={(value: 'minutes' | 'hours' | 'days') => 
-                        setFormData({ ...formData, interval_type: value })}
+                      onValueChange={(value: 'minutes' | 'hours' | 'days') =>
+                        setFormData({ ...formData, interval_type: value })
+                      }
                     >
                       <SelectTrigger className="w-[120px]">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="minutes">{t('aiScheduledTasks.intervalMinutes').replace('{minutes}', '')}</SelectItem>
-                        <SelectItem value="hours">{t('aiScheduledTasks.intervalHours').replace('{hours}', '')}</SelectItem>
-                        <SelectItem value="days">{t('aiScheduledTasks.intervalDays').replace('{days}', '')}</SelectItem>
+                        <SelectItem value="minutes">
+                          {t('aiScheduledTasks.intervalMinutes').replace('{minutes}', '')}
+                        </SelectItem>
+                        <SelectItem value="hours">
+                          {t('aiScheduledTasks.intervalHours').replace('{hours}', '')}
+                        </SelectItem>
+                        <SelectItem value="days">
+                          {t('aiScheduledTasks.intervalDays').replace('{days}', '')}
+                        </SelectItem>
                       </SelectContent>
                     </Select>
                     <Input
                       type="number"
                       min={1}
                       value={formData.interval_value}
-                      onChange={(e) => setFormData({ ...formData, interval_value: parseInt(e.target.value) || 1 })}
+                      onChange={(e) =>
+                        setFormData({ ...formData, interval_value: parseInt(e.target.value) || 1 })
+                      }
                       className="flex-1"
                     />
                   </div>
@@ -683,10 +779,12 @@ export default function AIScheduledTasksPage() {
                     min={1}
                     placeholder={t('aiScheduledTasks.maxExecutionsPlaceholder')}
                     value={formData.max_executions || ''}
-                    onChange={(e) => setFormData({ 
-                      ...formData, 
-                      max_executions: e.target.value ? parseInt(e.target.value) : undefined 
-                    })}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        max_executions: e.target.value ? parseInt(e.target.value) : undefined,
+                      })
+                    }
                   />
                 </div>
               </>
@@ -696,10 +794,14 @@ export default function AIScheduledTasksPage() {
                 <Input
                   type="datetime-local"
                   value={formData.run_time?.replace(' ', 'T') || ''}
-                  onChange={(e) => setFormData({ 
-                    ...formData, 
-                    run_time: e.target.value ? e.target.value.replace('T', ' ') + ':00' : undefined 
-                  })}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      run_time: e.target.value
+                        ? e.target.value.replace('T', ' ') + ':00'
+                        : undefined,
+                    })
+                  }
                 />
               </div>
             )}
@@ -754,10 +856,12 @@ export default function AIScheduledTasksPage() {
                 min={1}
                 placeholder={t('aiScheduledTasks.maxExecutionsPlaceholder')}
                 value={formData.max_executions || ''}
-                onChange={(e) => setFormData({ 
-                  ...formData, 
-                  max_executions: e.target.value ? parseInt(e.target.value) : undefined 
-                })}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    max_executions: e.target.value ? parseInt(e.target.value) : undefined,
+                  })
+                }
               />
             </div>
           </div>
@@ -786,7 +890,7 @@ export default function AIScheduledTasksPage() {
           </DialogHeader>
           {selectedTask && (
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="space-y-1">
                   <p className="text-xs text-muted-foreground">{t('aiScheduledTasks.status')}</p>
                   {getStatusBadge(selectedTask.status)}
@@ -802,27 +906,37 @@ export default function AIScheduledTasksPage() {
                 <div className="space-y-1">
                   <p className="text-xs text-muted-foreground">{t('aiScheduledTasks.createdAt')}</p>
                   <p className="text-sm">
-                    {format(new Date(selectedTask.created_at), 'yyyy-MM-dd HH:mm:ss', { locale: zhCN })}
+                    {format(new Date(selectedTask.created_at), 'yyyy-MM-dd HH:mm:ss', {
+                      locale: zhCN,
+                    })}
                   </p>
                 </div>
                 <div className="space-y-1">
-                  <p className="text-xs text-muted-foreground">{t('aiScheduledTasks.nextRunTime')}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {t('aiScheduledTasks.nextRunTime')}
+                  </p>
                   <p className="text-sm">
                     {selectedTask.next_run_time
-                      ? format(new Date(selectedTask.next_run_time), 'yyyy-MM-dd HH:mm:ss', { locale: zhCN })
+                      ? format(new Date(selectedTask.next_run_time), 'yyyy-MM-dd HH:mm:ss', {
+                          locale: zhCN,
+                        })
                       : '-'}
                   </p>
                 </div>
                 {selectedTask.task_type === 'interval' && (
                   <>
                     <div className="space-y-1">
-                      <p className="text-xs text-muted-foreground">{t('aiScheduledTasks.interval')}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {t('aiScheduledTasks.interval')}
+                      </p>
                       <p className="text-sm">{formatInterval(selectedTask.interval_seconds)}</p>
                     </div>
                     <div className="space-y-1">
-                      <p className="text-xs text-muted-foreground">{t('aiScheduledTasks.maxExecutions')}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {t('aiScheduledTasks.maxExecutions')}
+                      </p>
                       <p className="text-sm">
-                        {selectedTask.max_executions > 0 
+                        {selectedTask.max_executions > 0
                           ? `${selectedTask.current_executions} / ${selectedTask.max_executions}`
                           : `${selectedTask.current_executions} / ∞`}
                       </p>
@@ -838,29 +952,25 @@ export default function AIScheduledTasksPage() {
                   <p className="text-sm font-mono text-xs truncate">{selectedTask.session_id}</p>
                 </div>
               </div>
-              
+
               <div className="space-y-1">
                 <p className="text-xs text-muted-foreground">{t('aiScheduledTasks.taskPrompt')}</p>
-                <div className="p-3 bg-muted/50 rounded-md text-sm">
-                  {selectedTask.task_prompt}
-                </div>
+                <div className="p-3 bg-muted/50 rounded-md text-sm">{selectedTask.task_prompt}</div>
               </div>
 
               {selectedTask.error_message && (
                 <div className="space-y-1">
-                  <p className="text-xs text-muted-foreground">{t('aiScheduledTasks.errorMessage')}</p>
-                  <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-md text-sm text-destructive">
-                    {selectedTask.error_message}
-                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {t('aiScheduledTasks.errorMessage')}
+                  </p>
+                  <GlassAlert tone="danger">{selectedTask.error_message}</GlassAlert>
                 </div>
               )}
 
               {selectedTask.result && (
                 <div className="space-y-1">
                   <p className="text-xs text-muted-foreground">{t('aiScheduledTasks.result')}</p>
-                  <div className="p-3 bg-muted/50 rounded-md text-sm">
-                    {selectedTask.result}
-                  </div>
+                  <div className="p-3 bg-muted/50 rounded-md text-sm">{selectedTask.result}</div>
                 </div>
               )}
 

@@ -2,12 +2,12 @@
   "title": "插件商城",
   "description": "浏览、安装和管理系统插件",
   "refresh": "刷新",
-  "searchPlugin": "搜索插件名称、描述或标签...",
-  "allPlugins": "全部插件",
+  "searchPlugin": "搜索名称、描述或标签...",
+  "allPlugins": "全部",
   "installed": "已安装",
   "updates": "可更新",
-  "funPlugins": "娱乐插件",
-  "toolPlugins": "工具插件",
+  "funPlugins": "娱乐",
+  "toolPlugins": "工具",
   "noMatchedPlugins": "没有找到匹配的插件",
   "noInstalledPlugins": "还没有安装任何插件",
   "allPluginsUpdated": "所有插件都是最新版本",
@@ -54,8 +54,5 @@
   "urlProtocolInvalid": "仅支持 http(s) / ssh / git@ 开头的 URL",
   "urlRequired": "请填写仓库 URL",
   "cancel": "取消",
-  "installing": "安装中...",
-  "statTotal": "全部",
-  "statInstalled": "已安装",
-  "statUpdates": "可更新"
+  "installing": "安装中..."
 }

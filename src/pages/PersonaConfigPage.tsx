@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { cn } from '@/lib/utils';
@@ -9,7 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
 import {
   Select,
   SelectContent,
@@ -21,6 +22,7 @@ import { ConfigGrid, TagsInput, pluginConfigItemToFieldDef } from '@/components/
 import type { ConfigFormData, ConfigValue } from '@/components/config';
 import { CheckListField } from '@/components/config/CheckListField';
 import { LabelWithHelp } from '@/components/ui/label-with-help';
+import { Slider } from '@/components/ui/slider';
 import {
   Dialog,
   DialogContent,
@@ -58,6 +60,9 @@ import {
   User,
   Check,
   Brain,
+  Bot,
+  RefreshCw,
+  Search,
   Image as ImageIcon,
   Music,
   FileText,
@@ -77,11 +82,14 @@ import {
   MessageCircle,
   MessagesSquare,
   Clock,
-  Target,
-  HelpCircle,
+  Compass,
   X,
   Layers,
+  ScrollText,
+  AlignLeft,
+  Smile,
 } from 'lucide-react';
+import { PersonaMemePackTab } from '@/components/persona/PersonaMemePackTab';
 // 支持的音频格式
 const SUPPORTED_AUDIO_FORMATS = ['mp3', 'ogg', 'wav', 'm4a', 'flac'];
 const SUPPORTED_AUDIO_MIME_TYPES = [
@@ -96,6 +104,7 @@ const SUPPORTED_AUDIO_MIME_TYPES = [
 import {
   getApiErrorMessage,
   personaApi,
+  promptGroupApi,
   frameworkConfigApi,
   capabilityAgentsApi,
   type AgentNodeItem,
@@ -104,11 +113,30 @@ import {
   type PersonaConfig,
   type PersonaScope,
   type AIMode,
+  type AutonomyCareZone,
   type PluginConfigItem,
   type PersonaToolCatalog,
+  type SpeechShapeSpec,
 } from '@/lib/api';
+import { FALLBACK_SPEECH_SHAPE, SPEECH_SOFT_MAX, SPEECH_SOFT_MIN } from '@/lib/speechShape';
 import { toast } from 'sonner';
 import { PinnedPage } from '@/components/layout/PinnedPage';
+import { GlassAlert } from '@/components/ui/glass-alert';
+import {
+  TabButtonGroup,
+  tabToolbarControlClass,
+  tabToolbarGroupWrapClass,
+} from '@/components/ui/TabButtonGroup';
+import {
+  activePromptGroupLines,
+  DEFAULT_PROMPT_GROUP,
+} from '@/components/persona/activePromptGroups';
+import {
+  PromptGroupPanel,
+  type PromptGroupPanelHandle,
+} from '@/components/persona/PromptGroupPanel';
+import { CapabilityAgentsPanel } from '@/components/persona/CapabilityAgentsPanel';
+import { useCapabilityAgents } from '@/components/persona/useCapabilityAgents';
 import { enabledIdsToSpec, specToEnabledIds } from '@/lib/capabilityAgentAllowlist';
 import { enabledPluginsToSpec, specToEnabledPlugins } from '@/lib/personaToolScope';
 import { PersonaToolScopeEditor } from '@/components/persona/PersonaToolScopeEditor';
@@ -127,7 +155,6 @@ const AI_MODE_OPTIONS: {
   label: string;
   icon: React.ReactNode;
   description: string;
-  disabled?: boolean;
 }[] = [
   {
     value: '提及应答',
@@ -142,18 +169,16 @@ const AI_MODE_OPTIONS: {
     description: '定时检查处理任务',
   },
   {
-    value: '趣向捕捉(暂不可用)',
-    label: '趣向捕捉',
-    icon: <Target className="w-4 h-4" />,
-    description: '识别响应特定内容',
-    disabled: true,
+    value: '命令补充',
+    label: '命令补充',
+    icon: <MessageCircle className="w-4 h-4" />,
+    description: '命令返回后再补一句',
   },
   {
-    value: '困境救场(暂不可用)',
-    label: '困境救场',
-    icon: <HelpCircle className="w-4 h-4" />,
-    description: '群友遇困时帮助',
-    disabled: true,
+    value: '自主行动',
+    label: '自主行动',
+    icon: <Compass className="w-4 h-4" />,
+    description: '空闲时自己看一眼，再决定要不要说',
   },
 ];
 const SCOPE_OPTIONS: {
@@ -194,7 +219,7 @@ const SCOPE_OPTIONS: {
   },
 ];
 const CONFIG_OPTION_BUTTON =
-  'flex items-center gap-2.5 px-3 py-2 rounded-lg border-2 transition-all text-left min-h-[3.5rem]';
+  'flex items-center gap-2.5 px-3 py-2 rounded-lg border-2 transition-colors text-left min-h-[3.5rem]';
 /** 常驻直装工具名：每轮必然在场，白名单里默认勾上，其余工具才需要用户显式钉。 */
 function collectAlwaysMountedTools(catalog: PersonaToolCatalog | null): string[] {
   if (!catalog) return [];
@@ -277,6 +302,20 @@ function getScopeBadgeStyle(scope: PersonaScope) {
       return 'bg-gray-500/15 text-gray-500 border border-gray-500/30';
   }
 }
+function speechShapeOf(config: PersonaConfig | undefined): SpeechShapeSpec {
+  const shape = config?.speech_shape;
+  if (!shape || shape.tiers.length === 0) return FALLBACK_SPEECH_SHAPE;
+  return shape;
+}
+
+function boundInt(raw: string, min: number, max: number, fallback: number): number {
+  if (!/^\d+$/.test(raw)) return fallback;
+  const value = Number(raw);
+  if (value < min) return min;
+  if (value > max) return max;
+  return value;
+}
+
 function getScopeLabel(scope: PersonaScope, t: (key: string) => string) {
   switch (scope) {
     case 'global':
@@ -295,10 +334,282 @@ function getScopeLabel(scope: PersonaScope, t: (key: string) => string) {
 // ============================================================================
 // 组件定义
 // ============================================================================
-export default function PersonaConfigPage() {
-  const { style, cardOpacity, blurIntensity } = useTheme();
+function clampProbability(value: number, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  const stepped = Math.round(value * 20) / 20;
+  return Math.min(1, Math.max(0, stepped));
+}
+
+function formatProbability(value: number): string {
+  return String(Math.round(value * 100) / 100);
+}
+
+const ASIDE_IMAGE_DEFAULT = 0.2;
+const ASIDE_TEXT_DEFAULT = 0.35;
+const ASIDE_MIXED_DEFAULT = 0.25;
+const ACTIVE_HOURS_DEFAULT = ['08:00-23:30'];
+const AUTONOMY_INTERVAL_DEFAULT = 45;
+const TIMEZONE_OPTIONS = [
+  'Asia/Shanghai',
+  'Asia/Hong_Kong',
+  'Asia/Taipei',
+  'Asia/Tokyo',
+  'Asia/Seoul',
+  'Asia/Singapore',
+  'Asia/Bangkok',
+  'Asia/Dubai',
+  'Europe/London',
+  'Europe/Paris',
+  'Europe/Berlin',
+  'Europe/Moscow',
+  'America/New_York',
+  'America/Chicago',
+  'America/Los_Angeles',
+  'America/Sao_Paulo',
+  'Australia/Sydney',
+  'Pacific/Auckland',
+  'UTC',
+];
+
+function timezoneChoices(current: string): string[] {
+  if (TIMEZONE_OPTIONS.includes(current)) return TIMEZONE_OPTIONS;
+  return [current, ...TIMEZONE_OPTIONS];
+}
+
+function boundedInt(raw: string, low: number, high: number, fallback: number): number {
+  const value = Number.parseInt(raw, 10);
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(high, Math.max(low, value));
+}
+
+function knownAIModes(modes: readonly string[] | undefined): AIMode[] {
+  if (!modes) return [];
+  const known = new Set<string>(AI_MODE_OPTIONS.map((mode) => mode.value));
+  const out: AIMode[] = [];
+  for (const mode of modes) {
+    let item = mode;
+    if (mode === '余韵点评' || mode === '命令接话') item = '命令补充';
+    if (mode === '自由活动') item = '自主行动';
+    if (!known.has(item)) continue;
+    if (out.includes(item as AIMode)) continue;
+    out.push(item as AIMode);
+  }
+  return out;
+}
+
+function asideBadge(config: PersonaConfig | undefined, toolsMark: string): string {
+  const image = Math.round((config?.aside_image_probability ?? ASIDE_IMAGE_DEFAULT) * 100);
+  const text = Math.round((config?.aside_text_probability ?? ASIDE_TEXT_DEFAULT) * 100);
+  const mixed = Math.round((config?.aside_mixed_probability ?? ASIDE_MIXED_DEFAULT) * 100);
+  const probs = `${image}·${text}·${mixed}`;
+  return toolsMark ? `${probs}·${toolsMark}` : probs;
+}
+
+function SpeechSliderField({
+  id,
+  icon,
+  label,
+  description,
+  raw,
+  min,
+  max,
+  fallback,
+  onChange,
+}: {
+  id: string;
+  icon?: ReactNode;
+  label: string;
+  description: string;
+  raw: string;
+  min: number;
+  max: number;
+  fallback: number;
+  onChange: (value: string) => void;
+}) {
+  const value = boundInt(raw, min, max, fallback);
+  return (
+    <div className="space-y-3">
+      <LabelWithHelp
+        htmlFor={id}
+        icon={icon}
+        label={label}
+        description={description}
+        className="text-base font-medium"
+      />
+      <div className="flex items-center gap-3">
+        <Slider
+          aria-label={label}
+          className="min-w-0 flex-1"
+          min={min}
+          max={max}
+          step={1}
+          value={[value]}
+          onValueChange={(next) => {
+            const picked = next[0];
+            if (picked !== undefined) onChange(String(picked));
+          }}
+        />
+        <Input
+          id={id}
+          inputMode="numeric"
+          aria-label={label}
+          min={min}
+          max={max}
+          value={raw}
+          onChange={(event) => onChange(event.target.value.replace(/\D/g, ''))}
+          onBlur={() => onChange(String(value))}
+          className="h-10 w-16 shrink-0 px-2 text-center tabular-nums"
+        />
+      </div>
+    </div>
+  );
+}
+
+function ProbabilityField({
+  id,
+  label,
+  value,
+  disabled,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  value: number;
+  disabled: boolean;
+  onChange: (value: number) => void;
+}) {
+  const [raw, setRaw] = useState(formatProbability(value));
+  useEffect(() => {
+    setRaw(formatProbability(value));
+  }, [value]);
+  return (
+    <div className={cn('space-y-2', disabled && 'opacity-50')}>
+      <Label htmlFor={id} className="text-sm">
+        {label}
+      </Label>
+      <div className="flex items-center gap-3">
+        <Slider
+          aria-label={label}
+          disabled={disabled}
+          className="min-w-0 flex-1"
+          min={0}
+          max={1}
+          step={0.05}
+          value={[value]}
+          onValueChange={(next) => {
+            const picked = next[0];
+            if (picked !== undefined) onChange(clampProbability(picked, value));
+          }}
+        />
+        <Input
+          id={id}
+          disabled={disabled}
+          inputMode="decimal"
+          aria-label={label}
+          min={0}
+          max={1}
+          step={0.05}
+          value={raw}
+          onChange={(event) => setRaw(event.target.value)}
+          onBlur={() => {
+            const parsed = clampProbability(Number(raw), value);
+            onChange(parsed);
+            setRaw(formatProbability(parsed));
+          }}
+          className="h-10 w-16 shrink-0 px-2 text-center tabular-nums"
+        />
+      </div>
+    </div>
+  );
+}
+
+function SpeechFields({
+  shape,
+  chatStyleText,
+  speechSoftText,
+  onChatStyleText,
+  onSpeechSoftText,
+}: {
+  shape: SpeechShapeSpec;
+  chatStyleText: string;
+  speechSoftText: string;
+  onChatStyleText: (value: string) => void;
+  onSpeechSoftText: (value: string) => void;
+}) {
   const { t } = useLanguage();
-  const isGlass = style === 'glassmorphism';
+  return (
+    <div className="grid gap-4 sm:grid-cols-2">
+      <SpeechSliderField
+        id="persona-chat-style"
+        icon={<MessagesSquare className="h-4 w-4" />}
+        label={t('personaConfig.chatStyle')}
+        description={t('personaConfig.chatStyleHint')}
+        raw={chatStyleText}
+        min={shape.chat_style_min}
+        max={shape.chat_style_max}
+        fallback={50}
+        onChange={onChatStyleText}
+      />
+      <SpeechSliderField
+        id="persona-speech-soft"
+        icon={<AlignLeft className="h-4 w-4" />}
+        label={t('personaConfig.speechSoft')}
+        description={t('personaConfig.speechSoftHint', { count: shape.soft_default })}
+        raw={speechSoftText}
+        min={SPEECH_SOFT_MIN}
+        max={SPEECH_SOFT_MAX}
+        fallback={shape.soft_default}
+        onChange={onSpeechSoftText}
+      />
+    </div>
+  );
+}
+
+export default function PersonaConfigPage() {
+  const { style, mode } = useTheme();
+  const sheetOverlay = mode === 'dark' ? 'bg-black/50' : 'bg-white/40';
+  const promptPanelRef = useRef<PromptGroupPanelHandle>(null);
+  const { t } = useLanguage();
+  const isGlass = style !== 'solid';
+  const [searchParams, setSearchParams] = useSearchParams();
+  const rawTab = searchParams.get('tab');
+  const initialTab =
+    rawTab === 'capability-agents' || rawTab === 'capabilityAgents'
+      ? 'capabilityAgents'
+      : rawTab === 'prompts'
+        ? 'prompts'
+        : 'personas';
+  const [libraryView, setLibraryViewState] = useState<'prompts' | 'personas' | 'capabilityAgents'>(
+    initialTab,
+  );
+
+  const setLibraryView = useCallback(
+    (next: 'prompts' | 'personas' | 'capabilityAgents') => {
+      setLibraryViewState(next);
+      setSearchParams(
+        next === 'capabilityAgents'
+          ? { tab: 'capability-agents' }
+          : next === 'prompts'
+            ? { tab: 'prompts' }
+            : {},
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
+  useEffect(() => {
+    const tabParam = searchParams.get('tab');
+    if (tabParam === 'capability-agents' || tabParam === 'capabilityAgents') {
+      setLibraryViewState('capabilityAgents');
+    } else if (tabParam === 'prompts') {
+      setLibraryViewState('prompts');
+    } else {
+      setLibraryViewState('personas');
+    }
+  }, [searchParams]);
+
+  const capability = useCapabilityAgents();
   // 状态
   const [personaList, setPersonaList] = useState<PersonaListItem[]>([]);
   const [personaDetails, setPersonaDetails] = useState<Record<string, PersonaCardData>>({});
@@ -331,15 +642,33 @@ export default function PersonaConfigPage() {
   // 编辑对话框状态
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editingPersona, setEditingPersona] = useState<PersonaCardData | null>(null);
+  const builtinPersona = editingPersona?.builtin === true || editingPersona?.name === '早柚';
+  const [promptGroupNames, setPromptGroupNames] = useState<string[]>(['默认']);
+  const [editingPromptGroup, setEditingPromptGroup] = useState('默认');
+  const [speechShape, setSpeechShape] = useState<SpeechShapeSpec>(FALLBACK_SPEECH_SHAPE);
+  const [chatStyleText, setChatStyleText] = useState('50');
+  const [speechSoftText, setSpeechSoftText] = useState('60');
   const [editContent, setEditContent] = useState('');
   const [editingGroups, setEditingGroups] = useState<string[]>([]);
   const [editingAIModes, setEditingAIModes] = useState<AIMode[]>([]);
   const [editingScope, setEditingScope] = useState<PersonaScope>('disabled');
   const [editingInspectInterval, setEditingInspectInterval] = useState<number>(10);
   const [editingKeywords, setEditingKeywords] = useState<string[]>([]);
-  // 两个字段都由 AI 行动模式带出，同现时要并排一行：提前算出来供布局判断
+  const [asideImage, setAsideImage] = useState(ASIDE_IMAGE_DEFAULT);
+  const [asideText, setAsideText] = useState(ASIDE_TEXT_DEFAULT);
+  const [asideMixed, setAsideMixed] = useState(ASIDE_MIXED_DEFAULT);
+  const [asideAllowTools, setAsideAllowTools] = useState(false);
+  const [activeHours, setActiveHours] = useState<string[]>(ACTIVE_HOURS_DEFAULT);
+  const [timezone, setTimezone] = useState('Asia/Shanghai');
+  const [autonomyInterval, setAutonomyInterval] = useState(AUTONOMY_INTERVAL_DEFAULT);
+  const [careMinZone, setCareMinZone] = useState<AutonomyCareZone>('familiar');
+  const [allowMemeReply, setAllowMemeReply] = useState(true);
+  // 字段都由 AI 行动模式带出。关掉时不隐藏、只冻结，避免这一行塌掉。
   const showInspectInterval = editingAIModes.includes('定时巡检');
   const showTriggerKeywords = editingAIModes.includes('提及应答');
+  const showAside = editingAIModes.includes('命令补充');
+  const showAutonomy = editingAIModes.includes('自主行动');
+  const showActiveHours = showInspectInterval || showAutonomy;
   const [editingToolNames, setEditingToolNames] = useState<string[]>([]);
   const [editingEnabledPlugins, setEditingEnabledPlugins] = useState<string[]>([]);
   const [toolCatalog, setToolCatalog] = useState<PersonaToolCatalog | null>(null);
@@ -380,11 +709,11 @@ export default function PersonaConfigPage() {
   const [resourceTimestamp, setResourceTimestamp] = useState<number>(Date.now());
   // 获取启用人格列表
   const enabledPersonas = useMemo(() => {
-    return frameworkConfig?.config.enable_persona.value || [];
+    return frameworkConfig?.config?.enable_persona?.value || [];
   }, [frameworkConfig]);
   // 获取人格对应的群聊映射
   const personaGroupsMap = useMemo(() => {
-    return frameworkConfig?.config.persona_for_session.value || {};
+    return frameworkConfig?.config?.persona_for_session?.value || {};
   }, [frameworkConfig]);
   // 可委派能力代理：列表项（node_id 为主键，display_name 兜底）
   const capabilityAgentItems = useMemo(
@@ -409,6 +738,22 @@ export default function PersonaConfigPage() {
       };
     });
   }, [personaList, enabledPersonas, personaGroupsMap, personaDetails, personaConfigs]);
+  const activePromptLines = useMemo(
+    () =>
+      activePromptGroupLines(
+        personaCards.map((persona) => ({
+          name: persona.name,
+          enabled: persona.enabled,
+          promptGroup: persona.config?.prompt_group,
+        })),
+      ),
+    [personaCards],
+  );
+  const activeByGroup = useMemo(() => {
+    const grouped: Record<string, string[]> = {};
+    for (const line of activePromptLines) grouped[line.group] = line.names;
+    return grouped;
+  }, [activePromptLines]);
   // 加载人格列表和框架配置
   const loadData = useCallback(async () => {
     try {
@@ -430,6 +775,12 @@ export default function PersonaConfigPage() {
       setPersonaList(listData);
       setFrameworkConfig(frameworkData);
       setPersonaConfigs(allConfigs);
+      try {
+        const groups = await promptGroupApi.list();
+        setPromptGroupNames(groups.map((group) => group.name));
+      } catch {
+        setPromptGroupNames(['默认']);
+      }
       if (hbStatus?.items) {
         const map: typeof heartbeatStatus = {};
         for (const item of hbStatus.items) {
@@ -708,10 +1059,52 @@ export default function PersonaConfigPage() {
     setEditingPersona(persona);
     setEditContent(persona.content);
     setEditingGroups([...persona.groups]);
-    setEditingAIModes(persona.config?.ai_mode || []);
+    setEditingAIModes(knownAIModes(persona.config?.ai_mode));
     setEditingScope(persona.config?.scope || 'disabled');
+    setEditingPromptGroup(persona.config?.prompt_group || '默认');
+    const shape = speechShapeOf(persona.config);
+    setSpeechShape(shape);
+    setChatStyleText(String(persona.config?.chat_style ?? 50));
+    setSpeechSoftText(
+      String(
+        boundInt(
+          String(persona.config?.speech_len_soft ?? shape.soft_default),
+          SPEECH_SOFT_MIN,
+          SPEECH_SOFT_MAX,
+          shape.soft_default,
+        ),
+      ),
+    );
     setEditingInspectInterval(persona.config?.inspect_interval || 10);
     setEditingKeywords(persona.config?.keywords || []);
+    setAsideImage(
+      clampProbability(
+        persona.config?.aside_image_probability ?? ASIDE_IMAGE_DEFAULT,
+        ASIDE_IMAGE_DEFAULT,
+      ),
+    );
+    setAsideText(
+      clampProbability(
+        persona.config?.aside_text_probability ?? ASIDE_TEXT_DEFAULT,
+        ASIDE_TEXT_DEFAULT,
+      ),
+    );
+    setAsideMixed(
+      clampProbability(
+        persona.config?.aside_mixed_probability ?? ASIDE_MIXED_DEFAULT,
+        ASIDE_MIXED_DEFAULT,
+      ),
+    );
+    setAsideAllowTools(persona.config?.aside_allow_tools === true);
+    setActiveHours(
+      persona.config?.active_hours && persona.config.active_hours.length > 0
+        ? persona.config.active_hours
+        : ACTIVE_HOURS_DEFAULT,
+    );
+    setTimezone(persona.config?.timezone || 'Asia/Shanghai');
+    setAutonomyInterval(persona.config?.autonomy_interval_minutes ?? AUTONOMY_INTERVAL_DEFAULT);
+    setCareMinZone(persona.config?.autonomy_care_min_zone === 'close' ? 'close' : 'familiar');
+    setAllowMemeReply(persona.config?.allow_meme_reply !== false);
     // 常驻直装工具默认就在白名单里：每轮必然在场，不必让用户手动勾一遍
     const configuredToolNames = persona.config?.tool_names ?? [];
     setEditingToolNames(
@@ -890,11 +1283,25 @@ export default function PersonaConfigPage() {
       }
       // 保存 AI 模式和启用范围配置
       await personaApi.updatePersonaConfig(editingPersona.name, {
-        ai_mode: editingAIModes,
+        ai_mode: knownAIModes(editingAIModes),
         scope: editingScope,
         target_groups: editingGroups,
         inspect_interval: editingInspectInterval,
         keywords: editingKeywords,
+        aside_image_probability: asideImage,
+        aside_text_probability: asideText,
+        aside_mixed_probability: asideMixed,
+        aside_allow_tools: asideAllowTools,
+        active_hours: activeHours,
+        timezone: timezone.trim(),
+        autonomy_interval_minutes: boundedInt(
+          String(autonomyInterval),
+          15,
+          720,
+          AUTONOMY_INTERVAL_DEFAULT,
+        ),
+        autonomy_care_min_zone: careMinZone,
+        allow_meme_reply: allowMemeReply,
         ...(toolCatalog && toolCatalog.plugins.length > 0
           ? {
               enabled_tools: enabledPluginsToSpec(
@@ -904,6 +1311,19 @@ export default function PersonaConfigPage() {
             }
           : {}),
         tool_names: editingToolNames,
+        prompt_group: editingPromptGroup,
+        chat_style: boundInt(
+          chatStyleText,
+          speechShape.chat_style_min,
+          speechShape.chat_style_max,
+          50,
+        ),
+        speech_len_soft: boundInt(
+          speechSoftText,
+          SPEECH_SOFT_MIN,
+          SPEECH_SOFT_MAX,
+          speechShape.soft_default,
+        ),
         ...(delegableAgents.length > 0
           ? {
               capability_agents: enabledIdsToSpec(
@@ -914,7 +1334,7 @@ export default function PersonaConfigPage() {
           : {}),
       });
       // 保存 Markdown 内容（仅在内容发生变化时）
-      if (editContent !== editingPersona.content) {
+      if (!builtinPersona && editContent !== editingPersona.content) {
         await personaApi.updatePersonaContent(editingPersona.name, editContent);
       }
       if (settingsLoaded) {
@@ -933,7 +1353,7 @@ export default function PersonaConfigPage() {
       await loadData();
     } catch (error) {
       console.error('Failed to save persona:', error);
-      toast.error(t('personaConfig.saveFailed'));
+      toast.error(getApiErrorMessage(error, t('personaConfig.saveFailed')));
     } finally {
       setIsSaving(false);
     }
@@ -1055,7 +1475,7 @@ export default function PersonaConfigPage() {
     const imageUrl = personaApi.getImageUrl(persona.name, resourceTimestamp);
     const hasImage = persona.has_image;
     const scope = persona.config?.scope || 'disabled';
-    const aiModes = persona.config?.ai_mode || [];
+    const aiModes = knownAIModes(persona.config?.ai_mode);
     const inspectInterval = persona.config?.inspect_interval;
     const hb = heartbeatStatus[persona.name];
     return (
@@ -1063,20 +1483,19 @@ export default function PersonaConfigPage() {
         key={persona.name}
         onClick={() => handleCardClick(persona)}
         className={cn(
-          'relative transition-all duration-300 cursor-pointer group',
-          'hover:shadow-xl hover:scale-[1.02]',
-          // 毛玻璃效果 + 红色主题边框
-          isGlass
-            ? 'glass-card border border-primary/20 hover:border-primary/40'
-            : 'border border-primary/30 hover:border-primary/50 bg-card',
+          'relative min-w-0 cursor-pointer transition-colors duration-300 group',
+          'glass-card border border-primary/20 hover:border-primary/40',
         )}
       >
-        {/* 立绘背景层 */}
+        {/* 立绘贴边铺满。宿主不能 overflow-hidden（会把玻璃阴影切成直角），
+            圆角裁切放在这一层。 */}
         {hasImage && (
-          <div className="absolute inset-0 z-0">
+          <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-[inherit]">
             <img
               src={imageUrl}
               alt=""
+              loading="lazy"
+              decoding="async"
               className={cn(
                 'w-full h-full object-cover transition-opacity',
                 isGlass ? 'opacity-30 group-hover:opacity-40' : 'opacity-15 group-hover:opacity-20',
@@ -1085,17 +1504,10 @@ export default function PersonaConfigPage() {
                 (e.target as HTMLImageElement).style.display = 'none';
               }}
             />
-            <div
-              className={cn(
-                'absolute inset-0 bg-gradient-to-t',
-                isGlass
-                  ? 'from-background/80 via-background/50 to-background/30'
-                  : 'from-background via-background/90 to-background/60',
-              )}
-            />
+            <div className="persona-card-image-fade absolute inset-0" />
           </div>
         )}
-        <CardContent className="relative z-10 p-4 flex flex-col h-full gap-3">
+        <CardContent className="relative z-10 flex h-full flex-col gap-3 p-4 sm:p-6">
           {/* === 区域1: 头像和基本信息 === */}
           <div className="flex items-center gap-3">
             {/* 头像 - 带红色主题边框 */}
@@ -1113,6 +1525,8 @@ export default function PersonaConfigPage() {
                 <img
                   src={avatarUrl}
                   alt={persona.name}
+                  loading="lazy"
+                  decoding="async"
                   className="w-full h-full object-cover"
                   onError={(e) => {
                     (e.target as HTMLImageElement).style.display = 'none';
@@ -1141,20 +1555,22 @@ export default function PersonaConfigPage() {
                       <Copy className="h-4 w-4" />
                     )}
                   </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={(e) => handleDeleteClick(e, persona.name)}
-                    className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                    disabled={isDeleting === persona.name || isCopying === persona.name}
-                    title={t('personaConfig.deleteConfirm')}
-                  >
-                    {isDeleting === persona.name ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Trash2 className="h-4 w-4" />
-                    )}
-                  </Button>
+                  {persona.builtin !== true && persona.name !== '早柚' && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={(e) => handleDeleteClick(e, persona.name)}
+                      className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                      disabled={isDeleting === persona.name || isCopying === persona.name}
+                      title={t('personaConfig.deleteConfirm')}
+                    >
+                      {isDeleting === persona.name ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-4 w-4" />
+                      )}
+                    </Button>
+                  )}
                 </div>
               </div>
               {/* Heartbeat 运行态 */}
@@ -1202,6 +1618,11 @@ export default function PersonaConfigPage() {
                   </Badge>
                 )}
               </div>
+              <p className="mt-1 truncate text-xs text-muted-foreground">
+                {t('personaConfig.personaPromptGroupLine', {
+                  name: persona.config?.prompt_group?.trim() || DEFAULT_PROMPT_GROUP,
+                })}
+              </p>
             </div>
           </div>
           {/* === 区域2: 内容预览 === */}
@@ -1259,7 +1680,12 @@ export default function PersonaConfigPage() {
                 >
                   {/* 图标槽两格叠放：缺失态默认 X，悬浮换成「+」与「添加」文案配套 */}
                   <span className="grid h-3 w-3 shrink-0 place-items-center">
-                    <span className={cn('col-start-1 row-start-1', !has && 'group-hover/pill:invisible')}>
+                    <span
+                      className={cn(
+                        'col-start-1 row-start-1',
+                        !has && 'group-hover/pill:invisible',
+                      )}
+                    >
                       {has ? <Icon className="w-3 h-3" /> : <X className="w-3 h-3" />}
                     </span>
                     {!has && (
@@ -1270,7 +1696,9 @@ export default function PersonaConfigPage() {
                   </span>
                   {/* 文案槽两格叠放：默认资源名 → 悬浮「添加/替换」；同格堆叠保证胶囊宽度不跳动 */}
                   <span className="hidden sm:grid">
-                    <span className="col-start-1 row-start-1 group-hover/pill:invisible">{label}</span>
+                    <span className="col-start-1 row-start-1 group-hover/pill:invisible">
+                      {label}
+                    </span>
                     <span className="col-start-1 row-start-1 invisible group-hover/pill:visible">
                       {hoverLabel}
                     </span>
@@ -1287,7 +1715,7 @@ export default function PersonaConfigPage() {
                 {t('personaConfig.enableScope')}
               </Label>
             </div>
-            {/* 5 个范围挤窄卡片，flex-wrap 必折成 4+1：改 5 等分栅格锁死一行（极端窄卡文案可两行，按钮不换行） */}
+            {/* 5 个范围挤窄卡片：5 等分锁死一行；文案强制单行，超出省略 */}
             <div className="grid grid-cols-5 gap-1">
               {SCOPE_OPTIONS.map((option) => (
                 <button
@@ -1296,7 +1724,7 @@ export default function PersonaConfigPage() {
                   onClick={() => handleScopeChange(persona.name, option.value)}
                   disabled={isSavingConfig}
                   className={cn(
-                    'flex items-center justify-center gap-1 px-1 py-1.5 rounded-full text-[10px] font-medium leading-tight transition-all',
+                    'flex min-w-0 items-center justify-center gap-1 px-1 py-2.5 sm:py-1.5 rounded-full text-[10px] font-medium leading-tight transition-all',
                     'border',
                     scope === option.value
                       ? 'bg-primary/15 text-primary border-primary/40 shadow-sm'
@@ -1306,7 +1734,7 @@ export default function PersonaConfigPage() {
                   <span className="flex h-3 w-3 shrink-0 items-center justify-center [&_svg]:h-3 [&_svg]:w-3">
                     {option.icon}
                   </span>
-                  <span className="min-w-0">{t(option.labelKey)}</span>
+                  <span className="min-w-0 truncate">{t(option.labelKey)}</span>
                 </button>
               ))}
             </div>
@@ -1326,9 +1754,7 @@ export default function PersonaConfigPage() {
                   <button
                     key={mode.value}
                     type="button"
-                    disabled={mode.disabled}
                     onClick={() => {
-                      if (mode.disabled) return;
                       const newModes = isSelected
                         ? aiModes.filter((m) => m !== mode.value)
                         : [...aiModes, mode.value];
@@ -1336,7 +1762,6 @@ export default function PersonaConfigPage() {
                     }}
                     className={cn(
                       'relative flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-sans font-medium text-left transition-all border',
-                      mode.disabled && 'opacity-40 cursor-not-allowed',
                       isSelected
                         ? 'bg-primary/15 text-primary border-primary/40 shadow-sm'
                         : 'bg-transparent text-muted-foreground border-border/30 hover:bg-muted/30 hover:border-border/50',
@@ -1349,6 +1774,25 @@ export default function PersonaConfigPage() {
                     {mode.value === '定时巡检' && isSelected && inspectInterval && (
                       <span className="shrink-0 text-[10px] font-medium text-primary/70">
                         {inspectInterval}
+                        {t('personaConfig.minutesUnit')}
+                      </span>
+                    )}
+                    {mode.value === '命令补充' && isSelected && (
+                      <span
+                        title={t('personaConfig.asideBadgeHint')}
+                        className="shrink-0 text-[10px] font-medium text-primary/70"
+                      >
+                        {asideBadge(
+                          persona.config,
+                          persona.config?.aside_allow_tools
+                            ? t('personaConfig.asideToolsShort')
+                            : '',
+                        )}
+                      </span>
+                    )}
+                    {mode.value === '自主行动' && isSelected && (
+                      <span className="shrink-0 text-[10px] font-medium text-primary/70">
+                        {persona.config?.autonomy_interval_minutes ?? AUTONOMY_INTERVAL_DEFAULT}
                         {t('personaConfig.minutesUnit')}
                       </span>
                     )}
@@ -1400,258 +1844,334 @@ export default function PersonaConfigPage() {
         }
       />
       <PinnedPage
+        className="min-w-0"
         header={
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-            <div className="min-w-0 overflow-x-auto">
-              <h1 className="whitespace-nowrap text-3xl font-bold flex items-center gap-3">
-                <Brain className="w-8 h-8 shrink-0" />
-                {t('personaConfig.title')}
-              </h1>
-              <p className="whitespace-nowrap text-muted-foreground mt-1">
-                {t('personaConfig.description')}
-              </p>
+          <div className="min-w-0 sm:overflow-x-auto">
+            <h1 className="sm:whitespace-nowrap text-3xl font-bold flex items-center gap-3">
+              <Brain className="w-8 h-8 shrink-0" />
+              {t('personaConfig.title')}
+            </h1>
+            <p className="sm:whitespace-nowrap text-muted-foreground mt-1">
+              {t('personaConfig.description')}
+            </p>
+          </div>
+        }
+        toolbar={
+          <div className="flex w-full min-w-0 flex-wrap items-center justify-between gap-3">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <div className={tabToolbarGroupWrapClass}>
+                <TabButtonGroup
+                  value={libraryView}
+                  onValueChange={(value) =>
+                    setLibraryView(value as 'personas' | 'capabilityAgents' | 'prompts')
+                  }
+                  options={[
+                    {
+                      value: 'personas',
+                      label: t('personaConfig.tabPersonas'),
+                      icon: <User className="h-4 w-4" />,
+                    },
+                    {
+                      value: 'capabilityAgents',
+                      label: t('personaConfig.tabCapabilityAgents'),
+                      icon: <Bot className="h-4 w-4" />,
+                    },
+                    {
+                      value: 'prompts',
+                      label: t('personaConfig.tabPrompts'),
+                      icon: <ScrollText className="h-4 w-4" />,
+                    },
+                  ]}
+                />
+              </div>
+              {/* 图四红框：切换到人格代理页签后在右侧自动出现的三个 button group（图三） */}
+              {libraryView === 'capabilityAgents' && (
+                <div className={cn(tabToolbarGroupWrapClass, 'shrink-0 animate-in fade-in-50')}>
+                  <TabButtonGroup
+                    options={capability.sourceOptions}
+                    value={capability.activeSource}
+                    onValueChange={(value) => capability.setActiveSource(value as any)}
+                  />
+                </div>
+              )}
             </div>
-            <div className="flex flex-wrap items-center justify-end gap-2 self-end sm:self-auto">
-              {/* AI 生成按钮 */}
-              <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
-                <DialogTrigger asChild>
-                  <Button className="gap-2 whitespace-nowrap">
-                    <Sparkles className="h-4 w-4" />
-                    {t('personaConfig.createNew')}
-                  </Button>
-                </DialogTrigger>
-                <DialogContent className="sm:max-w-[500px]">
-                  <DialogHeader>
-                    <DialogTitle className="flex items-center gap-2">
-                      <Sparkles className="h-5 w-5 text-primary" />
-                      {t('personaConfig.createNew')}
-                    </DialogTitle>
-                    <DialogDescription>{t('personaConfig.createNewDesc')}</DialogDescription>
-                  </DialogHeader>
-                  <div className="space-y-4 py-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="persona-name">{t('personaConfig.personaName')}</Label>
-                      <Input
-                        id="persona-name"
-                        placeholder={t('personaConfig.personaNamePlaceholder')}
-                        value={newPersonaName}
-                        onChange={(e) => setNewPersonaName(e.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="persona-query">{t('personaConfig.personaQuery')}</Label>
-                      <Textarea
-                        id="persona-query"
-                        placeholder={t('personaConfig.personaQueryPlaceholder')}
-                        value={newPersonaQuery}
-                        onChange={(e) => setNewPersonaQuery(e.target.value)}
-                        rows={4}
-                      />
-                    </div>
+            <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
+              {libraryView === 'personas' ? (
+                <>
+                  <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+                    <DialogTrigger asChild>
+                      <Button className={cn(tabToolbarControlClass, 'gap-2 whitespace-nowrap')}>
+                        <Sparkles className="h-4 w-4" />
+                        {t('personaConfig.createNew')}
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent className="sm:max-w-[500px]">
+                      <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                          <Sparkles className="h-5 w-5 text-primary" />
+                          {t('personaConfig.createNew')}
+                        </DialogTitle>
+                        <DialogDescription>{t('personaConfig.createNewDesc')}</DialogDescription>
+                      </DialogHeader>
+                      <div className="space-y-4 py-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="persona-name">{t('personaConfig.personaName')}</Label>
+                          <Input
+                            id="persona-name"
+                            placeholder={t('personaConfig.personaNamePlaceholder')}
+                            value={newPersonaName}
+                            onChange={(e) => setNewPersonaName(e.target.value)}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="persona-query">{t('personaConfig.personaQuery')}</Label>
+                          <Textarea
+                            id="persona-query"
+                            placeholder={t('personaConfig.personaQueryPlaceholder')}
+                            value={newPersonaQuery}
+                            onChange={(e) => setNewPersonaQuery(e.target.value)}
+                            rows={4}
+                          />
+                        </div>
+                      </div>
+                      <DialogFooter>
+                        <Button
+                          variant="outline"
+                          onClick={() => setCreateDialogOpen(false)}
+                          disabled={isCreating}
+                        >
+                          {t('common.cancel')}
+                        </Button>
+                        <Button
+                          onClick={handleCreatePersona}
+                          disabled={isCreating || !newPersonaName.trim() || !newPersonaQuery.trim()}
+                          className="gap-2"
+                        >
+                          {isCreating ? (
+                            <>
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              {t('personaConfig.creating')}
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="h-4 w-4" />
+                              {t('common.confirm')}
+                            </>
+                          )}
+                        </Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+                  {/* 手动创建按钮 */}
+                  <Dialog
+                    open={createManuallyDialogOpen}
+                    onOpenChange={setCreateManuallyDialogOpen}
+                  >
+                    <DialogTrigger asChild>
+                      <Button
+                        variant="outline"
+                        className={cn(tabToolbarControlClass, 'gap-2 whitespace-nowrap')}
+                      >
+                        <Plus className="h-4 w-4" />
+                        {t('personaConfig.createNewManually')}
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent className="sm:max-w-[500px]">
+                      <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                          <Plus className="h-5 w-5 text-primary" />
+                          {t('personaConfig.createNewManually')}
+                        </DialogTitle>
+                        <DialogDescription>
+                          {t('personaConfig.createNewManuallyDesc')}
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="space-y-4 py-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="persona-name-manual">
+                            {t('personaConfig.personaName')}
+                          </Label>
+                          <Input
+                            id="persona-name-manual"
+                            placeholder={t('personaConfig.personaNamePlaceholder')}
+                            value={newPersonaName}
+                            onChange={(e) => setNewPersonaName(e.target.value)}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="persona-content-manual">
+                            {t('personaConfig.personaContent')}
+                          </Label>
+                          <Textarea
+                            id="persona-content-manual"
+                            placeholder={t('personaConfig.personaContentPlaceholder')}
+                            value={newPersonaContent}
+                            onChange={(e) => setNewPersonaContent(e.target.value)}
+                            rows={8}
+                          />
+                        </div>
+                      </div>
+                      <DialogFooter>
+                        <Button
+                          variant="outline"
+                          onClick={() => setCreateManuallyDialogOpen(false)}
+                          disabled={isCreating}
+                        >
+                          {t('common.cancel')}
+                        </Button>
+                        <Button
+                          onClick={handleAddPersona}
+                          disabled={
+                            isCreating || !newPersonaName.trim() || !newPersonaContent.trim()
+                          }
+                          className="gap-2"
+                        >
+                          {isCreating ? (
+                            <>
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              {t('common.loading')}
+                            </>
+                          ) : (
+                            <>
+                              <Plus className="h-4 w-4" />
+                              {t('common.confirm')}
+                            </>
+                          )}
+                        </Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+                </>
+              ) : libraryView === 'prompts' ? (
+                <Button
+                  className={cn(tabToolbarControlClass, 'gap-2 whitespace-nowrap')}
+                  onClick={() => promptPanelRef.current?.openCreate()}
+                >
+                  <Plus className="h-4 w-4" />
+                  {t('personaConfig.promptCreate')}
+                </Button>
+              ) : (
+                /* 图 5：能力代理操控与搜索控件（搜索、刷新、新建节点），收成一行靠右对齐 */
+                <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+                  <div className="relative w-full sm:w-[200px] md:w-[260px]">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      value={capability.searchQuery}
+                      onChange={(event) => capability.setSearchQuery(event.target.value)}
+                      placeholder={t('aiCapabilityAgents.searchPlaceholder')}
+                      className={cn(tabToolbarControlClass, 'pl-9 w-full')}
+                    />
                   </div>
-                  <DialogFooter>
-                    <Button
-                      variant="outline"
-                      onClick={() => setCreateDialogOpen(false)}
-                      disabled={isCreating}
-                    >
-                      {t('common.cancel')}
-                    </Button>
-                    <Button
-                      onClick={handleCreatePersona}
-                      disabled={isCreating || !newPersonaName.trim() || !newPersonaQuery.trim()}
-                      className="gap-2"
-                    >
-                      {isCreating ? (
-                        <>
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          {t('personaConfig.creating')}
-                        </>
-                      ) : (
-                        <>
-                          <Sparkles className="h-4 w-4" />
-                          {t('common.confirm')}
-                        </>
-                      )}
-                    </Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
-              {/* 手动创建按钮 */}
-              <Dialog open={createManuallyDialogOpen} onOpenChange={setCreateManuallyDialogOpen}>
-                <DialogTrigger asChild>
-                  <Button variant="outline" className="gap-2 whitespace-nowrap">
+                  <Button
+                    variant="outline"
+                    onClick={capability.loadData}
+                    disabled={capability.isLoading}
+                    className={cn(tabToolbarControlClass, 'gap-2 shrink-0')}
+                  >
+                    {capability.isLoading ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="w-4 h-4" />
+                    )}
+                    <span className="hidden sm:inline">{t('common.refresh')}</span>
+                  </Button>
+                  <Button
+                    onClick={() => capability.openDialog('create')}
+                    className={cn(tabToolbarControlClass, 'gap-2 shrink-0')}
+                  >
                     <Plus className="h-4 w-4" />
-                    {t('personaConfig.createNewManually')}
+                    <span>{t('aiCapabilityAgents.newProfile')}</span>
                   </Button>
-                </DialogTrigger>
-                <DialogContent className="sm:max-w-[500px]">
-                  <DialogHeader>
-                    <DialogTitle className="flex items-center gap-2">
-                      <Plus className="h-5 w-5 text-primary" />
-                      {t('personaConfig.createNewManually')}
-                    </DialogTitle>
-                    <DialogDescription>
-                      {t('personaConfig.createNewManuallyDesc')}
-                    </DialogDescription>
-                  </DialogHeader>
-                  <div className="space-y-4 py-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="persona-name-manual">{t('personaConfig.personaName')}</Label>
-                      <Input
-                        id="persona-name-manual"
-                        placeholder={t('personaConfig.personaNamePlaceholder')}
-                        value={newPersonaName}
-                        onChange={(e) => setNewPersonaName(e.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="persona-content-manual">
-                        {t('personaConfig.personaContent')}
-                      </Label>
-                      <Textarea
-                        id="persona-content-manual"
-                        placeholder={t('personaConfig.personaContentPlaceholder')}
-                        value={newPersonaContent}
-                        onChange={(e) => setNewPersonaContent(e.target.value)}
-                        rows={8}
-                      />
-                    </div>
-                  </div>
-                  <DialogFooter>
-                    <Button
-                      variant="outline"
-                      onClick={() => setCreateManuallyDialogOpen(false)}
-                      disabled={isCreating}
-                    >
-                      {t('common.cancel')}
-                    </Button>
-                    <Button
-                      onClick={handleAddPersona}
-                      disabled={isCreating || !newPersonaName.trim() || !newPersonaContent.trim()}
-                      className="gap-2"
-                    >
-                      {isCreating ? (
-                        <>
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          {t('common.loading')}
-                        </>
-                      ) : (
-                        <>
-                          <Plus className="h-4 w-4" />
-                          {t('common.confirm')}
-                        </>
-                      )}
-                    </Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
+                </div>
+              )}
             </div>
           </div>
         }
       >
-        {/* 全局启用提示 */}
-        {personaCards.some((p) => isGlobalLikeScope(p.config?.scope)) && (
-          <div
-            className={cn(
-              'flex items-center gap-2 p-3 rounded-lg text-sm',
-              'bg-blue-500/10 text-blue-600 border border-blue-500/30',
-            )}
-          >
-            <Globe className="w-4 h-4" />
-            <span>
-              {t('personaConfig.globalEnabledHint', {
-                name: personaCards
-                  .filter((p) => isGlobalLikeScope(p.config?.scope))
-                  .map((p) => `${p.name}（${getScopeLabel(p.config?.scope || 'disabled', t)}）`)
-                  .join('、'),
-              })}
-            </span>
-          </div>
-        )}
-        {/* 无启用人格警告 */}
-        {!personaCards.some((p) => isGlobalLikeScope(p.config?.scope)) &&
-          !personaCards.some((p) => p.config?.scope === 'specific') &&
-          personaCards.length > 0 && (
-            <div
-              className={cn(
-                'flex items-center gap-2 p-3 rounded-lg text-sm glass-card',
-                'border border-amber-500/40 dark:border-amber-400/40 text-amber-700 dark:text-amber-300',
-              )}
-              style={{
-                ['--card-opacity' as string]: (cardOpacity / 100).toString(),
-                ['--blur-intensity' as string]: `${blurIntensity}px`,
-              }}
-            >
-              <AlertCircle className="w-4 h-4" />
-              <span>{t('personaConfig.noPersonaEnabledWarning')}</span>
-            </div>
-          )}
-        {/* 仅特定群聊启用警告 */}
-        {!personaCards.some((p) => isGlobalLikeScope(p.config?.scope)) &&
-          personaCards.some((p) => p.config?.scope === 'specific') && (
-            <div
-              className={cn(
-                'flex items-center gap-2 p-3 rounded-lg text-sm glass-card',
-                'border border-amber-500/40 dark:border-amber-400/40 text-amber-700 dark:text-amber-300',
-              )}
-              style={{
-                ['--card-opacity' as string]: (cardOpacity / 100).toString(),
-                ['--blur-intensity' as string]: `${blurIntensity}px`,
-              }}
-            >
-              <AlertCircle className="w-4 h-4" />
-              <span>
-                {t('personaConfig.specificOnlyWarning', {
-                  groups:
-                    personaCards
-                      .filter((p) => p.config?.scope === 'specific' && p.groups.length > 0)
-                      .flatMap((p) => p.groups)
-                      .join('、') || t('personaConfig.noGroups'),
-                })}
-              </span>
-            </div>
-          )}
-        {/* 人格列表 - 响应式网格布局 */}
-        {isLoading ? (
-          <div className="flex items-center justify-center h-64">
-            <Loader2 className="w-8 h-8 animate-spin" />
-          </div>
-        ) : personaCards.length === 0 ? (
-          <>
-            {/* 无人格警告 */}
-            <div
-              className={cn(
-                'flex items-center gap-2 p-3 rounded-lg text-sm glass-card',
-                'border border-amber-500/40 dark:border-amber-400/40 text-amber-700 dark:text-amber-300',
-              )}
-              style={{
-                ['--card-opacity' as string]: (cardOpacity / 100).toString(),
-                ['--blur-intensity' as string]: `${blurIntensity}px`,
-              }}
-            >
-              <AlertCircle className="w-4 h-4" />
-              <span>{t('personaConfig.noPersonaAtAllWarning')}</span>
-            </div>
-            <div className="flex flex-col items-center justify-center py-12 text-center">
-              <User className="h-12 w-12 text-muted-foreground mb-4" />
-              <p className="text-muted-foreground">{t('personaConfig.noPersonas')}</p>
-              <Button variant="link" onClick={() => setCreateDialogOpen(true)} className="mt-2">
-                {t('personaConfig.createNew')}
-              </Button>
-            </div>
-          </>
+        {libraryView === 'prompts' ? (
+          <PromptGroupPanel
+            ref={promptPanelRef}
+            activeByGroup={activeByGroup}
+            activeLines={activePromptLines}
+            activeReady={!isLoading}
+          />
+        ) : libraryView === 'capabilityAgents' ? (
+          <CapabilityAgentsPanel capability={capability} />
         ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-[repeat(auto-fill,minmax(380px,1fr))]">
-            {personaCards.map(renderPersonaCard)}
+          <div className="-mt-3">
+            <div className="mb-3 space-y-3">
+              <GlassAlert tone="warning">{t('personaConfig.builtinPersonaWarning')}</GlassAlert>
+              {/* 全局启用提示 */}
+              {personaCards.some((p) => isGlobalLikeScope(p.config?.scope)) && (
+                <GlassAlert tone="info" icon={Globe}>
+                  {t('personaConfig.globalEnabledHint', {
+                    name: personaCards
+                      .filter((p) => isGlobalLikeScope(p.config?.scope))
+                      .map((p) => `${p.name}（${getScopeLabel(p.config?.scope || 'disabled', t)}）`)
+                      .join('、'),
+                  })}
+                </GlassAlert>
+              )}
+              {/* 无启用人格警告 */}
+              {!personaCards.some((p) => isGlobalLikeScope(p.config?.scope)) &&
+                !personaCards.some((p) => p.config?.scope === 'specific') &&
+                personaCards.length > 0 && (
+                  <GlassAlert tone="warning">
+                    {t('personaConfig.noPersonaEnabledWarning')}
+                  </GlassAlert>
+                )}
+              {/* 仅特定群聊启用警告 */}
+              {!personaCards.some((p) => isGlobalLikeScope(p.config?.scope)) &&
+                personaCards.some((p) => p.config?.scope === 'specific') && (
+                  <GlassAlert
+                    tone="warning"
+                    className="grid w-full max-w-full grid-cols-[auto_minmax(0,1fr)]"
+                    contentClassName="whitespace-normal break-all"
+                  >
+                    {t('personaConfig.specificOnlyWarning', {
+                      groups:
+                        personaCards
+                          .filter((p) => p.config?.scope === 'specific' && p.groups.length > 0)
+                          .flatMap((p) => p.groups)
+                          .join('、') || t('personaConfig.noGroups'),
+                    })}
+                  </GlassAlert>
+                )}
+            </div>
+            {/* 人格列表 - 固定列数的响应式网格。不用 auto-fit：空轨道会被折叠成 0，
+            只剩一张卡时它就被拉满整行；卡片内部本就是 5 等分范围胶囊的窄卡设计。 */}
+            {isLoading ? (
+              <div className="flex items-center justify-center h-64">
+                <Loader2 className="w-8 h-8 animate-spin" />
+              </div>
+            ) : personaCards.length === 0 ? (
+              <>
+                {/* 无人格警告 */}
+                <GlassAlert tone="warning">{t('personaConfig.noPersonaAtAllWarning')}</GlassAlert>
+                <div className="flex flex-col items-center justify-center py-12 text-center">
+                  <User className="h-12 w-12 text-muted-foreground mb-4" />
+                  <p className="text-muted-foreground">{t('personaConfig.noPersonas')}</p>
+                  <Button variant="link" onClick={() => setCreateDialogOpen(true)} className="mt-2">
+                    {t('personaConfig.createNew')}
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <div className="glass-card-grid grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+                {personaCards.map(renderPersonaCard)}
+              </div>
+            )}
           </div>
         )}
         {/* 编辑：右侧半屏，交互对齐看板详情 Sheet */}
         <Sheet open={editDialogOpen} onOpenChange={setEditDialogOpen}>
           <SheetContent
             side="right"
-            overlayClassName="bg-white/80 dark:bg-black/80 data-[state=open]:animate-sheet-overlay-in data-[state=closed]:animate-sheet-overlay-out"
-            className="flex h-full w-full flex-col gap-0 bg-background/95 p-0 glass-card !fixed !inset-y-0 !right-0 !left-auto !top-0 !rounded-none !border-l !max-w-[60vw] data-[state=open]:will-change-transform data-[state=open]:animate-sheet-slide-in-right data-[state=closed]:animate-sheet-slide-out-right"
+            overlayClassName={cn(
+              sheetOverlay,
+              'data-[state=open]:animate-sheet-overlay-in data-[state=closed]:animate-sheet-overlay-out',
+            )}
+            className="flex h-full w-full flex-col gap-0 bg-background/95 p-0 glass-card !fixed !inset-y-0 !right-0 !left-auto !top-0 !rounded-none !border-l !max-w-full sm:!max-w-[60vw] data-[state=open]:animate-sheet-slide-in-right data-[state=closed]:animate-sheet-slide-out-right"
           >
             <SheetHeader className="shrink-0 border-b px-6 py-4 pr-12 text-left">
               <SheetTitle className="flex items-center gap-2">
@@ -1668,34 +2188,61 @@ export default function PersonaConfigPage() {
               className="flex min-h-0 flex-1 flex-col"
             >
               <div className="shrink-0 px-6 pt-4">
-                <TabsList className="grid w-full grid-cols-3 sm:grid-cols-6">
-                  <TabsTrigger value="markdown" className="gap-2">
-                    <FileText className="h-4 w-4" />
-                    {t('personaConfig.personaMarkdown')}
-                  </TabsTrigger>
-                  <TabsTrigger value="config" className="gap-2">
-                    <Settings className="h-4 w-4" />
-                    {t('personaConfig.config')}
-                  </TabsTrigger>
-                  <TabsTrigger value="settings" className="gap-2">
-                    <Sparkles className="h-4 w-4" />
-                    {t('personaConfig.personaSettings')}
-                  </TabsTrigger>
-                  <TabsTrigger value="avatar" className="gap-2">
-                    <ImageIcon className="h-4 w-4" />
-                    {t('personaConfig.avatar')}
-                  </TabsTrigger>
-                  <TabsTrigger value="image" className="gap-2">
-                    <ImageIcon className="h-4 w-4" />
-                    {t('personaConfig.image')}
-                  </TabsTrigger>
-                  <TabsTrigger value="audio" className="gap-2">
-                    <Music className="h-4 w-4" />
-                    {t('personaConfig.audio')}
-                  </TabsTrigger>
-                </TabsList>
+                <TabButtonGroup
+                  value={activeTab}
+                  onValueChange={setActiveTab}
+                  options={[
+                    {
+                      value: 'markdown',
+                      label: t('personaConfig.personaMarkdown'),
+                      icon: <FileText className="h-4 w-4" />,
+                    },
+                    {
+                      value: 'config',
+                      label: t('personaConfig.config'),
+                      icon: <Settings className="h-4 w-4" />,
+                    },
+                    {
+                      value: 'settings',
+                      label: t('personaConfig.personaSettings'),
+                      icon: <Sparkles className="h-4 w-4" />,
+                    },
+                    {
+                      value: 'avatar',
+                      label: t('personaConfig.avatar'),
+                      icon: <ImageIcon className="h-4 w-4" />,
+                    },
+                    {
+                      value: 'image',
+                      label: t('personaConfig.image'),
+                      icon: <ImageIcon className="h-4 w-4" />,
+                    },
+                    {
+                      value: 'audio',
+                      label: t('personaConfig.audio'),
+                      icon: <Music className="h-4 w-4" />,
+                    },
+                    {
+                      value: 'meme_packs',
+                      label: t('personaConfig.memePacks'),
+                      icon: <Smile className="h-4 w-4" />,
+                    },
+                  ]}
+                />
               </div>
               <div className="flex min-h-0 flex-1 flex-col px-6 py-4">
+                <TabsContent
+                  value="meme_packs"
+                  className="mt-0 hidden min-h-0 flex-1 overflow-y-auto data-[state=active]:block"
+                >
+                  {editingPersona && (
+                    <PersonaMemePackTab
+                      personaName={editingPersona.name}
+                      allowReply={allowMemeReply}
+                      onAllowReplyChange={setAllowMemeReply}
+                    />
+                  )}
+                </TabsContent>
                 {/* 自述文档 Tab */}
                 <TabsContent
                   value="markdown"
@@ -1706,9 +2253,15 @@ export default function PersonaConfigPage() {
                       <Brain className="h-4 w-4" />
                       {t('personaConfig.personaContent')}
                     </Label>
+                    {builtinPersona && (
+                      <GlassAlert tone="warning" className="shrink-0">
+                        {t('personaConfig.builtinPersonaWarning')}
+                      </GlassAlert>
+                    )}
                     <Textarea
                       value={editContent}
                       onChange={(e) => setEditContent(e.target.value)}
+                      readOnly={builtinPersona}
                       className="h-full min-h-0 flex-1 resize-none font-mono text-sm"
                       placeholder={t('personaConfig.personaQueryPlaceholder')}
                     />
@@ -1721,6 +2274,33 @@ export default function PersonaConfigPage() {
                 >
                   <div className="space-y-8">
                     {/* 启用范围配置：标题独占一行，选项格随宽度换行 */}
+                    <div className="space-y-2">
+                      <Label className="flex items-center gap-2 text-base">
+                        <ScrollText className="h-4 w-4" />
+                        {t('personaConfig.promptGroupLabel')}
+                      </Label>
+                      <Select value={editingPromptGroup} onValueChange={setEditingPromptGroup}>
+                        <SelectTrigger className="h-10 w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {(promptGroupNames.length > 0 ? promptGroupNames : ['默认']).map(
+                            (name) => (
+                              <SelectItem key={name} value={name}>
+                                {name}
+                              </SelectItem>
+                            ),
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <SpeechFields
+                      shape={speechShape}
+                      chatStyleText={chatStyleText}
+                      speechSoftText={speechSoftText}
+                      onChatStyleText={setChatStyleText}
+                      onSpeechSoftText={setSpeechSoftText}
+                    />
                     <div className="space-y-2">
                       <Label className="flex items-center gap-2 text-base">
                         <Globe className="h-4 w-4" />
@@ -1770,18 +2350,15 @@ export default function PersonaConfigPage() {
                     {editingPersona &&
                       findConflictingPersonas(personaConfigs, editingPersona.name, editingScope)
                         .length > 0 && (
-                        <div className="flex items-center gap-2 p-3 rounded-lg text-sm bg-amber-500/10 text-amber-600 border border-amber-500/30">
-                          <AlertCircle className="w-4 h-4" />
-                          <span>
-                            {t('personaConfig.globalConflictHint', {
-                              name: findConflictingPersonas(
-                                personaConfigs,
-                                editingPersona.name,
-                                editingScope,
-                              ).join('、'),
-                            })}
-                          </span>
-                        </div>
+                        <GlassAlert tone="warning" icon={AlertCircle}>
+                          {t('personaConfig.globalConflictHint', {
+                            name: findConflictingPersonas(
+                              personaConfigs,
+                              editingPersona.name,
+                              editingScope,
+                            ).join('、'),
+                          })}
+                        </GlassAlert>
                       )}
                     {/* AI 模式配置 */}
                     <div className="space-y-2">
@@ -1789,14 +2366,13 @@ export default function PersonaConfigPage() {
                         <Settings className="h-4 w-4" />
                         {t('personaConfig.aiModes')}
                       </Label>
-                      <div className="grid grid-cols-5 gap-3 items-stretch">
+                      {/* 只有四个模式，仍按启用范围的五列排，末格留空才能上下对齐 */}
+                      <div className="grid grid-cols-2 items-stretch gap-3 sm:grid-cols-3 lg:grid-cols-5">
                         {AI_MODE_OPTIONS.map((mode) => (
                           <button
                             key={mode.value}
                             type="button"
-                            disabled={mode.disabled}
                             onClick={() => {
-                              if (mode.disabled) return;
                               const isSelected = editingAIModes.includes(mode.value);
                               if (isSelected) {
                                 setEditingAIModes(editingAIModes.filter((m) => m !== mode.value));
@@ -1806,7 +2382,6 @@ export default function PersonaConfigPage() {
                             }}
                             className={cn(
                               CONFIG_OPTION_BUTTON,
-                              mode.disabled && 'opacity-50 cursor-not-allowed',
                               editingAIModes.includes(mode.value)
                                 ? 'border-primary bg-primary/10'
                                 : 'border-border hover:border-border/80 hover:bg-muted/50',
@@ -1823,14 +2398,8 @@ export default function PersonaConfigPage() {
                               {mode.icon}
                             </div>
                             <div className="flex-1 min-w-0">
-                              <div className="font-medium text-sm flex items-center gap-2">
-                                {mode.label}
-                                {mode.disabled && (
-                                  <span className="text-xs text-muted-foreground">
-                                    ({t('common.comingSoon')})
-                                  </span>
-                                )}
-                              </div>
+                              {/* 标题与「(即将推出)」合成一行整体截断：窄格下允许省略，不折成两行 */}
+                              <div className="font-medium text-sm truncate">{mode.label}</div>
                               <div className="text-xs text-muted-foreground mt-1 line-clamp-1">
                                 {mode.description}
                               </div>
@@ -1927,6 +2496,151 @@ export default function PersonaConfigPage() {
                         />
                       </div>
                     </div>
+                    <div className="space-y-3">
+                      <LabelWithHelp
+                        icon={
+                          <MessageCircle className={cn('h-4 w-4', !showAside && 'opacity-50')} />
+                        }
+                        label={t('personaConfig.asideTitle')}
+                        description={t('personaConfig.asideHint')}
+                        className={cn('text-base font-medium', !showAside && 'opacity-50')}
+                      />
+                      <div className="grid gap-4 sm:grid-cols-3">
+                        <ProbabilityField
+                          id="aside-image"
+                          label={t('personaConfig.asideImage')}
+                          value={asideImage}
+                          disabled={!showAside}
+                          onChange={setAsideImage}
+                        />
+                        <ProbabilityField
+                          id="aside-text"
+                          label={t('personaConfig.asideText')}
+                          value={asideText}
+                          disabled={!showAside}
+                          onChange={setAsideText}
+                        />
+                        <ProbabilityField
+                          id="aside-mixed"
+                          label={t('personaConfig.asideMixed')}
+                          value={asideMixed}
+                          disabled={!showAside}
+                          onChange={setAsideMixed}
+                        />
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <LabelWithHelp
+                          htmlFor="aside-allow-tools"
+                          label={t('personaConfig.asideAllowTools')}
+                          description={t('personaConfig.asideAllowToolsHint')}
+                          className={cn('text-sm font-medium', !showAside && 'opacity-50')}
+                        />
+                        <Switch
+                          id="aside-allow-tools"
+                          checked={asideAllowTools}
+                          disabled={!showAside}
+                          onCheckedChange={setAsideAllowTools}
+                          aria-label={t('personaConfig.asideAllowTools')}
+                        />
+                      </div>
+                    </div>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="space-y-2">
+                        <LabelWithHelp
+                          icon={
+                            <Clock className={cn('h-4 w-4', !showActiveHours && 'opacity-50')} />
+                          }
+                          label={t('personaConfig.activeHours')}
+                          description={t('personaConfig.activeHoursHint')}
+                          className={cn('text-base font-medium', !showActiveHours && 'opacity-50')}
+                        />
+                        <TagsInput
+                          disabled={!showActiveHours}
+                          value={activeHours}
+                          onChange={setActiveHours}
+                          placeholder={t('personaConfig.activeHoursPlaceholder')}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <LabelWithHelp
+                          label={t('personaConfig.timezone')}
+                          description={t('personaConfig.timezoneHint')}
+                          className={cn('text-base font-medium', !showActiveHours && 'opacity-50')}
+                        />
+                        <Select
+                          disabled={!showActiveHours}
+                          value={timezone}
+                          onValueChange={setTimezone}
+                        >
+                          <SelectTrigger className="h-10 w-full">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {timezoneChoices(timezone).map((zone) => (
+                              <SelectItem key={zone} value={zone}>
+                                {zone}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <div className="space-y-3">
+                      <LabelWithHelp
+                        icon={<Compass className={cn('h-4 w-4', !showAutonomy && 'opacity-50')} />}
+                        label={t('personaConfig.autonomyTitle')}
+                        description={t('personaConfig.autonomyHint')}
+                        className={cn('text-base font-medium', !showAutonomy && 'opacity-50')}
+                      />
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <div className={cn('space-y-2', !showAutonomy && 'opacity-50')}>
+                          <Label htmlFor="autonomy-interval" className="text-sm">
+                            {t('personaConfig.autonomyInterval')}
+                          </Label>
+                          <Input
+                            id="autonomy-interval"
+                            type="number"
+                            min={15}
+                            max={720}
+                            disabled={!showAutonomy}
+                            value={autonomyInterval}
+                            onChange={(event) => {
+                              const value = Number.parseInt(event.target.value, 10);
+                              if (Number.isFinite(value)) setAutonomyInterval(value);
+                            }}
+                            onBlur={() =>
+                              setAutonomyInterval((current) =>
+                                boundedInt(String(current), 15, 720, AUTONOMY_INTERVAL_DEFAULT),
+                              )
+                            }
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label className={cn('text-sm', !showAutonomy && 'opacity-50')}>
+                            {t('personaConfig.autonomyCareZone')}
+                          </Label>
+                          <Select
+                            disabled={!showAutonomy}
+                            value={careMinZone}
+                            onValueChange={(value) =>
+                              setCareMinZone(value === 'close' ? 'close' : 'familiar')
+                            }
+                          >
+                            <SelectTrigger className="h-10 w-full">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="familiar">
+                                {t('personaConfig.autonomyCareFamiliar')}
+                              </SelectItem>
+                              <SelectItem value="close">
+                                {t('personaConfig.autonomyCareClose')}
+                              </SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                    </div>
                     {/* 工具装配：启用工具（按插件）/ 显式工具白名单 */}
                     <PersonaToolScopeEditor
                       catalog={toolCatalog}
@@ -1963,14 +2677,16 @@ export default function PersonaConfigPage() {
                       {t('common.loading')}
                     </div>
                   ) : Object.keys(editingSettings).length === 0 ? (
-                    <div className="text-sm text-muted-foreground p-4 rounded-lg border border-border/30 bg-muted/20">
+                    <div className="text-sm text-muted-foreground p-4 rounded-lg glass-card glass-alert border border-border/30">
                       {t('personaConfig.personaSettingsLoadFailed')}
                     </div>
                   ) : (
                     <div className="space-y-4">
-                      <p className="text-sm text-muted-foreground">
-                        {t('personaConfig.personaSettingsHint')}
-                      </p>
+                      <LabelWithHelp
+                        label={t('personaConfig.personaSettings')}
+                        description={t('personaConfig.personaSettingsHint')}
+                        className="text-base font-medium"
+                      />
                       <ConfigGrid
                         config={settingsToFormData(editingSettings)}
                         onChange={handleSettingsChange}
@@ -2203,7 +2919,7 @@ export default function PersonaConfigPage() {
                 <Button
                   onClick={() => setSaveConfirmOpen(true)}
                   disabled={isSaving}
-                  className="gap-2"
+                  className="button-solid gap-2"
                 >
                   {isSaving ? (
                     <Loader2 className="h-4 w-4 animate-spin" />

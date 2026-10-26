@@ -13,33 +13,21 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAIStatus } from '@/contexts/AIStatusContext';
-import { useIsMobile } from '@/hooks/use-mobile';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { Button } from '@/components/ui/button';
-import { Switch } from '@/components/ui/switch';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
-import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { GlassAlert } from '@/components/ui/glass-alert';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { TabButtonGroup } from '@/components/ui/TabButtonGroup';
 import {
   AlertTriangle,
   Bot,
   Brain,
-  Cpu,
   Database,
   Eye,
-  FileText,
-  Globe,
-  Heart,
   ListChecks,
   Loader2,
   MemoryStick,
-  Puzzle,
   Save,
-  ScanSearch,
   Search,
   SlidersHorizontal,
   Smile,
@@ -48,6 +36,7 @@ import {
   Server,
   Terminal,
 } from 'lucide-react';
+import { headerActionRowClass, PinnedPage } from '@/components/layout/PinnedPage';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import {
@@ -56,15 +45,10 @@ import {
   mcpConfigApi,
   type PluginConfigItem,
 } from '@/lib/api';
-import {
-  MCP_SERVICE_TOOLS_CONFIG_KEY_MAP,
-  type McpServiceType,
-} from '@/components/config';
+import { MCP_SERVICE_TOOLS_CONFIG_KEY_MAP, type McpServiceType } from '@/components/config';
 import { EmptyState } from './AIConfig/shared/EmptyState';
-import { SidebarItem } from './AIConfig/shared/SidebarItem';
 import { filterOutPrimaryProvider } from './AIConfig/shared/providerId';
 import {
-  ServiceSwitchSection,
   TaskConfigSection,
   WebSearchSection,
   WebFetchSection,
@@ -74,9 +58,6 @@ import {
   DocumentExtractSection,
   MemorySettingsSection,
   MemeSettingsSection,
-  RelationshipSettingsSection,
-  AgentKitsSettingsSection,
-  CognitionSettingsSection,
   AdvancedSettingsSection,
   GsCoreAiMcpServerSection,
   CommandExecutorSection,
@@ -100,9 +81,8 @@ import {
 
 export default function AIConfigPage() {
   const { style } = useTheme();
-  const isGlass = style === 'glassmorphism';
+  const isGlass = style !== 'solid';
   const { t } = useLanguage();
-  const isMobile = useIsMobile();
 
   // ====================== Active section ======================
   const [activeSection, setActiveSection] = useState<string>('taskConfig');
@@ -118,6 +98,7 @@ export default function AIConfigPage() {
     updateConfigValue,
     markSaved: markConfigsSaved,
     applyConfigsAndMarkSaved,
+    syncPersistedField,
   } = useFrameworkConfig();
 
   // ====================== Provider / OpenAI Config ======================
@@ -138,8 +119,7 @@ export default function AIConfigPage() {
   const embeddingConfig = useMemo(
     () =>
       Object.values(configs).find(
-        (c) =>
-          c.name.includes('嵌入模型配置') || c.full_name.includes('嵌入模型配置'),
+        (c) => c.name.includes('嵌入模型配置') || c.full_name.includes('嵌入模型配置'),
       ),
     [configs],
   );
@@ -147,9 +127,7 @@ export default function AIConfigPage() {
   const rerankConfig = useMemo(
     () =>
       Object.values(configs).find(
-        (c) =>
-          c.name.includes('Rerank模型配置') ||
-          c.full_name.includes('Rerank模型配置'),
+        (c) => c.name.includes('Rerank模型配置') || c.full_name.includes('Rerank模型配置'),
       ),
     [configs],
   );
@@ -157,8 +135,7 @@ export default function AIConfigPage() {
   const tavilyConfig = useMemo(
     () =>
       Object.values(configs).find(
-        (c) =>
-          c.name.includes('Tavily搜索配置') || c.full_name.includes('Tavily搜索配置'),
+        (c) => c.name.includes('Tavily搜索配置') || c.full_name.includes('Tavily搜索配置'),
       ),
     [configs],
   );
@@ -166,8 +143,7 @@ export default function AIConfigPage() {
   const exaConfig = useMemo(
     () =>
       Object.values(configs).find(
-        (c) =>
-          c.name.includes('Exa搜索配置') || c.full_name.includes('Exa搜索配置'),
+        (c) => c.name.includes('Exa搜索配置') || c.full_name.includes('Exa搜索配置'),
       ),
     [configs],
   );
@@ -175,9 +151,7 @@ export default function AIConfigPage() {
   const anysearchConfig = useMemo(
     () =>
       Object.values(configs).find(
-        (c) =>
-          c.name.includes('AnySearch搜索配置') ||
-          c.full_name.includes('AnySearch搜索配置'),
+        (c) => c.name.includes('AnySearch搜索配置') || c.full_name.includes('AnySearch搜索配置'),
       ),
     [configs],
   );
@@ -185,9 +159,7 @@ export default function AIConfigPage() {
   const firecrawlConfig = useMemo(
     () =>
       Object.values(configs).find(
-        (c) =>
-          c.name.includes('Firecrawl搜索配置') ||
-          c.full_name.includes('Firecrawl搜索配置'),
+        (c) => c.name.includes('Firecrawl搜索配置') || c.full_name.includes('Firecrawl搜索配置'),
       ),
     [configs],
   );
@@ -195,9 +167,7 @@ export default function AIConfigPage() {
   const miniMaxConfig = useMemo(
     () =>
       Object.values(configs).find(
-        (c) =>
-          c.name.includes('MiniMax搜索配置') ||
-          c.full_name.includes('MiniMax搜索配置'),
+        (c) => c.name.includes('MiniMax搜索配置') || c.full_name.includes('MiniMax搜索配置'),
       ),
     [configs],
   );
@@ -207,17 +177,30 @@ export default function AIConfigPage() {
       Object.values(configs).find((c) => {
         const name = `${c.name} ${c.full_name}`;
         // 优先完整中文名；回退仅当名称同时含 Jina 与搜索/抓取语义，避免误匹配其它插件
-        if (
-          c.name.includes('Jina搜索抓取配置') ||
-          c.full_name.includes('Jina搜索抓取配置')
-        ) {
+        if (c.name.includes('Jina搜索抓取配置') || c.full_name.includes('Jina搜索抓取配置')) {
           return true;
         }
         return (
           /jina/i.test(name) &&
-          (name.includes('搜索') ||
-            name.includes('抓取') ||
-            /search|fetch|reader/i.test(name))
+          (name.includes('搜索') || name.includes('抓取') || /search|fetch|reader/i.test(name))
+        );
+      }),
+    [configs],
+  );
+
+  const deepseekConfig = useMemo(
+    () =>
+      Object.values(configs).find((c) => {
+        const name = `${c.name} ${c.full_name}`;
+        if (
+          c.name.includes('DeepSeek搜索抓取配置') ||
+          c.full_name.includes('DeepSeek搜索抓取配置')
+        ) {
+          return true;
+        }
+        return (
+          /deepseek/i.test(name) &&
+          (name.includes('搜索') || name.includes('抓取') || /search|fetch/i.test(name))
         );
       }),
     [configs],
@@ -226,9 +209,7 @@ export default function AIConfigPage() {
   const webFetchConfig = useMemo(
     () =>
       Object.values(configs).find(
-        (c) =>
-          c.name.includes('WebFetch抓取配置') ||
-          c.full_name.includes('WebFetch抓取配置'),
+        (c) => c.name.includes('WebFetch抓取配置') || c.full_name.includes('WebFetch抓取配置'),
       ),
     [configs],
   );
@@ -244,8 +225,7 @@ export default function AIConfigPage() {
   const memeConfig = useMemo(
     () =>
       Object.values(configs).find(
-        (c) =>
-          c.name.includes('表情包配置') || c.full_name.includes('表情包配置'),
+        (c) => c.name.includes('表情包配置') || c.full_name.includes('表情包配置'),
       ),
     [configs],
   );
@@ -253,8 +233,7 @@ export default function AIConfigPage() {
   const mcpToolsConfig = useMemo(
     () =>
       Object.values(configs).find(
-        (c) =>
-          c.name.includes('MCP 工具配置') || c.full_name.includes('MCP 工具配置'),
+        (c) => c.name.includes('MCP 工具配置') || c.full_name.includes('MCP 工具配置'),
       ),
     [configs],
   );
@@ -270,24 +249,19 @@ export default function AIConfigPage() {
   const commandExecutorConfig = useMemo(
     () =>
       Object.values(configs).find(
-        (c) =>
-          c.name.includes('命令执行器') ||
-          c.full_name.includes('命令执行器'),
+        (c) => c.name.includes('命令执行器') || c.full_name.includes('命令执行器'),
       ),
     [configs],
   );
 
   /** 安全地将 unknown 解析为 boolean（处理后端可能返回字符串 "true"/"false" 的情况） */
-  const toBool = (v: unknown): boolean =>
-    v === true || v === 'true' || v === 1;
+  const toBool = (v: unknown): boolean => v === true || v === 'true' || v === 1;
 
   const isAIEnabled = toBool(aiConfig?.config.enable?.value);
   const isRerankEnabled = toBool(aiConfig?.config.enable_rerank?.value);
-  const rerankProvider =
-    (aiConfig?.config.rerank_provider?.value as string) ?? 'local';
+  const rerankProvider = (aiConfig?.config.rerank_provider?.value as string) ?? 'local';
   const isMemoryEnabled = toBool(aiConfig?.config.enable_memory?.value);
-  const websearchProvider =
-    (aiConfig?.config.websearch_provider?.value as string) ?? 'AnySearch';
+  const websearchProvider = (aiConfig?.config.websearch_provider?.value as string) ?? 'AnySearch';
   const websearchLbStrategy =
     (aiConfig?.config.websearch_lb_strategy?.value as string) ?? 'error_switch';
   const websearchFallbackOrder = useMemo(() => {
@@ -295,8 +269,13 @@ export default function AIConfigPage() {
     if (Array.isArray(raw)) return raw.map(String);
     return [] as string[];
   }, [aiConfig?.config.websearch_fallback_order?.value]);
-  const webfetchProvider =
-    (aiConfig?.config.webfetch_provider?.value as string) ?? 'Jina';
+  const hasRenderImageSources = Boolean(aiConfig?.config.render_image_sources);
+  const renderImageSources = useMemo(() => {
+    const raw = aiConfig?.config.render_image_sources?.value;
+    if (Array.isArray(raw)) return raw.map(String);
+    return [] as string[];
+  }, [aiConfig?.config.render_image_sources?.value]);
+  const webfetchProvider = (aiConfig?.config.webfetch_provider?.value as string) ?? 'Jina';
   const webfetchLbStrategy =
     (aiConfig?.config.webfetch_lb_strategy?.value as string) ?? 'error_switch';
   const webfetchFallbackOrder = useMemo(() => {
@@ -307,8 +286,7 @@ export default function AIConfigPage() {
   }, [aiConfig?.config.webfetch_fallback_order?.value]);
   const imageUnderstandProvider =
     (aiConfig?.config.image_understand_provider?.value as string) ?? '';
-  const qdrantProvider =
-    (aiConfig?.config.qdrant_provider?.value as string) ?? 'local';
+  const qdrantProvider = (aiConfig?.config.qdrant_provider?.value as string) ?? 'local';
   const embeddingProvider =
     (embedding.embeddingSummary?.provider ||
       (aiConfig?.config.embedding_provider?.value as string)) ??
@@ -321,11 +299,9 @@ export default function AIConfigPage() {
   // 这两个字段持久化在 aiConfig（framework-config: `GsCore AI AI配置`）
   // 下，类型为字符串（保存的也是 provider++name 形式），与主配置同源。
   const highLevel2ndConfigValue =
-    (aiConfig?.config.high_level_2nd_provider_config_name?.value as string) ??
-    '';
+    (aiConfig?.config.high_level_2nd_provider_config_name?.value as string) ?? '';
   const lowLevel2ndConfigValue =
-    (aiConfig?.config.low_level_2nd_provider_config_name?.value as string) ??
-    '';
+    (aiConfig?.config.low_level_2nd_provider_config_name?.value as string) ?? '';
   const isHighLevel2ndConfigValid =
     !!highLevel2ndConfigValue &&
     provider.allConfigsList.some((c) => c.name === highLevel2ndConfigValue);
@@ -336,21 +312,17 @@ export default function AIConfigPage() {
   // ====================== MCP tools ======================
   const mcp = useMcpToolsConfig({ mcpToolsConfig, updateConfigValue });
 
-  const websearchMcpToolId =
-    (mcpToolsConfig?.config.websearch_mcp_tool_id?.value as string) || '';
+  const websearchMcpToolId = (mcpToolsConfig?.config.websearch_mcp_tool_id?.value as string) || '';
   const imageUnderstandMcpToolId =
     (mcpToolsConfig?.config.image_understand_mcp_tool_id?.value as string) || '';
-  const asrMcpToolId =
-    (mcpToolsConfig?.config.asr_mcp_tool_id?.value as string) || '';
+  const asrMcpToolId = (mcpToolsConfig?.config.asr_mcp_tool_id?.value as string) || '';
   const documentExtractMcpToolId =
     (mcpToolsConfig?.config.document_extract_mcp_tool_id?.value as string) || '';
 
   const imageUnderstandToolInfo = useMemo(
     () =>
       imageUnderstandMcpToolId
-        ? mcp.mcpToolOptions.find(
-            (opt) => opt.value === imageUnderstandMcpToolId,
-          ) || null
+        ? mcp.mcpToolOptions.find((opt) => opt.value === imageUnderstandMcpToolId) || null
         : null,
     [imageUnderstandMcpToolId, mcp.mcpToolOptions],
   );
@@ -358,26 +330,21 @@ export default function AIConfigPage() {
   const websearchToolInfo = useMemo(
     () =>
       websearchMcpToolId
-        ? mcp.mcpToolOptions.find((opt) => opt.value === websearchMcpToolId) ||
-          null
+        ? mcp.mcpToolOptions.find((opt) => opt.value === websearchMcpToolId) || null
         : null,
     [websearchMcpToolId, mcp.mcpToolOptions],
   );
 
   const asrToolInfo = useMemo(
     () =>
-      asrMcpToolId
-        ? mcp.mcpToolOptions.find((opt) => opt.value === asrMcpToolId) || null
-        : null,
+      asrMcpToolId ? mcp.mcpToolOptions.find((opt) => opt.value === asrMcpToolId) || null : null,
     [asrMcpToolId, mcp.mcpToolOptions],
   );
 
   const documentExtractToolInfo = useMemo(
     () =>
       documentExtractMcpToolId
-        ? mcp.mcpToolOptions.find(
-            (opt) => opt.value === documentExtractMcpToolId,
-          ) || null
+        ? mcp.mcpToolOptions.find((opt) => opt.value === documentExtractMcpToolId) || null
         : null,
     [documentExtractMcpToolId, mcp.mcpToolOptions],
   );
@@ -404,66 +371,85 @@ export default function AIConfigPage() {
   // 锁定条件:AI 服务未启用 或 后端核心尚未加载(wizard 接口 404)。
   // 在该状态下,侧边栏 + 内容区都应置灰且不可交互。
   const isSectionsLocked = !isAIEnabled || wizard.isBackendPendingRestart;
-  const sectionsLockedTooltip = t(
-    'aiConfig.serviceSwitch.sectionsLockedHint',
-  );
+  const sectionsLockedTooltip = t('aiConfig.serviceSwitch.sectionsLockedHint');
 
   // ====================== Options (枚举) ======================
-  const embeddingProviderOptions =
-    (aiConfig?.config.embedding_provider?.options || ['local']) as string[];
-  const rerankProviderOptions =
-    (aiConfig?.config.rerank_provider?.options || ['local']) as string[];
-  const websearchProviderOptions =
-    (aiConfig?.config.websearch_provider?.options || [
-      'AnySearch',
-      'Firecrawl',
-      'Tavily',
-      'Jina',
-      'Exa',
-      'MiniMax',
-      'MCP',
-    ]) as string[];
-  const websearchLbStrategyOptions =
-    (aiConfig?.config.websearch_lb_strategy?.options || [
-      'none',
-      'error_switch',
-      'auto_balance',
-    ]) as string[];
-  const websearchFallbackOptions =
-    (aiConfig?.config.websearch_fallback_order?.options ||
-      websearchProviderOptions) as string[];
-  const webfetchProviderOptions =
-    (aiConfig?.config.webfetch_provider?.options || ['Jina', 'local']) as string[];
-  const webfetchLbStrategyOptions =
-    (aiConfig?.config.webfetch_lb_strategy?.options || [
-      'none',
-      'error_switch',
-      'auto_balance',
-    ]) as string[];
-  const webfetchFallbackOptions =
-    (aiConfig?.config.webfetch_fallback_order?.options ||
-      webfetchProviderOptions) as string[];
-  const qdrantProviderOptions =
-    (aiConfig?.config.qdrant_provider?.options || [
-      'local',
-      'remote',
-    ]) as string[];
-  const imageUnderstandProviderOptions =
-    (aiConfig?.config.image_understand_provider?.options || ['MCP']) as string[];
-  const asrProviderOptions =
-    (aiConfig?.config.asr_provider?.options || ['MCP']) as string[];
-  const documentExtractProviderOptions =
-    (aiConfig?.config.document_extract_provider?.options || ['MCP']) as string[];
+  const embeddingProviderOptions = (aiConfig?.config.embedding_provider?.options || [
+    'local',
+  ]) as string[];
+  const rerankProviderOptions = (aiConfig?.config.rerank_provider?.options || [
+    'local',
+  ]) as string[];
+  const websearchProviderOptions = (aiConfig?.config.websearch_provider?.options || [
+    'AnySearch',
+    'Firecrawl',
+    'Tavily',
+    'Jina',
+    'Exa',
+    'MiniMax',
+    'MCP',
+  ]) as string[];
+  const websearchLbStrategyOptions = (aiConfig?.config.websearch_lb_strategy?.options || [
+    'none',
+    'error_switch',
+    'auto_balance',
+  ]) as string[];
+  const websearchFallbackOptions = (aiConfig?.config.websearch_fallback_order?.options ||
+    websearchProviderOptions) as string[];
+  const renderImageSourceOptions = (aiConfig?.config.render_image_sources?.options || [
+    '插件图库',
+    'Firecrawl',
+    '360',
+    'Tavily',
+  ]) as string[];
+  const webfetchProviderOptions = (aiConfig?.config.webfetch_provider?.options || [
+    'Jina',
+    'local',
+  ]) as string[];
+  const webfetchLbStrategyOptions = (aiConfig?.config.webfetch_lb_strategy?.options || [
+    'none',
+    'error_switch',
+    'auto_balance',
+  ]) as string[];
+  const webfetchFallbackOptions = (aiConfig?.config.webfetch_fallback_order?.options ||
+    webfetchProviderOptions) as string[];
+  const qdrantProviderOptions = (aiConfig?.config.qdrant_provider?.options || [
+    'local',
+    'remote',
+  ]) as string[];
+  const imageUnderstandProviderOptions = (aiConfig?.config.image_understand_provider?.options || [
+    'MCP',
+  ]) as string[];
+  const asrProviderOptions = (aiConfig?.config.asr_provider?.options || ['MCP']) as string[];
+  const documentExtractProviderOptions = (aiConfig?.config.document_extract_provider?.options || [
+    'MCP',
+  ]) as string[];
+
+  // 主任务配置由 setHigh/LowLevelConfig 即时落库，不参与保存按钮和整包回写。
+  const IMMEDIATE_TASK_CONFIG_KEYS = [
+    'high_level_provider_config_name',
+    'low_level_provider_config_name',
+  ] as const;
+
+  const frameworkConfigsSignature = (source: typeof configs) => {
+    const cloned = JSON.parse(JSON.stringify(source)) as typeof configs;
+    for (const cfg of Object.values(cloned)) {
+      if (!cfg?.config) continue;
+      for (const key of IMMEDIATE_TASK_CONFIG_KEYS) {
+        delete cfg.config[key];
+      }
+    }
+    return JSON.stringify(cloned);
+  };
 
   // ====================== Dirty check + 保存流 ======================
   const isConfigDirty = useMemo(() => {
     const configChanged =
       Object.keys(originalConfig).length === 0
         ? Object.keys(configs).length > 0
-        : JSON.stringify(configs) !== JSON.stringify(originalConfig);
+        : frameworkConfigsSignature(configs) !== frameworkConfigsSignature(originalConfig);
     const embeddingProviderChanged =
-      embedding.embeddingSummary?.provider !==
-      embedding.originalEmbeddingProvider;
+      embedding.embeddingSummary?.provider !== embedding.originalEmbeddingProvider;
     const embeddingLocalChanged =
       JSON.stringify(embedding.embeddingLocalConfig) !==
       JSON.stringify(embedding.originalEmbeddingLocalConfig);
@@ -471,10 +457,8 @@ export default function AIConfigPage() {
       JSON.stringify(embedding.embeddingOpenaiConfig) !==
       JSON.stringify(embedding.originalEmbeddingOpenaiConfig);
     const mcpToolsChanged =
-      JSON.stringify(mcp.mcpToolsConfigs) !==
-        JSON.stringify(mcp.originalMcpToolsConfigs) ||
-      JSON.stringify(mcp.mcpDetailsEditing) !==
-        JSON.stringify(mcp.originalMcpDetails);
+      JSON.stringify(mcp.mcpToolsConfigs) !== JSON.stringify(mcp.originalMcpToolsConfigs) ||
+      JSON.stringify(mcp.mcpDetailsEditing) !== JSON.stringify(mcp.originalMcpDetails);
     return (
       configChanged ||
       embeddingProviderChanged ||
@@ -499,9 +483,7 @@ export default function AIConfigPage() {
 
   // pendingSaveAction / EmbeddingWarningDialog 状态
   const [isEmbeddingWarningOpen, setIsEmbeddingWarningOpen] = useState(false);
-  const [pendingSaveAction, setPendingSaveAction] = useState<
-    (() => void) | null
-  >(null);
+  const [pendingSaveAction, setPendingSaveAction] = useState<(() => void) | null>(null);
 
   // 实际执行保存逻辑
   const executeSave = useCallback(async () => {
@@ -513,7 +495,8 @@ export default function AIConfigPage() {
         const original = originalConfig[config.id];
         if (!original) return true;
         return (
-          JSON.stringify(config.config) !== JSON.stringify(original.config)
+          frameworkConfigsSignature({ [config.id]: config }) !==
+          frameworkConfigsSignature({ [config.id]: original })
         );
       });
 
@@ -526,110 +509,78 @@ export default function AIConfigPage() {
 
       for (const config of changedConfigs) {
         const configToSave: Record<string, unknown> = {};
-        Object.entries(config.config).forEach(
-          ([key, field]: [string, PluginConfigItem]) => {
-            if (
-              !field ||
-              typeof field !== 'object' ||
-              !('value' in field)
-            )
-              return;
-            const rawType = (field.type || '').toLowerCase();
-            let value: unknown = field.value;
+        Object.entries(config.config).forEach(([key, field]: [string, PluginConfigItem]) => {
+          if (!field || typeof field !== 'object' || !('value' in field)) return;
+          if (
+            key === 'high_level_provider_config_name' ||
+            key === 'low_level_provider_config_name'
+          ) {
+            return;
+          }
+          const rawType = (field.type || '').toLowerCase();
+          let value: unknown = field.value;
 
-            if (rawType === 'gsint') {
-              if (typeof value === 'string') value = parseInt(value, 10);
-            } else if (rawType === 'gsfloat') {
-              if (typeof value === 'string') value = parseFloat(value);
-            } else if (rawType === 'gsbool') {
-              if (typeof value === 'string') value = value === 'true';
-              else value = !!value;
-            } else if (rawType === 'gsdict') {
-              if (typeof value === 'string') {
-                try {
-                  value = JSON.parse(value);
-                } catch {
-                  /* keep as string */
-                }
-              }
-            } else if (rawType === 'gslist') {
-              if (Array.isArray(value))
-                value = value
-                  .map(Number)
-                  .filter((n: number) => !isNaN(n));
-            } else if (rawType === 'gsliststr') {
-              if (Array.isArray(value)) value = value.map(String);
-            } else if (rawType === 'gsdivider') {
-              return;
-            }
-
-            // 网络搜索 / 网页抓取：备用列表不得含主用源（大小写不敏感）
-            if (
-              key === 'websearch_fallback_order' &&
-              Array.isArray(value)
-            ) {
-              const primary = String(
-                config.config.websearch_provider?.value ?? '',
-              );
-              const next = filterOutPrimaryProvider(
-                value as string[],
-                primary,
-              );
-              if (next.length !== (value as string[]).length) {
-                fallbackPrimaryConflict = true;
-                uiSyncFallback.websearch = next;
-                value = next;
+          if (rawType === 'gsint') {
+            if (typeof value === 'string') value = parseInt(value, 10);
+          } else if (rawType === 'gsfloat') {
+            if (typeof value === 'string') value = parseFloat(value);
+          } else if (rawType === 'gsbool') {
+            if (typeof value === 'string') value = value === 'true';
+            else value = !!value;
+          } else if (rawType === 'gsdict') {
+            if (typeof value === 'string') {
+              try {
+                value = JSON.parse(value);
+              } catch {
+                /* keep as string */
               }
             }
-            if (
-              key === 'webfetch_fallback_order' &&
-              Array.isArray(value)
-            ) {
-              const primary = String(
-                config.config.webfetch_provider?.value ?? '',
-              );
-              const next = filterOutPrimaryProvider(
-                value as string[],
-                primary,
-              );
-              if (next.length !== (value as string[]).length) {
-                fallbackPrimaryConflict = true;
-                uiSyncFallback.webfetch = next;
-                value = next;
-              }
-            }
+          } else if (rawType === 'gslist') {
+            if (Array.isArray(value)) value = value.map(Number).filter((n: number) => !isNaN(n));
+          } else if (rawType === 'gsliststr') {
+            if (Array.isArray(value)) value = value.map(String);
+          } else if (rawType === 'gsdivider') {
+            return;
+          }
 
-            configToSave[key] = value;
-          },
-        );
-        await frameworkConfigApi.updateFrameworkConfig(
-          config.full_name,
-          configToSave,
-        );
+          // 网络搜索 / 网页抓取：备用列表不得含主用源（大小写不敏感）
+          if (key === 'websearch_fallback_order' && Array.isArray(value)) {
+            const primary = String(config.config.websearch_provider?.value ?? '');
+            const next = filterOutPrimaryProvider(value as string[], primary);
+            if (next.length !== (value as string[]).length) {
+              fallbackPrimaryConflict = true;
+              uiSyncFallback.websearch = next;
+              value = next;
+            }
+          }
+          if (key === 'webfetch_fallback_order' && Array.isArray(value)) {
+            const primary = String(config.config.webfetch_provider?.value ?? '');
+            const next = filterOutPrimaryProvider(value as string[], primary);
+            if (next.length !== (value as string[]).length) {
+              fallbackPrimaryConflict = true;
+              uiSyncFallback.webfetch = next;
+              value = next;
+            }
+          }
+
+          configToSave[key] = value;
+        });
+        await frameworkConfigApi.updateFrameworkConfig(config.full_name, configToSave);
       }
       if (changedConfigs.length > 0) {
         // 若剔除了「备用=主用」冲突，原子同步 configs + original，避免双 setState 不一致
-        if (
-          aiConfig?.id &&
-          (uiSyncFallback.websearch || uiSyncFallback.webfetch)
-        ) {
+        if (aiConfig?.id && (uiSyncFallback.websearch || uiSyncFallback.webfetch)) {
           const id = aiConfig.id;
           const base = configs[id];
           if (base) {
             const nextConfig = { ...base.config };
-            if (
-              uiSyncFallback.websearch &&
-              nextConfig.websearch_fallback_order
-            ) {
+            if (uiSyncFallback.websearch && nextConfig.websearch_fallback_order) {
               nextConfig.websearch_fallback_order = {
                 ...nextConfig.websearch_fallback_order,
                 value: uiSyncFallback.websearch,
               };
             }
-            if (
-              uiSyncFallback.webfetch &&
-              nextConfig.webfetch_fallback_order
-            ) {
+            if (uiSyncFallback.webfetch && nextConfig.webfetch_fallback_order) {
               nextConfig.webfetch_fallback_order = {
                 ...nextConfig.webfetch_fallback_order,
                 value: uiSyncFallback.webfetch,
@@ -647,17 +598,13 @@ export default function AIConfigPage() {
         }
       }
       if (fallbackPrimaryConflict) {
-        toast.warning(
-          t('aiConfig.serviceProvider.fallbackPrimaryStrippedOnSave'),
-        );
+        toast.warning(t('aiConfig.serviceProvider.fallbackPrimaryStrippedOnSave'));
       }
 
       // 2. 保存嵌入模型配置
-      const currentProviderValue =
-        embedding.embeddingSummary?.provider || '';
+      const currentProviderValue = embedding.embeddingSummary?.provider || '';
       if (currentProviderValue !== embedding.originalEmbeddingProvider) {
-        const response =
-          await embeddingConfigApi.setProvider(currentProviderValue);
+        const response = await embeddingConfigApi.setProvider(currentProviderValue);
         toast.success(
           response.msg ||
             t('aiConfig.serviceProvider.embeddingProviderSwitched', {
@@ -670,11 +617,9 @@ export default function AIConfigPage() {
         JSON.stringify(embedding.originalEmbeddingLocalConfig)
       ) {
         const localPayload: Record<string, unknown> = {};
-        Object.entries(embedding.embeddingLocalConfig).forEach(
-          ([key, field]) => {
-            localPayload[key] = field.data;
-          },
-        );
+        Object.entries(embedding.embeddingLocalConfig).forEach(([key, field]) => {
+          localPayload[key] = field.data;
+        });
         await embeddingConfigApi.saveLocalConfig(localPayload);
       }
       if (
@@ -682,11 +627,9 @@ export default function AIConfigPage() {
         JSON.stringify(embedding.originalEmbeddingOpenaiConfig)
       ) {
         const openaiPayload: Record<string, unknown> = {};
-        Object.entries(embedding.embeddingOpenaiConfig).forEach(
-          ([key, field]) => {
-            openaiPayload[key] = field.data;
-          },
-        );
+        Object.entries(embedding.embeddingOpenaiConfig).forEach(([key, field]) => {
+          openaiPayload[key] = field.data;
+        });
         await embeddingConfigApi.saveOpenaiConfig(openaiPayload);
       }
       embedding.markSaved(
@@ -697,10 +640,8 @@ export default function AIConfigPage() {
 
       // 3. 保存 MCP 工具参数映射配置
       const mcpToolsChanged =
-        JSON.stringify(mcp.mcpToolsConfigs) !==
-          JSON.stringify(mcp.originalMcpToolsConfigs) ||
-        JSON.stringify(mcp.mcpDetailsEditing) !==
-          JSON.stringify(mcp.originalMcpDetails);
+        JSON.stringify(mcp.mcpToolsConfigs) !== JSON.stringify(mcp.originalMcpToolsConfigs) ||
+        JSON.stringify(mcp.mcpDetailsEditing) !== JSON.stringify(mcp.originalMcpDetails);
       if (mcpToolsChanged) {
         const allKeys = new Set([
           ...Object.keys(mcp.mcpToolsConfigs),
@@ -755,11 +696,10 @@ export default function AIConfigPage() {
 
     const aiConfigId = aiConfig?.id;
     const originalQdrant = aiConfigId
-      ? (originalConfig[aiConfigId]?.config?.qdrant_provider?.value)
+      ? originalConfig[aiConfigId]?.config?.qdrant_provider?.value
       : undefined;
     const currentQdrant = aiConfig?.config.qdrant_provider?.value;
-    const hasQdrantChange =
-      originalQdrant !== undefined && currentQdrant !== originalQdrant;
+    const hasQdrantChange = originalQdrant !== undefined && currentQdrant !== originalQdrant;
 
     if (hasEmbeddingChanges || hasQdrantChange) {
       setPendingSaveAction(() => executeSave);
@@ -799,7 +739,7 @@ export default function AIConfigPage() {
     );
   }
 
-  // ====================== 侧边栏菜单项 ======================
+  // ====================== 顶部分区 ======================
   const sidebarItems = [
     {
       id: 'taskConfig',
@@ -813,30 +753,14 @@ export default function AIConfigPage() {
     },
     {
       id: 'webSearch',
-      title: t('aiConfig.serviceProvider.webSearchService'),
+      title: t('aiConfig.serviceProvider.webSearchFetch'),
       icon: <Search className="w-5 h-5" />,
     },
     {
-      id: 'webFetch',
-      title: t('aiConfig.webFetch.title'),
-      icon: <Globe className="w-5 h-5" />,
-    },
-    {
-      id: 'imageUnderstand',
-      title: t('aiConfig.imageUnderstand.title'),
+      id: 'multimodal',
+      title: t('aiConfig.multimodal.title'),
       icon: <Eye className="w-5 h-5" />,
-      alert:
-        provider.taskModelLacksImage && !imageUnderstandProvider,
-    },
-    {
-      id: 'voiceRecognition',
-      title: t('aiConfig.voiceRecognition.title'),
-      icon: <Cpu className="w-5 h-5" />,
-    },
-    {
-      id: 'documentExtract',
-      title: t('aiConfig.documentExtract.title'),
-      icon: <FileText className="w-5 h-5" />,
+      alert: provider.taskModelLacksImage && !imageUnderstandProvider,
     },
     {
       id: 'memorySettings',
@@ -863,21 +787,6 @@ export default function AIConfigPage() {
       icon: <Terminal className="w-5 h-5" />,
     },
     {
-      id: 'relationshipSettings',
-      title: t('aiConfig.relationshipSettings.title'),
-      icon: <Heart className="w-5 h-5" />,
-    },
-    {
-      id: 'agentKitsSettings',
-      title: t('aiConfig.agentKitsSettings.title'),
-      icon: <Puzzle className="w-5 h-5" />,
-    },
-    {
-      id: 'cognitionSettings',
-      title: t('aiConfig.cognitionSettings.title'),
-      icon: <ScanSearch className="w-5 h-5" />,
-    },
-    {
       id: 'advancedSettings',
       title: t('aiConfig.advancedSettings.title'),
       icon: <SlidersHorizontal className="w-5 h-5" />,
@@ -890,7 +799,6 @@ export default function AIConfigPage() {
         return (
           <TaskConfigSection
             t={t}
-            isGlass={isGlass}
             allConfigsList={provider.allConfigsList}
             highLevelConfig={provider.highLevelConfig}
             lowLevelConfig={provider.lowLevelConfig}
@@ -900,151 +808,202 @@ export default function AIConfigPage() {
             isLowLevelConfigValid={provider.isLowLevelConfigValid}
             isHighLevel2ndConfigValid={isHighLevel2ndConfigValid}
             isLowLevel2ndConfigValid={isLowLevel2ndConfigValid}
-            onSetHighLevelConfig={provider.handleSetHighLevelConfig}
-            onSetLowLevelConfig={provider.handleSetLowLevelConfig}
+            onSetHighLevelConfig={async (name) => {
+              const ok = await provider.handleSetHighLevelConfig(name);
+              if (ok && aiConfig?.id) {
+                syncPersistedField(aiConfig.id, 'high_level_provider_config_name', name);
+              }
+            }}
+            onSetLowLevelConfig={async (name) => {
+              const ok = await provider.handleSetLowLevelConfig(name);
+              if (ok && aiConfig?.id) {
+                syncPersistedField(aiConfig.id, 'low_level_provider_config_name', name);
+              }
+            }}
             onSetHighLevel2ndConfig={(v) =>
               updateConfigValue(aiConfig.id, 'high_level_2nd_provider_config_name', v)
             }
             onSetLowLevel2ndConfig={(v) =>
               updateConfigValue(aiConfig.id, 'low_level_2nd_provider_config_name', v)
             }
-            onOpenManageDialog={() =>
-              provider.setIsManageConfigDialogOpen(true)
-            }
+            onOpenManageDialog={() => provider.setIsManageConfigDialogOpen(true)}
           />
         );
       case 'webSearch':
-        return (
-          <WebSearchSection
-            t={t}
-            websearchProvider={websearchProvider}
-            websearchProviderOptions={websearchProviderOptions}
-            websearchLbStrategy={websearchLbStrategy}
-            websearchLbStrategyOptions={websearchLbStrategyOptions}
-            websearchFallbackOrder={websearchFallbackOrder}
-            websearchFallbackOptions={websearchFallbackOptions}
-            tavilyConfig={tavilyConfig}
-            exaConfig={exaConfig}
-            anysearchConfig={anysearchConfig}
-            firecrawlConfig={firecrawlConfig}
-            jinaConfig={jinaConfig}
-            miniMaxConfig={miniMaxConfig}
-            websearchMcpToolId={websearchMcpToolId}
-            websearchToolInfo={websearchToolInfo}
-            mcpDetails={mcp.mcpDetailsEditing['websearch_mcp_tool_id'] || {}}
-            onChangeProvider={(v) => {
-              updateConfigValue(aiConfig.id, 'websearch_provider', v);
-              // 静默从备用列表剔除新主用，避免保存时误报 toast
-              const next = filterOutPrimaryProvider(websearchFallbackOrder, v);
-              if (next.length !== websearchFallbackOrder.length) {
-                updateConfigValue(
-                  aiConfig.id,
-                  'websearch_fallback_order',
-                  next,
-                );
-              }
-            }}
-            onChangeLbStrategy={(v) =>
-              updateConfigValue(aiConfig.id, 'websearch_lb_strategy', v)
-            }
-            onChangeFallbackOrder={(order) =>
-              updateConfigValue(aiConfig.id, 'websearch_fallback_order', order)
-            }
-            onUpdateConfig={updateConfigValue}
-            onOpenMcpToolDialog={() => mcp.openMcpToolDialog('websearch')}
-            onClearMcpTool={() => mcp.handleClearMcpTool('websearch')}
-            onDetailValueChange={(name, val) =>
-              mcp.updateMcpDetailValue('websearch_mcp_tool_id', name, val)
-            }
-            onMcpParamNameChange={(oldN, newN) =>
-              mcp.renameMcpDetailKey('websearch_mcp_tool_id', oldN, newN)
-            }
-            onAddMcpDetailRow={() =>
-              mcp.addMcpDetailRow('websearch_mcp_tool_id')
-            }
-            onRemoveMcpDetailRow={(name) =>
-              mcp.removeMcpDetailRow('websearch_mcp_tool_id', name)
-            }
-          />
-        );
       case 'webFetch':
         return (
-          <WebFetchSection
-            t={t}
-            webfetchProvider={webfetchProvider}
-            webfetchProviderOptions={webfetchProviderOptions}
-            webfetchLbStrategy={webfetchLbStrategy}
-            webfetchLbStrategyOptions={webfetchLbStrategyOptions}
-            webfetchFallbackOrder={webfetchFallbackOrder}
-            webfetchFallbackOptions={webfetchFallbackOptions}
-            webFetchConfig={webFetchConfig}
-            jinaConfig={jinaConfig}
-            onChangeProvider={(v) => {
-              updateConfigValue(aiConfig.id, 'webfetch_provider', v);
-              const next = filterOutPrimaryProvider(webfetchFallbackOrder, v);
-              if (next.length !== webfetchFallbackOrder.length) {
-                updateConfigValue(
-                  aiConfig.id,
-                  'webfetch_fallback_order',
-                  next,
-                );
+          <div className="grid items-start gap-6 lg:grid-cols-2">
+            <WebSearchSection
+              t={t}
+              websearchProvider={websearchProvider}
+              websearchProviderOptions={websearchProviderOptions}
+              websearchLbStrategy={websearchLbStrategy}
+              websearchLbStrategyOptions={websearchLbStrategyOptions}
+              websearchFallbackOrder={websearchFallbackOrder}
+              websearchFallbackOptions={websearchFallbackOptions}
+              tavilyConfig={tavilyConfig}
+              exaConfig={exaConfig}
+              anysearchConfig={anysearchConfig}
+              firecrawlConfig={firecrawlConfig}
+              jinaConfig={jinaConfig}
+              deepseekConfig={deepseekConfig}
+              miniMaxConfig={miniMaxConfig}
+              websearchMcpToolId={websearchMcpToolId}
+              websearchToolInfo={websearchToolInfo}
+              mcpDetails={mcp.mcpDetailsEditing['websearch_mcp_tool_id'] || {}}
+              onChangeProvider={(v) => {
+                updateConfigValue(aiConfig.id, 'websearch_provider', v);
+                // 静默从备用列表剔除新主用，避免保存时误报 toast
+                const next = filterOutPrimaryProvider(websearchFallbackOrder, v);
+                if (next.length !== websearchFallbackOrder.length) {
+                  updateConfigValue(aiConfig.id, 'websearch_fallback_order', next);
+                }
+              }}
+              onChangeLbStrategy={(v) => updateConfigValue(aiConfig.id, 'websearch_lb_strategy', v)}
+              onChangeFallbackOrder={(order) =>
+                updateConfigValue(aiConfig.id, 'websearch_fallback_order', order)
               }
-            }}
-            onChangeLbStrategy={(v) =>
-              updateConfigValue(aiConfig.id, 'webfetch_lb_strategy', v)
-            }
-            onChangeFallbackOrder={(order) =>
-              updateConfigValue(aiConfig.id, 'webfetch_fallback_order', order)
-            }
-            onUpdateConfig={updateConfigValue}
-          />
+              renderImageSources={hasRenderImageSources ? renderImageSources : undefined}
+              renderImageSourceOptions={
+                hasRenderImageSources ? renderImageSourceOptions : undefined
+              }
+              renderEmbedImages={
+                aiConfig?.config.render_embed_images
+                  ? aiConfig.config.render_embed_images.value !== false &&
+                    aiConfig.config.render_embed_images.value !== 'false'
+                  : undefined
+              }
+              onChangeRenderEmbedImages={
+                aiConfig?.config.render_embed_images
+                  ? (enabled) => updateConfigValue(aiConfig.id, 'render_embed_images', enabled)
+                  : undefined
+              }
+              onChangeRenderImageSources={
+                hasRenderImageSources
+                  ? (order) => updateConfigValue(aiConfig.id, 'render_image_sources', order)
+                  : undefined
+              }
+              onUpdateConfig={updateConfigValue}
+              onOpenMcpToolDialog={() => mcp.openMcpToolDialog('websearch')}
+              onClearMcpTool={() => mcp.handleClearMcpTool('websearch')}
+              onDetailValueChange={(name, val) =>
+                mcp.updateMcpDetailValue('websearch_mcp_tool_id', name, val)
+              }
+              onMcpParamNameChange={(oldN, newN) =>
+                mcp.renameMcpDetailKey('websearch_mcp_tool_id', oldN, newN)
+              }
+              onAddMcpDetailRow={() => mcp.addMcpDetailRow('websearch_mcp_tool_id')}
+              onRemoveMcpDetailRow={(name) => mcp.removeMcpDetailRow('websearch_mcp_tool_id', name)}
+            />
+            <WebFetchSection
+              t={t}
+              webfetchProvider={webfetchProvider}
+              webfetchProviderOptions={webfetchProviderOptions}
+              webfetchLbStrategy={webfetchLbStrategy}
+              webfetchLbStrategyOptions={webfetchLbStrategyOptions}
+              webfetchFallbackOrder={webfetchFallbackOrder}
+              webfetchFallbackOptions={webfetchFallbackOptions}
+              webFetchConfig={webFetchConfig}
+              jinaConfig={jinaConfig}
+              deepseekConfig={deepseekConfig}
+              onChangeProvider={(v) => {
+                updateConfigValue(aiConfig.id, 'webfetch_provider', v);
+                const next = filterOutPrimaryProvider(webfetchFallbackOrder, v);
+                if (next.length !== webfetchFallbackOrder.length) {
+                  updateConfigValue(aiConfig.id, 'webfetch_fallback_order', next);
+                }
+              }}
+              onChangeLbStrategy={(v) => updateConfigValue(aiConfig.id, 'webfetch_lb_strategy', v)}
+              onChangeFallbackOrder={(order) =>
+                updateConfigValue(aiConfig.id, 'webfetch_fallback_order', order)
+              }
+              onUpdateConfig={updateConfigValue}
+            />
+          </div>
         );
+      case 'multimodal':
       case 'imageUnderstand':
+      case 'voiceRecognition':
+      case 'documentExtract':
         return (
-          <ImageUnderstandSection
-            t={t}
-            isGlass={isGlass}
-            imageUnderstandProvider={imageUnderstandProvider}
-            imageUnderstandProviderOptions={imageUnderstandProviderOptions}
-            taskModelLacksImage={provider.taskModelLacksImage}
-            providerDesc={aiConfig?.config.image_understand_provider?.desc}
-            imageUnderstandMcpToolId={imageUnderstandMcpToolId}
-            imageUnderstandToolInfo={imageUnderstandToolInfo}
-            mcpDetails={
-              mcp.mcpDetailsEditing['image_understand_mcp_tool_id'] || {}
-            }
-            onChangeProvider={(v) =>
-              updateConfigValue(aiConfig.id, 'image_understand_provider', v)
-            }
-            onOpenMcpToolDialog={() =>
-              mcp.openMcpToolDialog('image_understand')
-            }
-            onClearMcpTool={() =>
-              mcp.handleClearMcpTool('image_understand')
-            }
-            onDetailValueChange={(name, val) =>
-              mcp.updateMcpDetailValue('image_understand_mcp_tool_id', name, val)
-            }
-            onMcpParamNameChange={(oldN, newN) =>
-              mcp.renameMcpDetailKey(
-                'image_understand_mcp_tool_id',
-                oldN,
-                newN,
-              )
-            }
-            onAddMcpDetailRow={() =>
-              mcp.addMcpDetailRow('image_understand_mcp_tool_id')
-            }
-            onRemoveMcpDetailRow={(name) =>
-              mcp.removeMcpDetailRow('image_understand_mcp_tool_id', name)
-            }
-          />
+          <div className="grid items-start gap-6 lg:grid-cols-2 xl:grid-cols-3">
+            <ImageUnderstandSection
+              t={t}
+              imageUnderstandProvider={imageUnderstandProvider}
+              imageUnderstandProviderOptions={imageUnderstandProviderOptions}
+              taskModelLacksImage={provider.taskModelLacksImage}
+              providerDesc={aiConfig?.config.image_understand_provider?.desc}
+              imageUnderstandMcpToolId={imageUnderstandMcpToolId}
+              imageUnderstandToolInfo={imageUnderstandToolInfo}
+              mcpDetails={mcp.mcpDetailsEditing['image_understand_mcp_tool_id'] || {}}
+              onChangeProvider={(v) =>
+                updateConfigValue(aiConfig.id, 'image_understand_provider', v)
+              }
+              onOpenMcpToolDialog={() => mcp.openMcpToolDialog('image_understand')}
+              onClearMcpTool={() => mcp.handleClearMcpTool('image_understand')}
+              onDetailValueChange={(name, val) =>
+                mcp.updateMcpDetailValue('image_understand_mcp_tool_id', name, val)
+              }
+              onMcpParamNameChange={(oldN, newN) =>
+                mcp.renameMcpDetailKey('image_understand_mcp_tool_id', oldN, newN)
+              }
+              onAddMcpDetailRow={() => mcp.addMcpDetailRow('image_understand_mcp_tool_id')}
+              onRemoveMcpDetailRow={(name) =>
+                mcp.removeMcpDetailRow('image_understand_mcp_tool_id', name)
+              }
+            />
+            <VoiceRecognitionSection
+              t={t}
+              aiConfigId={aiConfig.id}
+              asrProvider={asrProvider}
+              asrProviderOptions={asrProviderOptions}
+              asrProviderDesc={aiConfig?.config.asr_provider?.desc}
+              asrMcpToolId={asrMcpToolId}
+              asrToolInfo={asrToolInfo}
+              mcpDetails={mcp.mcpDetailsEditing['asr_mcp_tool_id'] || {}}
+              onChangeProvider={(v) => updateConfigValue(aiConfig.id, 'asr_provider', v)}
+              onOpenMcpToolDialog={() => mcp.openMcpToolDialog('asr')}
+              onClearMcpTool={() => mcp.handleClearMcpTool('asr')}
+              onDetailValueChange={(name, val) =>
+                mcp.updateMcpDetailValue('asr_mcp_tool_id', name, val)
+              }
+              onMcpParamNameChange={(oldN, newN) =>
+                mcp.renameMcpDetailKey('asr_mcp_tool_id', oldN, newN)
+              }
+              onAddMcpDetailRow={() => mcp.addMcpDetailRow('asr_mcp_tool_id')}
+              onRemoveMcpDetailRow={(name) => mcp.removeMcpDetailRow('asr_mcp_tool_id', name)}
+            />
+            <DocumentExtractSection
+              t={t}
+              aiConfigId={aiConfig.id}
+              documentExtractProvider={documentExtractProvider}
+              documentExtractProviderOptions={documentExtractProviderOptions}
+              documentExtractProviderDesc={aiConfig?.config.document_extract_provider?.desc}
+              documentExtractMcpToolId={documentExtractMcpToolId}
+              documentExtractToolInfo={documentExtractToolInfo}
+              mcpDetails={mcp.mcpDetailsEditing['document_extract_mcp_tool_id'] || {}}
+              onChangeProvider={(v) =>
+                updateConfigValue(aiConfig.id, 'document_extract_provider', v)
+              }
+              onOpenMcpToolDialog={() => mcp.openMcpToolDialog('document_extract')}
+              onClearMcpTool={() => mcp.handleClearMcpTool('document_extract')}
+              onDetailValueChange={(name, val) =>
+                mcp.updateMcpDetailValue('document_extract_mcp_tool_id', name, val)
+              }
+              onMcpParamNameChange={(oldN, newN) =>
+                mcp.renameMcpDetailKey('document_extract_mcp_tool_id', oldN, newN)
+              }
+              onAddMcpDetailRow={() => mcp.addMcpDetailRow('document_extract_mcp_tool_id')}
+              onRemoveMcpDetailRow={(name) =>
+                mcp.removeMcpDetailRow('document_extract_mcp_tool_id', name)
+              }
+            />
+          </div>
         );
       case 'vectorDb':
         return (
           <VectorDbSection
             t={t}
-            isGlass={isGlass}
             aiConfigId={aiConfig.id}
             qdrantProvider={qdrantProvider}
             qdrantProviderOptions={qdrantProviderOptions}
@@ -1068,80 +1027,6 @@ export default function AIConfigPage() {
             onUpdateEmbeddingOpenaiField={embedding.updateEmbeddingOpenaiField}
           />
         );
-      case 'voiceRecognition':
-        return (
-          <VoiceRecognitionSection
-            t={t}
-            aiConfigId={aiConfig.id}
-            asrProvider={asrProvider}
-            asrProviderOptions={asrProviderOptions}
-            asrProviderDesc={aiConfig?.config.asr_provider?.desc}
-            asrMcpToolId={asrMcpToolId}
-            asrToolInfo={asrToolInfo}
-            mcpDetails={mcp.mcpDetailsEditing['asr_mcp_tool_id'] || {}}
-            onChangeProvider={(v) =>
-              updateConfigValue(aiConfig.id, 'asr_provider', v)
-            }
-            onOpenMcpToolDialog={() => mcp.openMcpToolDialog('asr')}
-            onClearMcpTool={() => mcp.handleClearMcpTool('asr')}
-            onDetailValueChange={(name, val) =>
-              mcp.updateMcpDetailValue('asr_mcp_tool_id', name, val)
-            }
-            onMcpParamNameChange={(oldN, newN) =>
-              mcp.renameMcpDetailKey('asr_mcp_tool_id', oldN, newN)
-            }
-            onAddMcpDetailRow={() => mcp.addMcpDetailRow('asr_mcp_tool_id')}
-            onRemoveMcpDetailRow={(name) =>
-              mcp.removeMcpDetailRow('asr_mcp_tool_id', name)
-            }
-          />
-        );
-      case 'documentExtract':
-        return (
-          <DocumentExtractSection
-            t={t}
-            aiConfigId={aiConfig.id}
-            documentExtractProvider={documentExtractProvider}
-            documentExtractProviderOptions={documentExtractProviderOptions}
-            documentExtractProviderDesc={
-              aiConfig?.config.document_extract_provider?.desc
-            }
-            documentExtractMcpToolId={documentExtractMcpToolId}
-            documentExtractToolInfo={documentExtractToolInfo}
-            mcpDetails={
-              mcp.mcpDetailsEditing['document_extract_mcp_tool_id'] || {}
-            }
-            onChangeProvider={(v) =>
-              updateConfigValue(aiConfig.id, 'document_extract_provider', v)
-            }
-            onOpenMcpToolDialog={() =>
-              mcp.openMcpToolDialog('document_extract')
-            }
-            onClearMcpTool={() =>
-              mcp.handleClearMcpTool('document_extract')
-            }
-            onDetailValueChange={(name, val) =>
-              mcp.updateMcpDetailValue(
-                'document_extract_mcp_tool_id',
-                name,
-                val,
-              )
-            }
-            onMcpParamNameChange={(oldN, newN) =>
-              mcp.renameMcpDetailKey(
-                'document_extract_mcp_tool_id',
-                oldN,
-                newN,
-              )
-            }
-            onAddMcpDetailRow={() =>
-              mcp.addMcpDetailRow('document_extract_mcp_tool_id')
-            }
-            onRemoveMcpDetailRow={(name) =>
-              mcp.removeMcpDetailRow('document_extract_mcp_tool_id', name)
-            }
-          />
-        );
       case 'memorySettings':
         return (
           <MemorySettingsSection
@@ -1150,26 +1035,15 @@ export default function AIConfigPage() {
             isMemoryEnabled={isMemoryEnabled}
             memoryConfig={memoryConfig}
             onUpdateConfig={updateConfigValue}
-            onToggleMemory={(checked) =>
-              updateConfigValue(aiConfig.id, 'enable_memory', checked)
-            }
+            onToggleMemory={(checked) => updateConfigValue(aiConfig.id, 'enable_memory', checked)}
           />
         );
       case 'memeSettings':
         return (
-          <MemeSettingsSection
-            t={t}
-            memeConfig={memeConfig}
-            onUpdateConfig={updateConfigValue}
-          />
+          <MemeSettingsSection t={t} memeConfig={memeConfig} onUpdateConfig={updateConfigValue} />
         );
       case 'gsCoreAiMcpServer':
-        return (
-          <GsCoreAiMcpServerSection
-            t={t}
-            isGlass={isGlass}
-          />
-        );
+        return <GsCoreAiMcpServerSection t={t} isGlass={isGlass} />;
       case 'commandExecutor':
         return (
           <CommandExecutorSection
@@ -1179,36 +1053,9 @@ export default function AIConfigPage() {
           />
         );
       case 'relationshipSettings':
-        return (
-          <RelationshipSettingsSection
-            t={t}
-            aiConfig={aiConfig}
-            onUpdateConfig={updateConfigValue}
-          />
-        );
-      case 'agentKitsSettings':
-        return (
-          <AgentKitsSettingsSection
-            t={t}
-            aiConfig={aiConfig}
-            onUpdateConfig={updateConfigValue}
-          />
-        );
-      case 'cognitionSettings':
-        return (
-          <CognitionSettingsSection
-            t={t}
-            aiConfig={aiConfig}
-            onUpdateConfig={updateConfigValue}
-          />
-        );
       case 'advancedSettings':
         return (
-          <AdvancedSettingsSection
-            t={t}
-            aiConfig={aiConfig}
-            onUpdateConfig={updateConfigValue}
-          />
+          <AdvancedSettingsSection t={t} aiConfig={aiConfig} onUpdateConfig={updateConfigValue} />
         );
       case 'aiHistory':
         // AI 历史调用页面（外部路由 /ai-history，此处返回 null 作为占位）
@@ -1218,198 +1065,176 @@ export default function AIConfigPage() {
     }
   };
 
-  return (
-    <div className="flex-1 min-h-0 flex flex-col">
-      {/* Header（外边距由 AppLayout --layout-gutter 统一提供） */}
-      <div className="shrink-0 pb-3">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-          <div className="min-w-0 overflow-x-auto">
-            <h1 className="whitespace-nowrap text-xl sm:text-3xl font-bold flex items-center gap-2 sm:gap-3">
-              <Bot className="w-6 h-6 sm:w-8 sm:h-8 shrink-0" />
-              {t('aiConfig.title')}
-            </h1>
-            <p className="whitespace-nowrap text-muted-foreground mt-1 text-xs sm:text-sm">
-              {t('aiConfig.description')}
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center justify-end gap-2 self-end sm:self-auto">
-            {isAIEnabled && (
-              <Button
-                onClick={aiSwitch.handleOpenHelp}
-                size="sm"
-                variant="outline"
-                className="gap-1.5 sm:gap-2 whitespace-nowrap text-xs sm:text-sm"
-              >
-                <HelpCircle className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                {t('aiConfig.serviceSwitch.usageHelp')}
-              </Button>
-            )}
-            {(() => {
-              const checkConfigBtn = (
-                <Button
-                  onClick={() => wizard.fetchWizardChecklist()}
-                  disabled={
-                    wizard.isWizardLoading || wizard.isPendingRestart
-                  }
-                  size="sm"
-                  variant="outline"
-                  className="gap-1.5 sm:gap-2 whitespace-nowrap text-xs sm:text-sm"
-                >
-                  {wizard.isWizardLoading ? (
-                    <Loader2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 animate-spin" />
-                  ) : (
-                    <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                  )}
-                  {t('aiConfig.checkConfig')}
-                </Button>
-              );
-              // 只有按钮被禁用时才显示提示 tooltip
-              if (wizard.isPendingRestart) {
-                return (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span tabIndex={0} className="inline-flex">
-                        {checkConfigBtn}
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom">
-                      {t('aiConfig.serviceSwitch.checkConfigPendingRestart')}
-                    </TooltipContent>
-                  </Tooltip>
-                );
-              }
-              return checkConfigBtn;
-            })()}
-            <Button
-              onClick={handleSaveConfig}
-              disabled={!isConfigDirty || isSaving}
-              size="sm"
-              className={cn(
-                'gap-1.5 sm:gap-2 whitespace-nowrap transition-all duration-300 text-xs sm:text-sm',
-                isConfigDirty && 'animate-in fade-in slide-in-from-bottom-2',
-              )}
-            >
-              {isSaving ? (
-                <Loader2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 animate-spin" />
-              ) : (
-                <Save className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-              )}
-              {t('aiConfig.saveButton')}
-            </Button>
-          </div>
-        </div>
-      </div>
+  const sectionTabs = (
+    <TabButtonGroup
+      className="w-full"
+      collapseOnMobile
+      value={activeSection}
+      onValueChange={setActiveSection}
+      disabled={isSectionsLocked}
+      options={sidebarItems.map((item) => ({
+        value: item.id,
+        label: item.title,
+        icon: item.icon,
+        badge:
+          'alert' in item && item.alert ? (
+            <span className="h-2 w-2 shrink-0 rounded-full bg-red-500" aria-hidden />
+          ) : undefined,
+      }))}
+    />
+  );
 
-      {/* Main Content Area - banner + sidebar + content in unified glass-card */}
-      <div className="flex-1 flex flex-col min-h-0">
-        <div className="flex-1 min-h-0 glass-card rounded-2xl flex flex-col">
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[inherit]">
-          {/* AI Service Master Switch Banner */}
-          <div className="shrink-0 px-3 sm:px-5 pt-3 sm:pt-5 pb-2">
-            {wizard.isBackendPendingRestart && (
-              <div className="mb-3 flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-amber-700 dark:text-amber-400">
-                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                <div className="text-xs sm:text-sm">
-                  <p className="font-semibold">
-                    {t('aiConfig.serviceSwitch.restartRequiredTitle')}
-                  </p>
-                  <p className="mt-1 opacity-90">
-                    {t('aiConfig.serviceSwitch.restartRequiredDesc')}
-                  </p>
-                </div>
-              </div>
-            )}
-            <div className="flex items-center gap-3 sm:gap-5 p-3 sm:p-5 rounded-2xl border border-border/30 bg-card/30">
-              <div
-                className={cn(
-                  'flex items-center justify-center flex-shrink-0 transition-all duration-500',
-                  isAIEnabled ? 'text-primary' : 'text-muted-foreground',
-                )}
-              >
-                <Brain className="w-6 h-6 sm:w-8 sm:h-8" strokeWidth={1.5} />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 sm:gap-3">
-                  <span className="text-sm sm:text-base font-semibold">
-                    {t('aiConfig.serviceSwitch.title')}
-                  </span>
-                  <Badge
-                    variant={isAIEnabled ? 'default' : 'secondary'}
-                    className={cn(
-                      'text-xs font-medium',
-                      isAIEnabled &&
-                        'bg-primary/15 text-primary hover:bg-primary/20 border-primary/20',
-                    )}
+  return (
+    <>
+      <PinnedPage
+        header={
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div className="min-w-0 sm:overflow-x-auto">
+              <h1 className="flex items-center gap-3 whitespace-nowrap text-3xl font-bold">
+                <Bot className="h-8 w-8 shrink-0" />
+                {t('aiConfig.title')}
+              </h1>
+              <p className="mt-1 text-muted-foreground sm:whitespace-nowrap">
+                {t('aiConfig.description')}
+              </p>
+            </div>
+            <div className={headerActionRowClass}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    aria-pressed={isAIEnabled}
+                    aria-label={t('aiConfig.serviceSwitch.title')}
+                    onClick={() => aiSwitch.handleAISwitchChange(!isAIEnabled)}
+                    className="header-action-fixed inline-flex h-10 items-center gap-2 whitespace-nowrap rounded-md border border-input bg-background px-4 text-sm font-medium hover:bg-accent hover:text-accent-foreground"
                   >
-                    {isAIEnabled ? t('common.enabled') : t('common.disabled')}
-                  </Badge>
-                </div>
-                <p className="text-sm text-muted-foreground mt-1">
+                    <Brain className="h-4 w-4 shrink-0" />
+                    <span>{t('aiConfig.serviceSwitch.title')}</span>
+                    <span
+                      aria-hidden
+                      className={cn(
+                        'pointer-events-none inline-flex h-6 w-11 shrink-0 items-center rounded-full border-2 border-transparent transition-colors',
+                        isAIEnabled ? 'bg-primary' : 'bg-input',
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          'block h-5 w-5 rounded-full bg-background shadow-lg transition-transform',
+                          isAIEnabled ? 'translate-x-5' : 'translate-x-0',
+                        )}
+                      />
+                    </span>
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
                   {isAIEnabled
                     ? t('aiConfig.serviceSwitch.enabledDesc')
                     : t('aiConfig.serviceSwitch.disabledDesc')}
-                </p>
-              </div>
-              <Switch
-                checked={isAIEnabled}
-                onCheckedChange={aiSwitch.handleAISwitchChange}
-                className="scale-110"
-              />
-            </div>
-          </div>
-
-          {/* Sidebar + Content */}
-          <div className="flex-1 flex min-h-0 border-t border-border/40">
-            <div
-              className={cn(
-                'border-r border-border/40 flex flex-col shrink-0',
-                isMobile ? 'w-14' : 'w-60',
+                </TooltipContent>
+              </Tooltip>
+              {isAIEnabled && (
+                <Button
+                  onClick={aiSwitch.handleOpenHelp}
+                  variant="outline"
+                  className="gap-2 whitespace-nowrap"
+                >
+                  <HelpCircle className="w-4 h-4" />
+                  {t('aiConfig.serviceSwitch.usageHelp')}
+                </Button>
               )}
-            >
-              <ScrollArea className="flex-1 px-1 pb-2 pt-2 sm:px-2">
-                <div className="space-y-0.5">
-                  {sidebarItems.map((item) => (
-                    <SidebarItem
-                      key={item.id}
-                      id={item.id}
-                      activeSection={activeSection}
-                      icon={item.icon}
-                      title={item.title}
-                      disabled={isSectionsLocked}
-                      disabledTooltip={
-                        isSectionsLocked ? sectionsLockedTooltip : undefined
-                      }
-                      alert={'alert' in item ? item.alert : false}
-                      collapsed={isMobile}
-                      onClick={setActiveSection}
-                    />
-                  ))}
-                </div>
-              </ScrollArea>
-            </div>
-
-            <div className="flex-1 overflow-y-auto">
-              <div
+              {(() => {
+                const checkConfigBtn = (
+                  <Button
+                    onClick={() => wizard.fetchWizardChecklist()}
+                    disabled={wizard.isWizardLoading || wizard.isPendingRestart}
+                    variant="outline"
+                    className="gap-2 whitespace-nowrap"
+                  >
+                    {wizard.isWizardLoading ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Sparkles className="w-4 h-4" />
+                    )}
+                    {t('aiConfig.checkConfig')}
+                  </Button>
+                );
+                if (wizard.isPendingRestart) {
+                  return (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span tabIndex={0} className="header-action-grow inline-flex">
+                          {checkConfigBtn}
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom">
+                        {t('aiConfig.serviceSwitch.checkConfigPendingRestart')}
+                      </TooltipContent>
+                    </Tooltip>
+                  );
+                }
+                return checkConfigBtn;
+              })()}
+              <Button
+                onClick={handleSaveConfig}
+                disabled={!isConfigDirty || isSaving}
                 className={cn(
-                  'p-3 sm:p-6 transition-opacity duration-200',
-                  isSectionsLocked &&
-                    'pointer-events-none opacity-50 select-none',
+                  'button-solid gap-2 whitespace-nowrap transition-all duration-300',
+                  isConfigDirty && 'animate-in fade-in slide-in-from-bottom-2',
                 )}
-                aria-disabled={isSectionsLocked}
               >
-                {isLoadingDetail && Object.keys(configs).length === 0 ? (
-                  <div className="flex items-center justify-center h-64">
-                    <Loader2 className="w-8 h-8 animate-spin" />
-                  </div>
+                {isSaving ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
                 ) : (
-                  renderActiveSection()
+                  <Save className="w-4 h-4" />
                 )}
-              </div>
+                {t('aiConfig.saveButton')}
+              </Button>
             </div>
           </div>
+        }
+        toolbar={
+          <div className="min-w-0">
+            {isSectionsLocked ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="inline-flex w-full max-w-full">{sectionTabs}</span>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{sectionsLockedTooltip}</TooltipContent>
+              </Tooltip>
+            ) : (
+              sectionTabs
+            )}
+          </div>
+        }
+      >
+        <div className="glass-card rounded-2xl p-3 sm:p-6">
+          {wizard.isBackendPendingRestart && (
+            <GlassAlert tone="warning" icon={AlertTriangle} className="mb-4">
+              <p className="text-xs font-semibold sm:text-sm">
+                {t('aiConfig.serviceSwitch.restartRequiredTitle')}
+              </p>
+              <p className="mt-1 text-xs opacity-90 sm:text-sm">
+                {t('aiConfig.serviceSwitch.restartRequiredDesc')}
+              </p>
+            </GlassAlert>
+          )}
+          <div
+            className={cn(
+              'transition-opacity duration-200',
+              isSectionsLocked && 'pointer-events-none opacity-50 select-none',
+            )}
+            aria-disabled={isSectionsLocked}
+          >
+            {isLoadingDetail && Object.keys(configs).length === 0 ? (
+              <div className="flex h-64 items-center justify-center">
+                <Loader2 className="h-8 w-8 animate-spin" />
+              </div>
+            ) : (
+              renderActiveSection()
+            )}
           </div>
         </div>
-      </div>
+      </PinnedPage>
 
       {/* ====================== Dialogs ====================== */}
 
@@ -1421,11 +1246,13 @@ export default function AIConfigPage() {
         lowLevelConfig={provider.lowLevelConfig}
         onOpenChange={provider.setIsManageConfigDialogOpen}
         onOpenCreate={() => {
+          provider.resetNewConfigForm();
           provider.setIsCreateDialogOpen(true);
           provider.fetchProviderConfigOptions(provider.newConfigProvider);
         }}
         onOpenEdit={provider.openEditDialog}
         onOpenDelete={provider.openDeleteDialog}
+        onCopy={provider.handleCopyConfig}
       />
 
       <CreateConfigDialog
@@ -1446,6 +1273,11 @@ export default function AIConfigPage() {
         sendBackThinking={provider.newConfigSendBackThinking}
         forwardEndUserId={provider.newConfigForwardEndUserId}
         endUserIdSalt={provider.newConfigEndUserIdSalt}
+        videoInputFormat={provider.newConfigVideoInputFormat}
+        videoFps={provider.newConfigVideoFps}
+        videoPartExtra={provider.newConfigVideoPartExtra}
+        videoInlineMaxMb={provider.newConfigVideoInlineMaxMb}
+        videoUrlPassthrough={provider.newConfigVideoUrlPassthrough}
         fetchedModels={provider.newConfigFetchedModels}
         isFetching={provider.isFetchingNewConfigModels}
         providerConfigOptions={provider.providerConfigOptions}
@@ -1467,6 +1299,11 @@ export default function AIConfigPage() {
         onChangeSendBackThinking={provider.setNewConfigSendBackThinking}
         onChangeForwardEndUserId={provider.setNewConfigForwardEndUserId}
         onChangeEndUserIdSalt={provider.setNewConfigEndUserIdSalt}
+        onChangeVideoInputFormat={provider.setNewConfigVideoInputFormat}
+        onChangeVideoFps={provider.setNewConfigVideoFps}
+        onChangeVideoPartExtra={provider.setNewConfigVideoPartExtra}
+        onChangeVideoInlineMaxMb={provider.setNewConfigVideoInlineMaxMb}
+        onChangeVideoUrlPassthrough={provider.setNewConfigVideoUrlPassthrough}
         onReset={provider.resetNewConfigForm}
         onSubmit={provider.handleCreateOpenaiConfig}
       />
@@ -1489,12 +1326,8 @@ export default function AIConfigPage() {
           }
           provider.setIsEditDialogOpen(open);
         }}
-        onChangeField={(field, value) =>
-          provider.setOpenaiConfigDataField(field, value)
-        }
-        onChangeModelEffort={(val) =>
-          provider.setOpenaiConfigDataField('model_effort', val)
-        }
+        onChangeField={(field, value) => provider.setOpenaiConfigDataField(field, value)}
+        onChangeModelEffort={(val) => provider.setOpenaiConfigDataField('model_effort', val)}
         onSave={provider.handleSaveOpenaiConfig}
       />
 
@@ -1546,7 +1379,6 @@ export default function AIConfigPage() {
         status={wizard.wizardStatus}
         onOpenChange={wizard.setIsWizardDialogOpen}
       />
-    </div>
+    </>
   );
 }
-

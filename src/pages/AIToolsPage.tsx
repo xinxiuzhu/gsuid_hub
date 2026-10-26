@@ -1,13 +1,19 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { useTheme } from '@/contexts/ThemeContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { GlassAlert } from '@/components/ui/glass-alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { TabButtonGroup, tabToolbarControlClass, tabToolbarGroupWrapClass } from '@/components/ui/TabButtonGroup';
+import {
+  TabButtonGroup,
+  tabToolbarShellControlClass,
+  tabToolbarGroupWrapClass,
+} from '@/components/ui/TabButtonGroup';
+import { SearchableMenu } from '@/components/ui/searchable-menu';
+import { PluginIcon } from '@/components/ui/plugin-icon';
 import {
   Select,
   SelectContent,
@@ -26,24 +32,21 @@ import {
   Search,
   Network,
   Boxes,
+  Puzzle,
+  Sparkles,
+  Plus,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   aiToolsApi,
   getApiErrorMessage,
-  personaApi,
   type AITool,
   type AIToolAssemblePreviewResponse,
   type AIEntityIndexResponse,
-  type PersonaConfig,
-  type PersonaListItem,
 } from '@/lib/api';
-import {
-  countToolDiagnostics,
-  diagnoseTool,
-  filterToolsByDiagnostic,
-} from '@/lib/featureUtils';
+import { countToolDiagnostics, diagnoseTool, filterToolsByDiagnostic } from '@/lib/featureUtils';
 import { PersonaToolScopePanel } from '@/components/persona/PersonaToolScopePanel';
+import SkillsPanel from '@/pages/AITools/SkillsPanel';
 import { toast } from 'sonner';
 import {
   Dialog,
@@ -52,12 +55,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 // ============================================================================
 // 类型定义
@@ -131,10 +129,10 @@ interface ParsedTool {
 function parseToolDescription(tool: AITool, language: string): ParsedTool {
   const lines = (tool.description ?? '').split('\n');
   const firstLine = (lines[0] ?? '').trim();
-  
+
   let title: string;
   let subtitle: string;
-  
+
   if (language === 'zh-CN') {
     // 中文模式：第一行中文作为 title，函数名作为 subtitle
     title = firstLine || tool.name;
@@ -144,7 +142,7 @@ function parseToolDescription(tool: AITool, language: string): ParsedTool {
     title = tool.name;
     subtitle = firstLine || tool.name;
   }
-  
+
   // Args 之前的所有内容作为简介
   const summaryLines: string[] = [];
   for (const line of lines) {
@@ -157,7 +155,7 @@ function parseToolDescription(tool: AITool, language: string): ParsedTool {
   }
   // 去掉第一行（标题行），保留换行
   const summary = summaryLines.slice(1).join('\n');
-  
+
   return {
     name: tool.name,
     title,
@@ -187,31 +185,43 @@ function getPageNumbers(current: number, total: number): (number | 'ellipsis')[]
   return pages;
 }
 
+// 插件筛选项前缀图标：'all' 用 Puzzle 占位（与 /ai-capability-agents 的「全部插件」一致），
+// 其余走统一 PluginIcon（core_command 等内置名由 getPluginIconUrl 映射到项目 LOGO）
+function PluginFilterIcon({ plugin }: { plugin: string }) {
+  if (plugin === 'all') return <Puzzle className="h-4 w-4 shrink-0 text-muted-foreground" />;
+  return <PluginIcon pluginName={plugin} className="h-4 w-4" />;
+}
+
+function pluginFilterLabel(plugin: string, count: number, allLabel: string): string {
+  return plugin === 'all' ? `${allLabel} (${count})` : `${plugin} (${count})`;
+}
+
 // ============================================================================
 // 组件定义
 // ============================================================================
 
 export default function AIToolsPage() {
-  const { style } = useTheme();
   const { t, language } = useLanguage();
-  const isGlass = style === 'glassmorphism';
 
   // 状态
   const [tools, setTools] = useState<AITool[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [plugins, setPlugins] = useState<string[]>([]);
-  const [totalCount, setTotalCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedTool, setSelectedTool] = useState<ParsedTool | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
-  
+
   // 筛选状态 - 同时支持分类、插件和搜索筛选
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [selectedPlugin, setSelectedPlugin] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [diagnosticFilter, setDiagnosticFilter] = useState<'all' | 'issues' | 'empty_description'>('all');
-  const [pageTab, setPageTab] = useState<'tools' | 'assemble' | 'entity'>('tools');
+  const [diagnosticFilter, setDiagnosticFilter] = useState<'all' | 'issues' | 'empty_description'>(
+    'all',
+  );
+  const [pageTab, setPageTab] = useState<'tools' | 'assemble' | 'entity' | 'skills'>('tools');
+  // 「添加技能」按钮在页签同行（toolbar），弹窗开合状态因此挂在页面层
+  const [skillsAddOpen, setSkillsAddOpen] = useState(false);
 
   // 当前页码（每页 PAGE_SIZE 个工具）
   const [page, setPage] = useState(1);
@@ -228,7 +238,11 @@ export default function AIToolsPage() {
 
   // 获取所有插件列表（core 放在最后）
   const pluginList = useMemo(() => {
-    return ['all', ...plugins.filter(p => p !== 'core').sort(), ...plugins.filter(p => p === 'core')];
+    return [
+      'all',
+      ...plugins.filter((p) => p !== 'core').sort(),
+      ...plugins.filter((p) => p === 'core'),
+    ];
   }, [plugins]);
 
   // 获取所有分类列表（self, buildin 放在前面）
@@ -258,10 +272,11 @@ export default function AIToolsPage() {
 
   // 按筛选条件过滤后的工具列表
   const filteredTools = useMemo((): AITool[] => {
-    const base = tools.filter(tool =>
-      (selectedCategory === 'all' || tool.category === selectedCategory) &&
-      (selectedPlugin === 'all' || tool.plugin === selectedPlugin) &&
-      matchesSearch(tool)
+    const base = tools.filter(
+      (tool) =>
+        (selectedCategory === 'all' || tool.category === selectedCategory) &&
+        (selectedPlugin === 'all' || tool.plugin === selectedPlugin) &&
+        matchesSearch(tool),
     );
     return filterToolsByDiagnostic(base, diagnosticFilter) as AITool[];
   }, [tools, selectedCategory, selectedPlugin, matchesSearch, diagnosticFilter]);
@@ -292,7 +307,7 @@ export default function AIToolsPage() {
 
   // 解析后的工具列表
   const parsedTools = useMemo(() => {
-    return filteredTools.map(tool => parseToolDescription(tool, language));
+    return filteredTools.map((tool) => parseToolDescription(tool, language));
   }, [filteredTools, language]);
 
   // 分页:筛选条件变化时回到第 1 页
@@ -343,8 +358,7 @@ export default function AIToolsPage() {
     if (!q) return entries;
     return entries.filter(
       (e) =>
-        e.surface.toLowerCase().includes(q) ||
-        e.plugins.some((p) => p.toLowerCase().includes(q)),
+        e.surface.toLowerCase().includes(q) || e.plugins.some((p) => p.toLowerCase().includes(q)),
     );
   }, [entityIndex, entitySearch]);
 
@@ -365,7 +379,6 @@ export default function AIToolsPage() {
         setTools(data.tools || []);
         setCategories(data.categories || []);
         setPlugins(data.plugins || []);
-        setTotalCount(data.total_count || 0);
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : t('aiTools.loadFailed');
         setError(errorMsg);
@@ -386,12 +399,14 @@ export default function AIToolsPage() {
     <PinnedPage
       header={
         /* 页面标题（固定区） */
-        <div className="min-w-0 overflow-x-auto">
-          <h1 className="whitespace-nowrap text-3xl font-bold flex items-center gap-3">
+        <div className="min-w-0 sm:overflow-x-auto">
+          <h1 className="sm:whitespace-nowrap text-3xl font-bold flex items-center gap-3">
             <Wrench className="w-8 h-8 shrink-0" />
             {t('aiTools.title')}
           </h1>
-          <p className="whitespace-nowrap text-muted-foreground mt-1">{t('aiTools.description')}</p>
+          <p className="sm:whitespace-nowrap text-muted-foreground mt-1">
+            {t('aiTools.description')}
+          </p>
         </div>
       }
       toolbar={
@@ -400,12 +415,29 @@ export default function AIToolsPage() {
           <div className={cn(tabToolbarGroupWrapClass, 'max-w-full')}>
             <TabButtonGroup
               options={[
-                { value: 'tools', label: t('aiTools.tabs.tools'), icon: <Wrench className="w-4 h-4" /> },
-                { value: 'assemble', label: t('aiTools.tabs.assemble'), icon: <Boxes className="w-4 h-4" /> },
-                { value: 'entity', label: t('aiTools.tabs.entityIndex'), icon: <Network className="w-4 h-4" /> },
+                {
+                  value: 'tools',
+                  label: t('aiTools.tabs.tools'),
+                  icon: <Wrench className="w-4 h-4" />,
+                },
+                {
+                  value: 'assemble',
+                  label: t('aiTools.tabs.assemble'),
+                  icon: <Boxes className="w-4 h-4" />,
+                },
+                {
+                  value: 'entity',
+                  label: t('aiTools.tabs.entityIndex'),
+                  icon: <Network className="w-4 h-4" />,
+                },
+                {
+                  value: 'skills',
+                  label: t('aiTools.tabs.skills'),
+                  icon: <Sparkles className="w-4 h-4" />,
+                },
               ]}
               value={pageTab}
-              onValueChange={(v) => setPageTab(v as 'tools' | 'assemble' | 'entity')}
+              onValueChange={(v) => setPageTab(v as 'tools' | 'assemble' | 'entity' | 'skills')}
               className="shrink-0"
             />
           </div>
@@ -419,7 +451,7 @@ export default function AIToolsPage() {
                   placeholder={t('aiTools.searchPlaceholder')}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className={cn(tabToolbarControlClass, 'min-w-0 w-full pl-9')}
+                  className={cn(tabToolbarShellControlClass, 'min-w-0 w-full pl-9')}
                 />
               </div>
 
@@ -428,7 +460,12 @@ export default function AIToolsPage() {
                   value={diagnosticFilter}
                   onValueChange={(v) => setDiagnosticFilter(v as typeof diagnosticFilter)}
                 >
-                  <SelectTrigger className={cn(tabToolbarControlClass, 'w-full min-w-0 px-2 [&>span]:min-w-0')}>
+                  <SelectTrigger
+                    className={cn(
+                      tabToolbarShellControlClass,
+                      'w-full min-w-0 px-2 [&>span]:min-w-0',
+                    )}
+                  >
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -446,7 +483,12 @@ export default function AIToolsPage() {
 
               <div className="min-w-0 flex-1">
                 <Select value={selectedCategory} onValueChange={setSelectedCategory}>
-                  <SelectTrigger className={cn(tabToolbarControlClass, 'w-full min-w-0 px-2 [&>span]:min-w-0')}>
+                  <SelectTrigger
+                    className={cn(
+                      tabToolbarShellControlClass,
+                      'w-full min-w-0 px-2 [&>span]:min-w-0',
+                    )}
+                  >
                     <SelectValue placeholder={t('aiTools.selectCategory')} />
                   </SelectTrigger>
                   <SelectContent>
@@ -467,75 +509,52 @@ export default function AIToolsPage() {
               </div>
 
               <div className="min-w-0 flex-1">
-                <Select value={selectedPlugin} onValueChange={setSelectedPlugin}>
-                  <SelectTrigger className={cn(tabToolbarControlClass, 'w-full min-w-0 px-2 [&>span]:min-w-0')}>
-                    <SelectValue placeholder={t('aiTools.selectPlugin')} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {pluginList.map((plugin) => {
-                      const count = pluginCounts[plugin] || 0;
-                      const disabled =
-                        plugin !== 'all' && plugin !== selectedPlugin && count === 0;
-                      return (
-                        <SelectItem key={plugin} value={plugin} disabled={disabled}>
-                          {plugin === 'all'
-                            ? `${t('aiTools.allPlugins')} (${pluginCounts.all || 0})`
-                            : `${plugin} (${count})`}
-                        </SelectItem>
-                      );
-                    })}
-                  </SelectContent>
-                </Select>
+                <SearchableMenu
+                  appearance="field"
+                  width="trigger"
+                  align="end"
+                  className={cn(tabToolbarShellControlClass, 'w-full min-w-0 px-2')}
+                  placeholder={t('aiTools.selectPlugin')}
+                  searchPlaceholder={t('common.search')}
+                  value={selectedPlugin}
+                  onValueChange={setSelectedPlugin}
+                  items={pluginList.map((plugin) => {
+                    const count = pluginCounts[plugin] || 0;
+                    return {
+                      value: plugin,
+                      label: pluginFilterLabel(plugin, count, t('aiTools.allPlugins')),
+                      icon: <PluginFilterIcon plugin={plugin} />,
+                      disabled: plugin !== 'all' && plugin !== selectedPlugin && count === 0,
+                    };
+                  })}
+                />
               </div>
             </div>
+          )}
+
+          {/* 技能页签的操作按钮：与页签同行右对齐，高度对齐页签外壳 */}
+          {pageTab === 'skills' && (
+            <Button
+              onClick={() => setSkillsAddOpen(true)}
+              className={cn(tabToolbarShellControlClass, 'w-full gap-2 md:w-auto')}
+            >
+              <Plus className="h-4 w-4" />
+              {t('aiSkills.addSkill')}
+            </Button>
           )}
         </div>
       }
     >
       {/* 错误提示 */}
       {error && pageTab === 'tools' && (
-        <Card className={cn(
-          "border-destructive/50",
-          isGlass ? "glass-card" : "border border-border/50"
-        )}>
-          <CardContent className="flex items-center gap-3 p-4 text-destructive">
-            <AlertCircle className="w-5 h-5" />
-            <span>{error}</span>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* 诊断徽章 + 工具计数：数据展示，随列表滚动，不占固定 toolbar 高度 */}
-      {pageTab === 'tools' && !isLoading && !error && (
-        <div className="flex min-w-0 items-center justify-between gap-2">
-          {diagnosticCounts.total > 0 ? (
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 text-xs">
-              <Badge variant="secondary">
-                {t('aiTools.diagnostics.ok')}: {diagnosticCounts.ok}
-              </Badge>
-              {diagnosticCounts.emptyDescription > 0 && (
-                <Badge variant="destructive">
-                  {t('aiTools.diagnostics.emptyDescription')}: {diagnosticCounts.emptyDescription}
-                </Badge>
-              )}
-              {diagnosticCounts.meta > 0 && (
-                <Badge className="bg-amber-500/15 text-amber-700 hover:bg-amber-500/20 dark:text-amber-300">
-                  {t('aiTools.diagnostics.meta')}: {diagnosticCounts.meta}
-                </Badge>
-              )}
-            </div>
-          ) : (
-            <span />
-          )}
-          <p className="shrink-0 text-sm text-muted-foreground whitespace-nowrap">
-            {t('aiTools.toolCount', { count: filteredTools.length, total: totalCount })}
-          </p>
-        </div>
+        <GlassAlert tone="danger" icon={AlertCircle}>
+          {error}
+        </GlassAlert>
       )}
 
       {pageTab === 'assemble' && (
         <div className="space-y-4">
-          <Card className={cn(isGlass ? 'glass-card' : 'border border-border/50')}>
+          <Card className={cn('glass-card')}>
             <CardHeader className="pb-3">
               <CardTitle className="text-base flex items-center gap-2">
                 <Boxes className="w-4 h-4" />
@@ -554,8 +573,16 @@ export default function AIToolsPage() {
                     placeholder={t('aiTools.assemble.queryPlaceholder')}
                     onKeyDown={(e) => e.key === 'Enter' && void runAssemblePreview()}
                   />
-                  <Button className="h-9" onClick={() => void runAssemblePreview()} disabled={assembleLoading}>
-                    {assembleLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                  <Button
+                    className="h-9"
+                    onClick={() => void runAssemblePreview()}
+                    disabled={assembleLoading}
+                  >
+                    {assembleLoading ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Search className="w-4 h-4" />
+                    )}
                     {t('aiTools.assemble.run')}
                   </Button>
                 </div>
@@ -570,7 +597,9 @@ export default function AIToolsPage() {
                       </div>
                       <div className="flex flex-wrap gap-1.5">
                         {(assembleResult.seeds ?? []).length === 0 && (
-                          <span className="text-xs text-muted-foreground">{t('common.noData')}</span>
+                          <span className="text-xs text-muted-foreground">
+                            {t('common.noData')}
+                          </span>
                         )}
                         {(assembleResult.seeds ?? []).map((s) => (
                           <AssembleToolChip
@@ -590,12 +619,15 @@ export default function AIToolsPage() {
                         <Badge variant="secondary">{assembleResult.pool?.length ?? 0}</Badge>
                       </div>
                       <p className="text-xs text-muted-foreground">
-                        core={assembleResult.core_pool_size ?? 0} · recall={assembleResult.recall ?? 0} · max_extra=
+                        core={assembleResult.core_pool_size ?? 0} · recall=
+                        {assembleResult.recall ?? 0} · max_extra=
                         {assembleResult.max_extra ?? 0}
                       </p>
                       <div className="flex flex-wrap gap-1.5 max-h-48 overflow-auto">
                         {(assembleResult.pool ?? []).length === 0 && (
-                          <span className="text-xs text-muted-foreground">{t('common.noData')}</span>
+                          <span className="text-xs text-muted-foreground">
+                            {t('common.noData')}
+                          </span>
                         )}
                         {(assembleResult.pool ?? []).map((s) => (
                           <AssembleToolChip
@@ -619,7 +651,7 @@ export default function AIToolsPage() {
 
       {pageTab === 'entity' && (
         <div className="space-y-4">
-          <Card className={cn(isGlass ? 'glass-card' : 'border border-border/50')}>
+          <Card className={cn('glass-card')}>
             <CardHeader className="pb-3">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                 <div>
@@ -632,8 +664,17 @@ export default function AIToolsPage() {
                     {entityIndex ? ` · ${entityIndex.count}` : ''}
                   </CardDescription>
                 </div>
-                <Button variant="outline" className="h-9" onClick={() => void loadEntityIndex()} disabled={entityLoading}>
-                  {entityLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                <Button
+                  variant="outline"
+                  className="h-9"
+                  onClick={() => void loadEntityIndex()}
+                  disabled={entityLoading}
+                >
+                  {entityLoading ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Search className="w-4 h-4" />
+                  )}
                   {t('common.refresh')}
                 </Button>
               </div>
@@ -671,7 +712,10 @@ export default function AIToolsPage() {
                     <tbody>
                       {filteredEntities.length === 0 ? (
                         <tr>
-                          <td colSpan={3} className="py-8 text-center text-sm text-muted-foreground">
+                          <td
+                            colSpan={3}
+                            className="py-8 text-center text-sm text-muted-foreground"
+                          >
                             {t('common.noData')}
                           </td>
                         </tr>
@@ -712,146 +756,150 @@ export default function AIToolsPage() {
       )}
 
       {/* 工具列表 */}
-      {pageTab === 'tools' && (isLoading ? (
-        <div className="glass-card-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <Card key={i} className={cn(
-              isGlass ? "glass-card" : "border border-border/50"
-            )}>
-              <CardHeader>
-                <Skeleton className="h-6 w-3/4" />
-              </CardHeader>
-              <CardContent>
-                <Skeleton className="h-4 w-full" />
-                <Skeleton className="h-4 w-2/3 mt-2" />
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      ) : parsedTools.length === 0 ? (
-        <Card className={cn(
-          isGlass ? "glass-card" : "border border-border/50"
-        )}>
-          <CardContent className="flex flex-col items-center justify-center p-8 text-muted-foreground">
-            <Wrench className="w-12 h-12 mb-4 opacity-50" />
-            <p>{t('aiTools.noTools')}</p>
-          </CardContent>
-        </Card>
-      ) : (
-        <>
-        <div className="glass-card-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {pagedTools.map((tool) => {
-            const diag = diagnoseTool(tools.find((x) => x.name === tool.name) ?? tool);
-            return (
-            <Card
-              key={tool.name}
-              className={cn(
-                "cursor-pointer transition-colors hover:border-primary/50",
-                isGlass ? "glass-card" : "border border-border/50",
-                diag.level === 'error' && 'border-destructive/40',
-                diag.level === 'warn' && 'border-amber-500/40',
-              )}
-              onClick={() => handleToolClick(tool)}
-            >
-              <CardHeader>
-                <div className="flex items-start justify-between gap-2">
-                  <CardTitle className="flex items-center gap-2">
-                    <Wrench className="w-5 h-5 text-primary" />
-                    <span className="text-lg">{tool.title}</span>
-                  </CardTitle>
-                  <div className="flex flex-col gap-1 items-end">
-                    {diag.reasons.includes('empty_description') && (
-                      <Badge variant="destructive" className="text-[10px] gap-1">
-                        <AlertCircle className="w-3 h-3" />
-                        {t('aiTools.diagnostics.emptyDescription')}
-                      </Badge>
-                    )}
-                    {diag.reasons.includes('meta_not_vector_searchable') && (
-                      <Badge className="text-[10px] gap-1 bg-amber-500/15 text-amber-700 dark:text-amber-300">
-                        <AlertTriangle className="w-3 h-3" />
-                        meta
-                      </Badge>
-                    )}
-                    {tool.plugin && tool.plugin !== 'core' && (
-                      <span className="text-xs px-2 py-0.5 rounded bg-primary/10 text-primary">
-                        {tool.plugin}
-                      </span>
-                    )}
-                    <span className="text-xs px-2 py-0.5 rounded bg-secondary text-secondary-foreground">
-                      {tool.category}
-                    </span>
-                  </div>
-                </div>
-                <CardDescription className="text-xs text-muted-foreground font-mono">
-                  {tool.subtitle}
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground whitespace-pre-wrap line-clamp-3">
-                  {tool.summary}
-                </p>
-              </CardContent>
-            </Card>
-            );
-          })}
-        </div>
-
-        {/* 分页控件 */}
-        {totalPages > 1 && (
-          <div className="flex items-center justify-center gap-2 pt-2">
-            <Button
-              variant="outline"
-              size="icon"
-              disabled={currentPage <= 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              aria-label="Previous page"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </Button>
-            {getPageNumbers(currentPage, totalPages).map((p, i) =>
-              p === 'ellipsis' ? (
-                <span key={`e${i}`} className="px-2 text-muted-foreground">…</span>
-              ) : (
-                <Button
-                  key={p}
-                  variant={p === currentPage ? 'default' : 'outline'}
-                  size="icon"
-                  onClick={() => setPage(p)}
-                >
-                  {p}
-                </Button>
-              ),
-            )}
-            <Button
-              variant="outline"
-              size="icon"
-              disabled={currentPage >= totalPages}
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              aria-label="Next page"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </Button>
+      {pageTab === 'tools' &&
+        (isLoading ? (
+          <div className="glass-card-grid grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <Card key={i} className={cn('glass-card')}>
+                <CardHeader>
+                  <Skeleton className="h-6 w-3/4" />
+                </CardHeader>
+                <CardContent>
+                  <Skeleton className="h-4 w-full" />
+                  <Skeleton className="h-4 w-2/3 mt-2" />
+                </CardContent>
+              </Card>
+            ))}
           </div>
-        )}
-        </>
-      ))}
+        ) : parsedTools.length === 0 ? (
+          <Card className={cn('glass-card')}>
+            <CardContent className="flex flex-col items-center justify-center !p-8 text-center text-muted-foreground">
+              <Wrench className="w-12 h-12 mb-4 opacity-50" />
+              <p>{t('aiTools.noTools')}</p>
+            </CardContent>
+          </Card>
+        ) : (
+          <>
+            <div className="glass-card-grid grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {pagedTools.map((tool) => {
+                const diag = diagnoseTool(tools.find((x) => x.name === tool.name) ?? tool);
+                return (
+                  <Card
+                    key={tool.name}
+                    className={cn(
+                      'cursor-pointer transition-colors hover:border-primary/50',
+                      'glass-card',
+                      diag.level === 'error' && 'border-destructive/40',
+                      diag.level === 'warn' && 'border-amber-500/40',
+                    )}
+                    onClick={() => handleToolClick(tool)}
+                  >
+                    <CardHeader>
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                        <CardTitle className="flex min-w-0 items-center gap-2">
+                          <Wrench className="w-5 h-5 text-primary shrink-0" />
+                          <span className="text-lg truncate">{tool.title}</span>
+                        </CardTitle>
+                        <div className="flex shrink-0 flex-col gap-1 items-start sm:items-end">
+                          {diag.reasons.includes('empty_description') && (
+                            <Badge variant="destructive" className="text-[10px] gap-1">
+                              <AlertCircle className="w-3 h-3" />
+                              {t('aiTools.diagnostics.emptyDescription')}
+                            </Badge>
+                          )}
+                          {diag.reasons.includes('meta_not_vector_searchable') && (
+                            <Badge className="text-[10px] gap-1 bg-amber-500/15 text-amber-700 dark:text-amber-300">
+                              <AlertTriangle className="w-3 h-3" />
+                              meta
+                            </Badge>
+                          )}
+                          {tool.plugin && tool.plugin !== 'core' && (
+                            <span className="text-xs px-2 py-0.5 rounded bg-primary/10 text-primary">
+                              {tool.plugin}
+                            </span>
+                          )}
+                          <span className="text-xs px-2 py-0.5 rounded bg-secondary text-secondary-foreground">
+                            {tool.category}
+                          </span>
+                        </div>
+                      </div>
+                      <CardDescription className="text-xs text-muted-foreground font-mono">
+                        {tool.subtitle}
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="text-sm text-muted-foreground whitespace-pre-wrap line-clamp-3">
+                        {tool.summary}
+                      </p>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+
+            {/* 分页控件 */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-center gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  disabled={currentPage <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  aria-label="Previous page"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </Button>
+                {getPageNumbers(currentPage, totalPages).map((p, i) =>
+                  p === 'ellipsis' ? (
+                    <span key={`e${i}`} className="px-2 text-muted-foreground">
+                      …
+                    </span>
+                  ) : (
+                    <Button
+                      key={p}
+                      variant={p === currentPage ? 'default' : 'outline'}
+                      size="icon"
+                      onClick={() => setPage(p)}
+                    >
+                      {p}
+                    </Button>
+                  ),
+                )}
+                <Button
+                  variant="outline"
+                  size="icon"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  aria-label="Next page"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </Button>
+              </div>
+            )}
+          </>
+        ))}
+
+      {/* 技能列表（原 /ai-skills 整页内容，已并入本页签） */}
+      {pageTab === 'skills' && (
+        <SkillsPanel addDialogOpen={skillsAddOpen} onAddDialogOpenChange={setSkillsAddOpen} />
+      )}
 
       {/* 工具详情弹窗 */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
+        <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col p-6">
+          <DialogHeader className="shrink-0 pb-1">
             <DialogTitle className="flex items-center gap-2">
               <Wrench className="w-5 h-5 text-primary" />
               {selectedTool?.title}
             </DialogTitle>
-            <DialogDescription className="text-base">
-              {selectedTool?.subtitle}
-            </DialogDescription>
+            <DialogDescription className="text-base">{selectedTool?.subtitle}</DialogDescription>
           </DialogHeader>
-          <div className="mt-4 space-y-2">
+          <div className="flex-1 min-h-0 overflow-y-auto pr-1 mt-2 space-y-2">
             <div className="flex items-center gap-2 text-sm">
               <span className="px-2 py-0.5 rounded bg-secondary">{selectedTool?.category}</span>
-              <span className="px-2 py-0.5 rounded bg-primary/10 text-primary">{selectedTool?.plugin}</span>
+              <span className="px-2 py-0.5 rounded bg-primary/10 text-primary">
+                {selectedTool?.plugin}
+              </span>
             </div>
             <pre className="whitespace-pre-wrap text-sm font-mono bg-muted/50 p-4 rounded-md overflow-x-auto">
               {selectedTool?.fullDescription}

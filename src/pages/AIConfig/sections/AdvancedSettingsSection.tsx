@@ -5,8 +5,10 @@ import {
   type ConfigFieldType,
   type ConfigValue,
 } from '@/components/config';
+import { Separator } from '@/components/ui/separator';
 import type { PluginConfigItem } from '@/lib/api';
 import { isKitSlotConfigKey, RUNTIME_EXCLUDED_KEYS } from '../runtimeConfigKeys';
+import { RelationshipSettingsSection } from './RelationshipSettingsSection';
 
 /**
  * 「高级设置」Section。
@@ -32,6 +34,8 @@ const EXCLUDED_KEYS: string[] = [
   'websearch_provider',
   'websearch_lb_strategy',
   'websearch_fallback_order',
+  'render_image_sources',
+  'render_embed_images',
   // 网页抓取：WebFetchSection 专属
   'webfetch_provider',
   'webfetch_lb_strategy',
@@ -69,6 +73,9 @@ export function AdvancedSettingsSection({
           {t('aiConfig.advancedSettings.description')}
         </p>
       </div>
+
+      <RelationshipSettingsSection t={t} aiConfig={aiConfig} onUpdateConfig={onUpdateConfig} />
+      <Separator className="bg-border/30" />
 
       <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
         {(() => {

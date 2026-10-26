@@ -6,6 +6,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Calendar as CalendarComponent } from '@/components/ui/calendar';
 import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
+import { tabToolbarControlClass } from '@/components/ui/TabButtonGroup';
 import {
   RefreshCw,
   Calendar,
@@ -28,7 +29,7 @@ import { toast } from 'sonner';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { ConsolePanel, type LogEntry } from '@/components/ConsolePanel';
-import { PinnedPage } from '@/components/layout/PinnedPage';
+import { headerActionRowClass, PinnedPage } from '@/components/layout/PinnedPage';
 
 const PAGE_SIZE = 100;
 
@@ -96,7 +97,7 @@ function traceLogToLogEntry(log: TraceLog, index: number, dateStr: string): LogE
 export default function TracesPage() {
   const { t } = useLanguage();
   const { style } = useTheme();
-  const isGlass = style === 'glassmorphism';
+  const isGlass = style !== 'solid';
   const [traces, setTraces] = useState<TraceItem[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [page, setPage] = useState(1);
@@ -316,21 +317,22 @@ export default function TracesPage() {
       bodyClassName="space-y-4"
       header={
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div className="min-w-0 overflow-x-auto">
-            <h1 className="whitespace-nowrap text-3xl font-bold flex items-center gap-3">
+          <div className="min-w-0 sm:overflow-x-auto">
+            <h1 className="sm:whitespace-nowrap text-3xl font-bold flex items-center gap-3">
               <Terminal className="w-8 h-8 shrink-0" />
               {t('traces.title') || '命令追踪'}
             </h1>
-            <p className="whitespace-nowrap text-muted-foreground mt-1">
+            <p className="sm:whitespace-nowrap text-muted-foreground mt-1">
               {t('traces.description') || '查看命令执行追踪日志'}
             </p>
           </div>
-          <div className="flex flex-wrap justify-end gap-2 self-end sm:self-auto">
+          <div className={headerActionRowClass}>
             <Popover>
               <PopoverTrigger asChild>
                 <Button
                   variant="outline"
                   className={cn(
+                    tabToolbarControlClass,
                     'justify-start text-left font-normal',
                     !selectedDate && 'text-muted-foreground',
                   )}
@@ -395,7 +397,7 @@ export default function TracesPage() {
               variant="outline"
               onClick={fetchTraces}
               disabled={isLoading}
-              className="whitespace-nowrap"
+              className={cn(tabToolbarControlClass, 'whitespace-nowrap')}
             >
               <RefreshCw className={cn('w-4 h-4 mr-2', isLoading && 'animate-spin')} />
               {t('logs.refresh')}

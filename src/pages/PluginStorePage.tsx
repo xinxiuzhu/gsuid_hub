@@ -1,18 +1,59 @@
-import { useState, useMemo, useEffect, useRef } from 'react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
+import { useState, useMemo, useEffect, useLayoutEffect, useRef } from 'react';
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  CardFooter,
+} from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Store, Search, Package, RefreshCw, Download, Trash2, DownloadCloud, GitBranch, FileText, ExternalLink, Grid3x3, Check, Sparkles, Wrench, Link2, Loader2 } from 'lucide-react';
+import {
+  Store,
+  Search,
+  Package,
+  RefreshCw,
+  Download,
+  Trash2,
+  DownloadCloud,
+  GitBranch,
+  FileText,
+  ExternalLink,
+  Grid3x3,
+  Check,
+  Sparkles,
+  Wrench,
+  Link2,
+  Loader2,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { pluginStoreApi, StorePlugin, gitMirrorApi, GitPluginInfo, getApiErrorMessage } from '@/lib/api';
+import {
+  pluginStoreApi,
+  type StorePlugin,
+  gitMirrorApi,
+  type GitPluginInfo,
+  getApiErrorMessage,
+} from '@/lib/api';
 import { Skeleton } from '@/components/ui/skeleton';
 import GitMirrorDialog, { getMirrorBadge } from '@/components/GitMirrorDialog';
-import { TabButtonGroup, tabToolbarControlClass, tabToolbarGroupWrapClass } from '@/components/ui/TabButtonGroup';
+import {
+  TabButtonGroup,
+  tabToolbarControlClass,
+  tabToolbarGroupWrapClass,
+} from '@/components/ui/TabButtonGroup';
 import { cn } from '@/lib/utils';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogFooter, DialogTitle } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogFooter,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
@@ -53,6 +94,17 @@ function setCachedData<T>(key: string, data: T): void {
   }
 }
 
+/** 展示用洗牌。缓存仍存接口原序，每次进入页面再打乱。 */
+function shufflePlugins<T>(items: T[]): T[] {
+  const next = [...items];
+  for (let i = next.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const current = next[i];
+    next[i] = next[j];
+    next[j] = current;
+  }
+  return next;
+}
 
 // 根据 README 中图片 src 拼出 raw URL；处理 main / master 分支回退
 const buildRawUrl = (
@@ -74,6 +126,104 @@ const buildRawUrl = (
       return `https://raw.githubusercontent.com/${owner}/${repo}/refs/heads/${branch}/${path}`;
   }
 };
+
+const TAG_GAP = 6; // 与 gap-1.5 一致，量宽失败时的兜底
+
+/**
+ * 别名标签只排一行。CSS 算不出「几个完整标签 + 一枚 +N」的组合，
+ * 用隐藏 gauge 量每个标签的右边界；+N 按标签总数预留宽度，避免位数变化来回抖。
+ */
+function PluginAliasTags({ tags }: { tags: string[] }) {
+  const boxRef = useRef<HTMLSpanElement>(null);
+  const gaugeRef = useRef<HTMLSpanElement>(null);
+  const [visibleCount, setVisibleCount] = useState<number | null>(null);
+
+  useLayoutEffect(() => {
+    const box = boxRef.current;
+    const gauge = gaugeRef.current;
+    const total = tags.length;
+    if (!box || !gauge || total === 0) {
+      setVisibleCount(null);
+      return;
+    }
+    const measure = () => {
+      const available = box.clientWidth;
+      if (available <= 0) return;
+      const badges = Array.from(gauge.children) as HTMLElement[];
+      if (badges.length <= total) return;
+      const edges = badges.map((badge) => badge.offsetLeft + badge.offsetWidth);
+      if (edges[total - 1] <= available) {
+        setVisibleCount((prev) => (prev === total ? prev : total));
+        return;
+      }
+      const gap = Number.parseFloat(getComputedStyle(gauge).columnGap) || TAG_GAP;
+      const overflowWidth = badges[total].offsetWidth;
+      let fit = 0;
+      while (fit < total && edges[fit] + gap + overflowWidth <= available) {
+        fit += 1;
+      }
+      setVisibleCount((prev) => (prev === fit ? prev : fit));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(box);
+    observer.observe(gauge);
+    return () => observer.disconnect();
+  }, [tags]);
+
+  const shown = visibleCount === null ? tags.length : Math.min(visibleCount, tags.length);
+  const hiddenLabels = tags.slice(shown);
+
+  return (
+    <span
+      ref={boxRef}
+      className="relative flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden"
+    >
+      {tags.slice(0, shown).map((tag, index) => (
+        <Badge
+          key={`${tag}-${index}`}
+          variant="outline"
+          className="theme-chip shrink-0 text-xs font-normal"
+        >
+          {tag}
+        </Badge>
+      ))}
+      {hiddenLabels.length > 0 && (
+        <Badge
+          variant="outline"
+          title={hiddenLabels.join(', ')}
+          className="theme-chip shrink-0 border-transparent bg-foreground/10 text-xs font-normal text-foreground hover:bg-foreground/10 hover:text-foreground"
+        >
+          +{hiddenLabels.length}
+        </Badge>
+      )}
+      <span
+        ref={gaugeRef}
+        aria-hidden
+        className="invisible pointer-events-none absolute left-0 top-0 flex w-max gap-1.5"
+      >
+        {tags.map((tag, index) => (
+          <Badge
+            key={`gauge-${tag}-${index}`}
+            variant="outline"
+            className="shrink-0 text-xs font-normal"
+          >
+            {tag}
+          </Badge>
+        ))}
+        <Badge variant="outline" className="shrink-0 text-xs font-normal">
+          +{tags.length}
+        </Badge>
+      </span>
+    </span>
+  );
+}
+
+function storeTabCount(text: string, alert = false) {
+  return (
+    <span className={cn('tab-segment-count', alert && 'tab-segment-count-alert')}>{text}</span>
+  );
+}
 
 export default function PluginStorePage() {
   const { t } = useLanguage();
@@ -104,22 +254,6 @@ export default function PluginStorePage() {
     return plugin.type === 'danger' && plugin.content === t('pluginStore.deprecated');
   };
 
-  const headerActionsRef = useRef<HTMLDivElement>(null);
-  const [headerActionsWidth, setHeaderActionsWidth] = useState<number | null>(null);
-
-  useEffect(() => {
-    const el = headerActionsRef.current;
-    if (!el) return;
-    const update = () => {
-      const width = el.getBoundingClientRect().width;
-      if (width > 0) setHeaderActionsWidth(width);
-    };
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
-
   // 使用 ref 避免重建 components 对象时造成不必要的重渲染，
   // 同时让 img 组件可以访问当前打开的插件与镜像信息
   const selectedPluginRef = useRef<StorePlugin | null>(null);
@@ -129,98 +263,103 @@ export default function PluginStorePage() {
 
   // 根据当前打开的插件与镜像信息构造 react-markdown components
   // 其中 img 会将 README 内的相对路径（如 ./ICON.png）转换为对应镜像的 raw URL
-  const markdownComponents: Components = useMemo(() => ({
-    pre: ({ children }) => (
-      <pre className="bg-muted p-4 rounded-lg overflow-x-auto my-4 text-sm font-mono">
-        {children}
-      </pre>
-    ),
-    code: ({ className, children, ...props }) => {
-      const isInline = !className;
-      if (isInline) {
+  const markdownComponents: Components = useMemo(
+    () => ({
+      pre: ({ children }) => (
+        <pre className="bg-muted p-4 rounded-lg overflow-x-auto my-4 text-sm font-mono">
+          {children}
+        </pre>
+      ),
+      code: ({ className, children, ...props }) => {
+        const isInline = !className;
+        if (isInline) {
+          return (
+            <code
+              className="bg-muted px-1.5 py-0.5 rounded text-sm font-mono text-foreground"
+              {...props}
+            >
+              {children}
+            </code>
+          );
+        }
         return (
-          <code className="bg-muted px-1.5 py-0.5 rounded text-sm font-mono text-foreground" {...props}>
+          <code className={className} {...props}>
             {children}
           </code>
         );
-      }
-      return (
-        <code className={className} {...props}>
-          {children}
-        </code>
-      );
-    },
-    table: ({ children }) => (
-      <div className="overflow-x-auto my-4">
-        <table className="min-w-full divide-y divide-border border border-border">
-          {children}
-        </table>
-      </div>
-    ),
-    thead: ({ children }) => (
-      <thead className="bg-muted/50">{children}</thead>
-    ),
-    th: ({ children }) => (
-      <th className="px-4 py-2 text-left text-sm font-semibold text-foreground">{children}</th>
-    ),
-    td: ({ children }) => (
-      <td className="px-4 py-2 text-sm text-foreground/90">{children}</td>
-    ),
-    tr: ({ children }) => (
-      <tr className="even:bg-muted/30">{children}</tr>
-    ),
-    img: ({ src, alt, ...props }) => {
-      const srcStr = typeof src === 'string' ? src : '';
-      const plugin = selectedPluginRef.current;
-      const gitInfo = plugin ? gitPluginsMapRef.current[plugin.id.toLowerCase()] : undefined;
-      const remoteUrl = gitInfo?.remote_url || plugin?.link || (plugin ? `https://github.com/${plugin.id}` : '');
+      },
+      table: ({ children }) => (
+        <div className="overflow-x-auto my-4">
+          <table className="min-w-full divide-y divide-border border border-border">
+            {children}
+          </table>
+        </div>
+      ),
+      thead: ({ children }) => <thead className="bg-muted/50">{children}</thead>,
+      th: ({ children }) => (
+        <th className="px-4 py-2 text-left text-sm font-semibold text-foreground">{children}</th>
+      ),
+      td: ({ children }) => <td className="px-4 py-2 text-sm text-foreground/90">{children}</td>,
+      tr: ({ children }) => <tr className="even:bg-muted/30">{children}</tr>,
+      img: ({ src, alt, ...props }) => {
+        const srcStr = typeof src === 'string' ? src : '';
+        const plugin = selectedPluginRef.current;
+        const gitInfo = plugin ? gitPluginsMapRef.current[plugin.id.toLowerCase()] : undefined;
+        const remoteUrl =
+          gitInfo?.remote_url || plugin?.link || (plugin ? `https://github.com/${plugin.id}` : '');
 
-      let resolved = srcStr;
-      // 仅处理相对路径（不带协议 / 非 data URI）
-      if (srcStr && !/^(https?:)?\/\//i.test(srcStr) && !srcStr.startsWith('data:')) {
-        const match = remoteUrl.match(/github\.com[/:]([^/]+)\/([^/.]+)/);
-        if (match) {
-          const [, owner, repo] = match;
-          const mirror = gitInfo?.mirror || 'github';
-          const path = srcStr.replace(/^\.?\//, '');
-          // 默认走 main 分支；若加载失败会回退到 master
-          resolved = buildRawUrl(owner, repo, path, 'main', mirror);
-          // 通过 dataset 携带 master 回退信息
-          return (
-            <img
-              src={resolved}
-              alt={alt || ''}
-              data-fallback-master={buildRawUrl(owner, repo, path, 'master', mirror)}
-              data-asset-resolved="1"
-              onError={(e) => {
-                const target = e.currentTarget;
-                if (target.dataset.fallbackTried !== '1') {
-                  target.dataset.fallbackTried = '1';
-                  target.src = target.dataset.fallbackMaster || target.src;
-                }
-              }}
-              {...props}
-            />
-          );
+        let resolved = srcStr;
+        // 仅处理相对路径（不带协议 / 非 data URI）
+        if (srcStr && !/^(https?:)?\/\//i.test(srcStr) && !srcStr.startsWith('data:')) {
+          const match = remoteUrl.match(/github\.com[/:]([^/]+)\/([^/.]+)/);
+          if (match) {
+            const [, owner, repo] = match;
+            const mirror = gitInfo?.mirror || 'github';
+            const path = srcStr.replace(/^\.?\//, '');
+            // 默认走 main 分支；若加载失败会回退到 master
+            resolved = buildRawUrl(owner, repo, path, 'main', mirror);
+            // 通过 dataset 携带 master 回退信息
+            return (
+              <img
+                src={resolved}
+                alt={alt || ''}
+                data-fallback-master={buildRawUrl(owner, repo, path, 'master', mirror)}
+                data-asset-resolved="1"
+                onError={(e) => {
+                  const target = e.currentTarget;
+                  if (target.dataset.fallbackTried !== '1') {
+                    target.dataset.fallbackTried = '1';
+                    target.src = target.dataset.fallbackMaster || target.src;
+                  }
+                }}
+                {...props}
+              />
+            );
+          }
         }
-      }
 
-      return <img src={resolved} alt={alt || ''} {...props} />;
-    },
-  }), []);
+        return <img src={resolved} alt={alt || ''} {...props} />;
+      },
+    }),
+    [],
+  );
 
   // Fetch plugin list（支持缓存）
   const fetchPlugins = async (forceRefresh = false) => {
     // 尝试从缓存加载
     if (!forceRefresh) {
-      const cached = getCachedData<{ plugins: StorePlugin[]; fun_plugins: string[]; tool_plugins: string[] }>(PLUGIN_CACHE_KEY);
+      const cached = getCachedData<{
+        plugins: StorePlugin[];
+        fun_plugins: string[];
+        tool_plugins: string[];
+      }>(PLUGIN_CACHE_KEY);
       if (cached) {
-        const pluginsWithCategory = cached.plugins.map(plugin => ({
+        const pluginsWithCategory = cached.plugins.map((plugin) => ({
           ...plugin,
           isFun: cached.fun_plugins?.includes(plugin.id) || false,
           isTool: cached.tool_plugins?.includes(plugin.id) || false,
         }));
-        setPlugins(pluginsWithCategory);
+        setPlugins(shufflePlugins(pluginsWithCategory));
         setFunPlugins(cached.fun_plugins || []);
         setToolPlugins(cached.tool_plugins || []);
         setIsLoading(false);
@@ -232,12 +371,12 @@ export default function PluginStorePage() {
       setIsLoading(true);
       const data = await pluginStoreApi.getPluginList();
       // 处理返回数据，标记娱乐插件和工具插件
-      const pluginsWithCategory = data.plugins.map(plugin => ({
+      const pluginsWithCategory = data.plugins.map((plugin) => ({
         ...plugin,
         isFun: data.fun_plugins?.includes(plugin.id) || false,
         isTool: data.tool_plugins?.includes(plugin.id) || false,
       }));
-      setPlugins(pluginsWithCategory);
+      setPlugins(shufflePlugins(pluginsWithCategory));
       setFunPlugins(data.fun_plugins || []);
       setToolPlugins(data.tool_plugins || []);
       // 写入缓存
@@ -264,7 +403,7 @@ export default function PluginStorePage() {
     try {
       const data = await gitMirrorApi.getInfo();
       const map: Record<string, GitPluginInfo> = {};
-      data.plugins.forEach(p => {
+      data.plugins.forEach((p) => {
         map[p.name.toLowerCase()] = p;
       });
       setGitPluginsMap(map);
@@ -288,9 +427,9 @@ export default function PluginStorePage() {
       await pluginStoreApi.installPlugin(pluginId);
       toast.success(t('pluginStore.installSuccess'));
       // 直接更新本地状态，避免触发后端重新加载
-      setPlugins(prev => prev.map(p =>
-        p.id === pluginId ? { ...p, installed: true, hasUpdate: false } : p
-      ));
+      setPlugins((prev) =>
+        prev.map((p) => (p.id === pluginId ? { ...p, installed: true, hasUpdate: false } : p)),
+      );
       // 清除缓存，确保下次进入页面数据一致
       localStorage.removeItem(PLUGIN_CACHE_KEY);
       localStorage.removeItem(GIT_MIRROR_CACHE_KEY);
@@ -308,9 +447,7 @@ export default function PluginStorePage() {
       await pluginStoreApi.updatePlugin(pluginId);
       toast.success(t('pluginStore.updateSuccess'));
       // 直接更新本地状态，避免触发后端重新加载
-      setPlugins(prev => prev.map(p =>
-        p.id === pluginId ? { ...p, hasUpdate: false } : p
-      ));
+      setPlugins((prev) => prev.map((p) => (p.id === pluginId ? { ...p, hasUpdate: false } : p)));
       // 清除缓存，确保下次进入页面数据一致
       localStorage.removeItem(PLUGIN_CACHE_KEY);
     } catch (error) {
@@ -322,15 +459,23 @@ export default function PluginStorePage() {
 
   // Handle uninstall plugin - 直接更新本地状态，不重新请求 API
   const handleUninstall = async (pluginId: string) => {
-    if (confirm(t('pluginStore.uninstallConfirm') + ' "' + plugins.find(p => p.id === pluginId)?.name + '" ' + t('pluginStore.confirmUninstall'))) {
+    if (
+      confirm(
+        t('pluginStore.uninstallConfirm') +
+          ' "' +
+          plugins.find((p) => p.id === pluginId)?.name +
+          '" ' +
+          t('pluginStore.confirmUninstall'),
+      )
+    ) {
       try {
         setActionLoading(pluginId);
         await pluginStoreApi.uninstallPlugin(pluginId);
         toast.success(t('pluginStore.uninstallSuccess'));
         // 直接更新本地状态，避免触发后端重新加载
-        setPlugins(prev => prev.map(p =>
-          p.id === pluginId ? { ...p, installed: false, hasUpdate: false } : p
-        ));
+        setPlugins((prev) =>
+          prev.map((p) => (p.id === pluginId ? { ...p, installed: false, hasUpdate: false } : p)),
+        );
         // 清除缓存，确保下次进入页面数据一致
         localStorage.removeItem(PLUGIN_CACHE_KEY);
         localStorage.removeItem(GIT_MIRROR_CACHE_KEY);
@@ -359,9 +504,7 @@ export default function PluginStorePage() {
     }
     try {
       // 仅作格式校验，try 内避免与下面 installByUrl 抛错混淆
-      const parsed = url.startsWith('git@')
-        ? new URL(`https://${url}`)
-        : new URL(url);
+      const parsed = url.startsWith('git@') ? new URL(`https://${url}`) : new URL(url);
       void parsed;
     } catch {
       toast.error(t('pluginStore.urlInvalid'));
@@ -403,22 +546,23 @@ export default function PluginStorePage() {
 
     // Filter by tab
     if (activeTab === 'installed') {
-      filtered = filtered.filter(p => p.installed);
+      filtered = filtered.filter((p) => p.installed);
     } else if (activeTab === 'updates') {
-      filtered = filtered.filter(p => p.hasUpdate);
+      filtered = filtered.filter((p) => p.hasUpdate);
     } else if (activeTab === 'fun') {
-      filtered = filtered.filter(p => p.isFun);
+      filtered = filtered.filter((p) => p.isFun);
     } else if (activeTab === 'tool') {
-      filtered = filtered.filter(p => p.isTool);
+      filtered = filtered.filter((p) => p.isTool);
     }
 
     // Filter by search
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
       filtered = filtered.filter(
-        p => p.id.toLowerCase().includes(query) ||
-             p.description.toLowerCase().includes(query) ||
-             p.tags.some(tag => tag.toLowerCase().includes(query))
+        (p) =>
+          p.id.toLowerCase().includes(query) ||
+          p.description.toLowerCase().includes(query) ||
+          p.tags.some((tag) => tag.toLowerCase().includes(query)),
       );
     }
 
@@ -437,25 +581,23 @@ export default function PluginStorePage() {
   const storeStats = useMemo(() => {
     let installed = 0;
     let updates = 0;
+    let fun = 0;
+    let tool = 0;
     for (const plugin of plugins) {
       if (plugin.installed) installed += 1;
       if (plugin.hasUpdate) updates += 1;
+      if (plugin.isFun) fun += 1;
+      if (plugin.isTool) tool += 1;
     }
-    return { total: plugins.length, installed, updates };
+    return { total: plugins.length, installed, updates, fun, tool };
   }, [plugins]);
-
-  const storeStatItems = [
-    { id: 'all', label: t('pluginStore.statTotal'), value: storeStats.total, icon: Grid3x3 },
-    { id: 'installed', label: t('pluginStore.statInstalled'), value: storeStats.installed, icon: Check },
-    { id: 'updates', label: t('pluginStore.statUpdates'), value: storeStats.updates, icon: RefreshCw },
-  ] as const;
 
   // Build README URLs based on mirror type
   const buildReadmeUrls = (plugin: StorePlugin): string[] => {
     const gitInfo = gitPluginsMap[plugin.id.toLowerCase()];
     const mirror = gitInfo?.mirror || 'github';
     const remoteUrl = gitInfo?.remote_url || plugin.link || `https://github.com/${plugin.id}`;
-    
+
     // Extract owner and repo from remote URL
     const match = remoteUrl.match(/github\.com[/:]([^/]+)\/([^/.]+)/);
     if (!match) {
@@ -463,9 +605,9 @@ export default function PluginStorePage() {
       return [`${remoteUrl}/raw/main/README.md`, `${remoteUrl}/raw/master/README.md`];
     }
     const [, owner, repo] = match;
-    
+
     const urls: string[] = [];
-    
+
     switch (mirror) {
       case 'cnb':
         // cnb.cool format: https://cnb.cool/gscore-mirror/StarRailUID/-/git/raw/master/README.md
@@ -479,8 +621,12 @@ export default function PluginStorePage() {
         break;
       case 'ghproxy':
         // ghproxy.com format
-        urls.push(`https://ghproxy.com/https://raw.githubusercontent.com/${owner}/${repo}/master/README.md`);
-        urls.push(`https://ghproxy.com/https://raw.githubusercontent.com/${owner}/${repo}/main/README.md`);
+        urls.push(
+          `https://ghproxy.com/https://raw.githubusercontent.com/${owner}/${repo}/master/README.md`,
+        );
+        urls.push(
+          `https://ghproxy.com/https://raw.githubusercontent.com/${owner}/${repo}/main/README.md`,
+        );
         break;
       case 'github':
       default:
@@ -489,7 +635,7 @@ export default function PluginStorePage() {
         urls.push(`https://raw.githubusercontent.com/${owner}/${repo}/refs/heads/main/README.md`);
         break;
     }
-    
+
     return urls;
   };
 
@@ -502,7 +648,7 @@ export default function PluginStorePage() {
 
     try {
       const urls = buildReadmeUrls(plugin);
-      
+
       for (const url of urls) {
         try {
           const response = await fetch(url);
@@ -511,12 +657,9 @@ export default function PluginStorePage() {
             setReadmeContent(text);
             return;
           }
-        } catch {
-          // Try next URL
-          continue;
-        }
+        } catch {}
       }
-      
+
       setReadmeContent(t('pluginStore.noReadme'));
     } catch (error) {
       console.error('Failed to fetch README:', error);
@@ -526,60 +669,56 @@ export default function PluginStorePage() {
     }
   };
 
-  // Tab options for TabButtonGroup
+  const countText = (value: number) => (isLoading ? '—' : String(value));
   const tabOptions = [
-    { value: 'all', label: t('pluginStore.allPlugins'), icon: <Grid3x3 className="w-4 h-4" /> },
-    { value: 'installed', label: t('pluginStore.installed'), icon: <Check className="w-4 h-4" /> },
-    { value: 'updates', label: t('pluginStore.updates'), icon: <RefreshCw className="w-4 h-4" /> },
-    { value: 'fun', label: t('pluginStore.funPlugins'), icon: <Sparkles className="w-4 h-4" /> },
-    { value: 'tool', label: t('pluginStore.toolPlugins'), icon: <Wrench className="w-4 h-4" /> },
+    {
+      value: 'all',
+      label: t('pluginStore.allPlugins'),
+      icon: <Grid3x3 className="w-4 h-4" />,
+      badge: storeTabCount(countText(storeStats.total)),
+    },
+    {
+      value: 'installed',
+      label: t('pluginStore.installed'),
+      icon: <Check className="w-4 h-4" />,
+      badge: storeTabCount(countText(storeStats.installed)),
+    },
+    {
+      value: 'updates',
+      label: t('pluginStore.updates'),
+      icon: <RefreshCw className="w-4 h-4" />,
+      badge: storeTabCount(countText(storeStats.updates), !isLoading && storeStats.updates > 0),
+    },
+    {
+      value: 'fun',
+      label: t('pluginStore.funPlugins'),
+      icon: <Sparkles className="w-4 h-4" />,
+      badge: storeTabCount(countText(storeStats.fun)),
+    },
+    {
+      value: 'tool',
+      label: t('pluginStore.toolPlugins'),
+      icon: <Wrench className="w-4 h-4" />,
+      badge: storeTabCount(countText(storeStats.tool)),
+    },
   ];
 
   return (
     <PinnedPage
       className="gap-4"
       header={
-        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
-          <div>
-            <h1 className="text-3xl font-bold flex items-center gap-3">
-              <Store className="w-8 h-8" />
-              {t('pluginStore.title')}
-            </h1>
-            <p className="text-muted-foreground mt-1">{t('pluginStore.description')}</p>
-          </div>
-          <div ref={headerActionsRef} className="flex w-fit max-w-full flex-wrap items-center gap-3">
-            <Button
-              variant="outline"
-              onClick={() => setGitMirrorOpen(true)}
-              className="gap-2"
-            >
-              <GitBranch className="w-4 h-4" />
-              {t('gitMirror.title')}
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => setInstallByUrlOpen(true)}
-              className="gap-2"
-            >
-              <Link2 className="w-4 h-4" />
-              {t('pluginStore.installFromUrl')}
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => { fetchPlugins(true); fetchGitMirrorInfo(true); }}
-              disabled={isLoading}
-              className="gap-2"
-            >
-              <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-              {t('pluginStore.refresh')}
-            </Button>
-          </div>
+        <div>
+          <h1 className="text-3xl font-bold flex items-center gap-3">
+            <Store className="w-8 h-8" />
+            {t('pluginStore.title')}
+          </h1>
+          <p className="text-muted-foreground mt-1">{t('pluginStore.description')}</p>
         </div>
       }
       toolbar={
-        /* 分类 Tab 与搜索始终同一行。移动端 Tab 收成下拉，搜索吃剩余宽度；桌面搜索跟上头三个按钮同宽 */
-        <div className="flex min-w-0 flex-wrap items-center gap-3">
-          <div className={cn(tabToolbarGroupWrapClass, 'min-w-0 shrink-0 max-w-[55%] md:max-w-none')}>
+        /* 分类 Tab、搜索与操作按钮同一行平齐。高度统一为 tabToolbarControlClass */
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+          <div className={cn(tabToolbarGroupWrapClass, 'min-w-0 shrink-0')}>
             <TabButtonGroup
               options={tabOptions}
               value={activeTab}
@@ -588,312 +727,321 @@ export default function PluginStorePage() {
               collapseOnMobile
             />
           </div>
-          <div
-            className={cn(
-              'relative min-w-0 flex-1',
-              headerActionsWidth != null && 'sm:flex-none sm:w-[var(--ps-actions-w)]',
-            )}
-            style={
-              headerActionsWidth != null
-                ? ({ '--ps-actions-w': `${Math.round(headerActionsWidth)}px` } as React.CSSProperties)
-                : undefined
-            }
-          >
-            <Search className="pointer-events-none absolute left-3 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder={t('pluginStore.searchPlugin')}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className={cn(tabToolbarControlClass, 'w-full pl-10')}
-            />
-          </div>
-          <div className="flex h-11 w-full min-w-0 items-center justify-end sm:ml-auto sm:w-auto">
-            {storeStatItems.map((item, index) => {
-              const Icon = item.icon;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => setActiveTab(item.id)}
-                  className={cn(
-                    'inline-flex h-11 shrink-0 items-center gap-1.5 px-3 text-xs text-muted-foreground',
-                    index > 0 && 'border-l border-border/50',
-                    activeTab === item.id && 'text-foreground',
-                    'hover:text-foreground',
-                  )}
-                >
-                  <Icon className="h-3.5 w-3.5 shrink-0" />
-                  <span className="whitespace-nowrap">{item.label}</span>
-                  <span
-                    className={cn(
-                      'font-semibold tabular-nums text-foreground',
-                      item.id === 'updates' && item.value > 0 && 'text-amber-500',
-                    )}
-                  >
-                    {isLoading ? '—' : item.value}
-                  </span>
-                </button>
-              );
-            })}
+          <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-3 sm:flex-nowrap">
+            <div className="relative min-w-[12rem] flex-1 sm:w-64 sm:flex-none lg:w-72">
+              <Search className="pointer-events-none absolute left-3 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder={t('pluginStore.searchPlugin')}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className={cn(tabToolbarControlClass, 'w-full pl-10')}
+              />
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setGitMirrorOpen(true)}
+                className={cn(tabToolbarControlClass, 'gap-2')}
+              >
+                <GitBranch className="w-4 h-4" />
+                {t('gitMirror.title')}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setInstallByUrlOpen(true)}
+                className={cn(tabToolbarControlClass, 'gap-2')}
+              >
+                <Link2 className="w-4 h-4" />
+                {t('pluginStore.installFromUrl')}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  fetchPlugins(true);
+                  fetchGitMirrorInfo(true);
+                }}
+                disabled={isLoading}
+                className={cn(tabToolbarControlClass, 'gap-2')}
+              >
+                <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+                {t('pluginStore.refresh')}
+              </Button>
+            </div>
           </div>
         </div>
       }
     >
-          {isLoading ? (
-            <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {[1, 2, 3, 4, 5, 6, 7, 8].map(i => (
-                <Card key={i} className="glass-card">
-                  <div className="h-32 bg-muted/50 overflow-hidden rounded-t-[inherit]">
-                    <Skeleton className="h-full w-full" />
-                  </div>
-                  <CardHeader>
-                    <Skeleton className="h-6 w-3/4" />
-                    <Skeleton className="h-4 w-full mt-2" />
-                  </CardHeader>
-                  <CardContent>
-                    <Skeleton className="h-4 w-full mb-2" />
-                    <Skeleton className="h-4 w-2/3" />
-                  </CardContent>
-                  <CardFooter>
-                    <Skeleton className="h-9 w-full" />
-                  </CardFooter>
-                </Card>
-              ))}
-            </div>
-          ) : filteredPlugins.length === 0 ? (
-            <Card className="glass-card">
-              <CardContent className="py-12 text-center text-muted-foreground">
-                <Package className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                <p className="mb-2">
-                  {searchQuery ? t('pluginStore.noMatchedPlugins') :
-                   activeTab === 'installed' ? t('pluginStore.noInstalledPlugins') :
-                   activeTab === 'updates' ? t('pluginStore.allPluginsUpdated') :
-                   activeTab === 'fun' ? t('pluginStore.noFunPlugins') :
-                   activeTab === 'tool' ? t('pluginStore.noToolPlugins') :
-                   t('pluginStore.noPlugins')}
-                </p>
-                {searchQuery && (
-                  <p className="text-sm">{t('pluginStore.adjustSearchKeywords')}</p>
-                )}
+      {isLoading ? (
+        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
+            <Card key={i} className="glass-card">
+              <div className="h-32 bg-muted/50 overflow-hidden rounded-t-[inherit]">
+                <Skeleton className="h-full w-full" />
+              </div>
+              <CardHeader>
+                <Skeleton className="h-6 w-3/4" />
+                <Skeleton className="h-4 w-full mt-2" />
+              </CardHeader>
+              <CardContent>
+                <Skeleton className="h-4 w-full mb-2" />
+                <Skeleton className="h-4 w-2/3" />
               </CardContent>
+              <CardFooter>
+                <Skeleton className="h-9 w-full" />
+              </CardFooter>
             </Card>
-          ) : (
-            <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {filteredPlugins.map((plugin) => {
-                const deprecated = isDeprecated(plugin);
-                const pluginLink = plugin.link || `https://github.com/${plugin.id}`;
-                
-                return (
-                  <Card
-                    key={plugin.id}
-                    className={`glass-card flex flex-col cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all ${deprecated ? 'opacity-60' : ''} ${plugin.installed ? 'ring-1 ring-green-500/30' : ''}`}
-                    onClick={() => handleCardClick(plugin)}
-                  >
-                    {/* 卡片内容区域 */}
-                    <div className="p-4 pb-2">
-                      <div className="flex gap-3">
-                        {/* Cover + Avatar 容器，self-start 防止被右侧内容撑高 */}
-                        <div className="relative flex-shrink-0 self-start">
-                          {/* Cover - 可点击跳转github */}
-                          <a
-                            href={pluginLink}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="block"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            {plugin.cover ? (
-                              <div className="w-14 h-14 rounded-full overflow-hidden border-2 border-border shadow-md bg-background">
-                                <img
-                                  src={plugin.cover}
-                                  alt={plugin.id}
-                                  className="w-full h-full object-cover"
-                                />
-                              </div>
-                            ) : (
-                              <div className="w-14 h-14 rounded-full flex items-center justify-center bg-gradient-to-br from-primary/10 to-accent/10 border-2 border-border shadow-md">
-                                <Package className="w-7 h-7 text-muted-foreground/50" />
-                              </div>
-                            )}
-                          </a>
-                          
-                          {/* Avatar 覆盖在 cover 右下角，与 cover 浅浅相交 */}
-                          {plugin.avatar && (
-                            <div className="absolute -bottom-px -right-px">
-                              <div className="w-[22px] h-[22px] rounded-full border-2 border-background overflow-hidden bg-background shadow-sm">
-                                <img
-                                  src={plugin.avatar}
-                                  alt={plugin.author}
-                                  className="w-full h-full object-cover"
-                                />
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                        
-                        {/* 右侧：标题和描述 */}
-                        <div className="flex-1 min-w-0">
-                          {/* 标题行 + 右上角 badges */}
-                          <div className="flex items-center justify-between gap-2">
-                            <h3 className="font-semibold text-base truncate">{plugin.id}</h3>
-                            <div className="flex items-center gap-1.5 shrink-0">
-                              {/* 镜像来源 badge（仅已安装插件） */}
-                              {plugin.installed && (() => {
-                                const gitInfo = gitPluginsMap[plugin.id.toLowerCase()];
-                                if (gitInfo && gitInfo.is_git_repo && gitInfo.remote_url) {
-                                  const badge = getMirrorBadge(gitInfo.mirror, gitInfo.remote_url, t);
-                                  return (
-                                    <Badge variant="outline" className={`text-xs ${badge.className}`}>
-                                      <span className="flex items-center gap-1">{badge.icon}{badge.label}</span>
-                                    </Badge>
-                                  );
-                                }
-                                return null;
-                              })()}
-                              {plugin.isFun && (
-                                <Badge variant="outline" className="text-xs text-blue-500 border-blue-500">{t('pluginStore.fun')}</Badge>
-                              )}
-                              {plugin.isTool && (
-                                <Badge variant="outline" className="text-xs text-green-500 border-green-500">{t('pluginStore.tool')}</Badge>
-                              )}
-                              {deprecated && (
-                                <Badge variant="secondary" className="text-xs bg-gray-500 text-white">
-                                  {t('pluginStore.deprecated')}
-                                </Badge>
-                              )}
-                              {plugin.type === 'danger' && !deprecated && (
-                                <Badge variant="destructive" className="text-xs">{plugin.content}</Badge>
-                              )}
-                            </div>
+          ))}
+        </div>
+      ) : filteredPlugins.length === 0 ? (
+        <Card className="glass-card">
+          <CardContent className="!py-12 text-center text-muted-foreground">
+            <Package className="w-12 h-12 mx-auto mb-4 opacity-50" />
+            <p className="mb-2">
+              {searchQuery
+                ? t('pluginStore.noMatchedPlugins')
+                : activeTab === 'installed'
+                  ? t('pluginStore.noInstalledPlugins')
+                  : activeTab === 'updates'
+                    ? t('pluginStore.allPluginsUpdated')
+                    : activeTab === 'fun'
+                      ? t('pluginStore.noFunPlugins')
+                      : activeTab === 'tool'
+                        ? t('pluginStore.noToolPlugins')
+                        : t('pluginStore.noPlugins')}
+            </p>
+            {searchQuery && <p className="text-sm">{t('pluginStore.adjustSearchKeywords')}</p>}
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {filteredPlugins.map((plugin) => {
+            const deprecated = isDeprecated(plugin);
+            const pluginLink = plugin.link || `https://github.com/${plugin.id}`;
+
+            return (
+              <Card
+                key={plugin.id}
+                className={`glass-card flex flex-col cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all ${deprecated ? 'opacity-60' : ''} ${plugin.installed ? 'ring-1 ring-green-500/30' : ''}`}
+                onClick={() => handleCardClick(plugin)}
+              >
+                {/* 卡片内容区域 */}
+                <div className="p-4 pb-2">
+                  <div className="flex gap-3">
+                    {/* Cover + Avatar 容器，self-start 防止被右侧内容撑高 */}
+                    <div className="relative flex-shrink-0 self-start">
+                      {/* Cover - 可点击跳转github */}
+                      <a
+                        href={pluginLink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {plugin.cover ? (
+                          <div className="w-14 h-14 rounded-full overflow-hidden border-2 border-border shadow-md bg-background">
+                            <img
+                              src={plugin.cover}
+                              alt={plugin.id}
+                              className="w-full h-full object-cover"
+                            />
                           </div>
-                          
-                          {/* 作者信息 */}
-                          {plugin.author && (
-                            <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                              by {plugin.author}
-                            </p>
-                          )}
-                          
-                          {/* 描述 - 单行截断，hover 显示完整内容 */}
-                          <p className="text-sm text-muted-foreground mt-1 truncate" title={plugin.info || plugin.description}>
-                            {plugin.info || plugin.description}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                    
-                    {/* Tags 横向排布 */}
-                    <div className="px-4 pb-2">
-                      <div className="flex flex-wrap gap-1.5 items-center">
-                        {plugin.hasUpdate && (
-                          <Badge variant="outline" className="text-xs text-amber-500 border-amber-500">
-                            {t('pluginStore.canUpdate')}
-                          </Badge>
+                        ) : (
+                          <div className="w-14 h-14 rounded-full flex items-center justify-center bg-gradient-to-br from-primary/10 to-accent/10 border-2 border-border shadow-md">
+                            <Package className="w-7 h-7 text-muted-foreground/50" />
+                          </div>
                         )}
-                        {plugin.alias?.map((tag, index) => (
-                          <Badge key={index} variant="outline" className="text-xs">{tag}</Badge>
-                        ))}
-                      </div>
-                    </div>
-                    
-                    {/* 按钮区域 */}
-                    <CardFooter className="pt-2 mt-auto">
-                      {deprecated ? (
-                        <Button
-                          className="w-full gap-1 text-sm"
-                          disabled={true}
-                          variant="secondary"
-                        >
-                          <Package className="w-3 h-3" />
-                          {t('pluginStore.stopMaintenance')}
-                        </Button>
-                      ) : plugin.installed ? (
-                        <div className="flex gap-1.5 w-full">
-                          <Button
-                            size="sm"
-                            className="flex-1 gap-1 text-xs"
-                            variant="destructive"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleUninstall(plugin.id);
-                            }}
-                            disabled={actionLoading === plugin.id}
-                          >
-                            {actionLoading === plugin.id ? (
-                              <RefreshCw className="w-3 h-3 animate-spin" />
-                            ) : (
-                              <Trash2 className="w-3 h-3" />
-                            )}
-                            {t('pluginStore.uninstall')}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="flex-1 gap-1 text-xs"
-                            asChild
-                          >
-                            <a
-                              href={pluginLink}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <DownloadCloud className="w-3 h-3" />
-                              {t('pluginStore.details')}
-                            </a>
-                          </Button>
-                        </div>
-                      ) : (
-                        <div className="flex gap-1.5 w-full">
-                          <Button
-                            size="sm"
-                            className="flex-1 gap-1 text-xs"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleInstall(plugin.id);
-                            }}
-                            disabled={actionLoading === plugin.id}
-                          >
-                            {actionLoading === plugin.id ? (
-                              <RefreshCw className="w-3 h-3 animate-spin" />
-                            ) : (
-                              <Download className="w-3 h-3" />
-                            )}
-                            {t('pluginStore.install')}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="flex-1 gap-1 text-xs"
-                            asChild
-                          >
-                            <a
-                              href={pluginLink}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <DownloadCloud className="w-3 h-3" />
-                              {t('pluginStore.details')}
-                            </a>
-                          </Button>
+                      </a>
+
+                      {/* Avatar 覆盖在 cover 右下角，与 cover 浅浅相交 */}
+                      {plugin.avatar && (
+                        <div className="absolute -bottom-px -right-px">
+                          <div className="w-[22px] h-[22px] rounded-full border-2 border-background overflow-hidden bg-background shadow-sm">
+                            <img
+                              src={plugin.avatar}
+                              alt={plugin.author}
+                              className="w-full h-full object-cover"
+                            />
+                          </div>
                         </div>
                       )}
-                    </CardFooter>
-                  </Card>
-                );
-              })}
-            </div>
-          )}
+                    </div>
 
-      <GitMirrorDialog
-        open={gitMirrorOpen}
-        onOpenChange={setGitMirrorOpen}
-      />
+                    {/* 右侧：标题和描述 */}
+                    <div className="flex-1 min-w-0">
+                      {/* 标题行 + 右上角 badges */}
+                      <div className="flex items-center justify-between gap-2">
+                        <h3 className="font-semibold text-base truncate">{plugin.id}</h3>
+                        <div className="flex flex-wrap items-center justify-end gap-1.5 sm:shrink-0">
+                          {/* 镜像来源 badge（仅已安装插件） */}
+                          {plugin.installed &&
+                            (() => {
+                              const gitInfo = gitPluginsMap[plugin.id.toLowerCase()];
+                              if (gitInfo && gitInfo.is_git_repo && gitInfo.remote_url) {
+                                const badge = getMirrorBadge(gitInfo.mirror, gitInfo.remote_url, t);
+                                return (
+                                  <Badge
+                                    variant="outline"
+                                    className={`theme-chip theme-chip-tint text-xs font-normal ${badge.className}`}
+                                  >
+                                    <span className="flex items-center gap-1">
+                                      {badge.icon}
+                                      {badge.label}
+                                    </span>
+                                  </Badge>
+                                );
+                              }
+                              return null;
+                            })()}
+                          {plugin.isFun && (
+                            <Badge
+                              variant="outline"
+                              className="theme-chip theme-chip-tint text-xs font-normal text-blue-500 border-blue-500"
+                            >
+                              {t('pluginStore.fun')}
+                            </Badge>
+                          )}
+                          {plugin.isTool && (
+                            <Badge
+                              variant="outline"
+                              className="theme-chip theme-chip-tint text-xs font-normal text-green-500 border-green-500"
+                            >
+                              {t('pluginStore.tool')}
+                            </Badge>
+                          )}
+                          {deprecated && (
+                            <Badge
+                              variant="secondary"
+                              className="text-xs font-normal bg-gray-500 text-white"
+                            >
+                              {t('pluginStore.deprecated')}
+                            </Badge>
+                          )}
+                          {plugin.type === 'danger' && !deprecated && (
+                            <Badge variant="destructive" className="text-xs font-normal">
+                              {plugin.content}
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* 作者信息 */}
+                      {plugin.author && (
+                        <p className="text-xs text-muted-foreground mt-0.5 truncate">
+                          by {plugin.author}
+                        </p>
+                      )}
+
+                      {/* 描述 - 单行截断，hover 显示完整内容 */}
+                      <p
+                        className="text-sm text-muted-foreground mt-1 truncate"
+                        title={plugin.info || plugin.description}
+                      >
+                        {plugin.info || plugin.description}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Tags 只排一行，放不下的收成 +N */}
+                <div className="px-4 pb-2">
+                  <div className="flex min-w-0 flex-nowrap items-center gap-1.5">
+                    {plugin.hasUpdate && (
+                      <Badge
+                        variant="outline"
+                        className="theme-chip theme-chip-tint shrink-0 text-xs font-normal text-amber-500 border-amber-500"
+                      >
+                        {t('pluginStore.canUpdate')}
+                      </Badge>
+                    )}
+                    {plugin.alias && plugin.alias.length > 0 && (
+                      <PluginAliasTags tags={plugin.alias} />
+                    )}
+                  </div>
+                </div>
+
+                {/* 按钮区域 */}
+                {/* 覆盖 CardFooter 的 sm:p-6，与上方标签行 px-4 左右对齐 */}
+                <CardFooter className="mt-auto p-4 pt-2 sm:p-4 sm:pt-2">
+                  {deprecated ? (
+                    <Button className="w-full gap-1 text-sm" disabled={true} variant="secondary">
+                      <Package className="w-3 h-3" />
+                      {t('pluginStore.stopMaintenance')}
+                    </Button>
+                  ) : plugin.installed ? (
+                    <div className="flex gap-1.5 w-full">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="flex-1 gap-1 text-xs text-destructive hover:text-destructive [&_svg]:!text-current"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleUninstall(plugin.id);
+                        }}
+                        disabled={actionLoading === plugin.id}
+                      >
+                        {actionLoading === plugin.id ? (
+                          <RefreshCw className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <Trash2 className="w-3 h-3" />
+                        )}
+                        {t('pluginStore.uninstall')}
+                      </Button>
+                      <Button size="sm" variant="outline" className="flex-1 gap-1 text-xs" asChild>
+                        <a
+                          href={pluginLink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <DownloadCloud className="w-3 h-3" />
+                          {t('pluginStore.details')}
+                        </a>
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="flex gap-1.5 w-full">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="flex-1 gap-1 text-xs text-primary hover:text-primary [&_svg]:!text-current"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleInstall(plugin.id);
+                        }}
+                        disabled={actionLoading === plugin.id}
+                      >
+                        {actionLoading === plugin.id ? (
+                          <RefreshCw className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <Download className="w-3 h-3" />
+                        )}
+                        {t('pluginStore.install')}
+                      </Button>
+                      <Button size="sm" variant="outline" className="flex-1 gap-1 text-xs" asChild>
+                        <a
+                          href={pluginLink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <DownloadCloud className="w-3 h-3" />
+                          {t('pluginStore.details')}
+                        </a>
+                      </Button>
+                    </div>
+                  )}
+                </CardFooter>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      <GitMirrorDialog open={gitMirrorOpen} onOpenChange={setGitMirrorOpen} />
 
       {/* README Dialog */}
       <Dialog open={readmeDialogOpen} onOpenChange={setReadmeDialogOpen}>
-        <DialogContent className="w-[90vw] max-w-5xl h-[85vh] flex flex-col p-0 overflow-hidden">
+        <DialogContent className="w-[90vw] max-w-5xl h-[85dvh] sm:h-[85vh] flex flex-col p-0 overflow-hidden">
           {/* Custom Header */}
           <div className="px-6 py-4 border-b shrink-0">
             <div className="flex items-center justify-between pr-8">
@@ -924,7 +1072,7 @@ export default function PluginStorePage() {
               {selectedPlugin?.description}
             </DialogDescription>
           </div>
-          
+
           {/* Scrollable Content */}
           <div className="flex-1 overflow-y-auto p-6">
             {readmeLoading ? (
@@ -936,7 +1084,8 @@ export default function PluginStorePage() {
                 <Skeleton className="h-4 w-2/3" />
               </div>
             ) : (
-              <div className="prose dark:prose-invert max-w-none
+              <div
+                className="prose dark:prose-invert max-w-none
                 prose-headings:font-bold prose-headings:text-foreground
                 prose-h1:text-3xl prose-h1:mb-6 prose-h1:mt-8 prose-h1:border-b prose-h1:pb-4
                 prose-h2:text-2xl prose-h2:mb-4 prose-h2:mt-6
@@ -951,7 +1100,8 @@ export default function PluginStorePage() {
                 prose-blockquote:border-l-4 prose-blockquote:border-muted-foreground/30 prose-blockquote:pl-4 prose-blockquote:italic prose-blockquote:text-muted-foreground prose-blockquote:my-4
                 prose-img:rounded-lg prose-img:shadow-md prose-img:my-4
                 prose-hr:border-border prose-hr:my-8
-                prose-table:my-4">
+                prose-table:my-4"
+              >
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm]}
                   rehypePlugins={[rehypeRaw]}
@@ -985,9 +1135,7 @@ export default function PluginStorePage() {
               <Link2 className="w-5 h-5" />
               {t('pluginStore.installFromUrlTitle')}
             </DialogTitle>
-            <DialogDescription>
-              {t('pluginStore.installFromUrlDesc')}
-            </DialogDescription>
+            <DialogDescription>{t('pluginStore.installFromUrlDesc')}</DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-2">
@@ -1006,9 +1154,7 @@ export default function PluginStorePage() {
                 autoComplete="off"
                 spellCheck={false}
               />
-              <p className="text-xs text-muted-foreground">
-                {t('pluginStore.urlProtocolHint')}
-              </p>
+              <p className="text-xs text-muted-foreground">{t('pluginStore.urlProtocolHint')}</p>
             </div>
 
             <div className="space-y-2">
@@ -1041,9 +1187,10 @@ export default function PluginStorePage() {
               {t('pluginStore.cancel')}
             </Button>
             <Button
+              variant="outline"
               onClick={handleInstallByUrl}
               disabled={installByUrlLoading}
-              className="h-9"
+              className="h-9 text-primary hover:text-primary [&_svg]:!text-current"
             >
               {installByUrlLoading ? (
                 <>

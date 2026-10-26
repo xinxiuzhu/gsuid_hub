@@ -19,7 +19,7 @@
  * 提交，因此本 section 不需要自带保存按钮。
  *
  * 布局约定：与 AdvancedSettingsSection / MemeSettingsSection 一致——
- * 标题 + 描述 + 总开关 + 3 列 grid（divider 占整行），不做 Card 包裹。
+ * 标题 + 描述 + 总开关 + 三列 grid（divider 占整行），不做 Card 包裹。
  */
 import { AlertTriangle, ShieldAlert, Terminal } from 'lucide-react';
 import {
@@ -28,6 +28,7 @@ import {
   type ConfigFieldType,
   type ConfigValue,
 } from '@/components/config';
+import { GlassAlert } from '@/components/ui/glass-alert';
 import { Switch } from '@/components/ui/switch';
 import type { PluginConfigItem } from '@/lib/api';
 
@@ -45,7 +46,7 @@ export interface CommandExecutorSectionProps {
   onUpdateConfig: (configId: string, fieldKey: string, value: ConfigValue) => void;
 }
 
-/** 不放入 3 列 grid 统一渲染的字段（顶部总开关） */
+/** 不放入三列 grid 统一渲染的字段（顶部总开关） */
 const TOP_LEVEL_KEYS: string[] = ['enable'];
 
 /**
@@ -77,9 +78,7 @@ export function CommandExecutorSection({
             <Terminal className="w-5 h-5 text-muted-foreground" />
             {t('aiConfig.commandExecutor.title')}
           </h2>
-          <p className="text-sm text-muted-foreground">
-            {t('aiConfig.commandExecutor.notFound')}
-          </p>
+          <p className="text-sm text-muted-foreground">{t('aiConfig.commandExecutor.notFound')}</p>
         </div>
       </div>
     );
@@ -92,13 +91,10 @@ export function CommandExecutorSection({
 
   // 网络放行相关（用于安全提示）
   const allowNetwork = (config.allow_network?.value as boolean) ?? false;
-  const allowAutoProvision =
-    (config.allow_auto_provision?.value as boolean) ?? false;
+  const allowAutoProvision = (config.allow_auto_provision?.value as boolean) ?? false;
 
-  // 关闭时不渲染子配置，但保留 3 列 grid 的占位提示
-  const entries = Object.entries(config).filter(
-    ([key]) => !TOP_LEVEL_KEYS.includes(key),
-  );
+  // 关闭时不渲染子配置，但保留三列 grid 的占位提示
+  const entries = Object.entries(config).filter(([key]) => !TOP_LEVEL_KEYS.includes(key));
 
   return (
     <div className="space-y-5">
@@ -108,13 +104,11 @@ export function CommandExecutorSection({
           <Terminal className="w-5 h-5 text-primary" />
           {t('aiConfig.commandExecutor.title')}
         </h2>
-        <p className="text-sm text-muted-foreground">
-          {t('aiConfig.commandExecutor.description')}
-        </p>
+        <p className="text-sm text-muted-foreground">{t('aiConfig.commandExecutor.description')}</p>
       </div>
 
       {/* 总开关（行内：图标 + 标题 + 描述 + Switch），与 MemeSettingsSection 同款 */}
-      <div className="flex flex-wrap items-center justify-between gap-3 p-4 rounded-lg border border-border/30 bg-card/30">
+      <div className="flex flex-wrap items-center justify-between gap-3 p-4 rounded-lg glass-card transition-all">
         <div className="flex items-start gap-3 min-w-0 flex-1">
           <div className="flex items-center justify-center w-9 h-9 rounded-md bg-primary/10 text-primary shrink-0">
             <Terminal className="w-5 h-5" />
@@ -132,36 +126,26 @@ export function CommandExecutorSection({
         </div>
         <Switch
           checked={enableValue}
-          onCheckedChange={(checked) =>
-            onUpdateConfig(configId, 'enable', checked)
-          }
+          onCheckedChange={(checked) => onUpdateConfig(configId, 'enable', checked)}
         />
       </div>
 
       {/* 高危提示：开启 + 联网 / 自动安装 时显示 */}
       {enableValue && (allowNetwork || allowAutoProvision) && (
-        <div className="flex items-start gap-3 rounded-lg border border-red-500/40 bg-red-500/5 p-4 text-sm">
-          <ShieldAlert className="w-4 h-4 mt-0.5 text-red-600 dark:text-red-400 shrink-0" />
-          <div className="space-y-1">
-            <p className="font-semibold">
-              {t('aiConfig.commandExecutor.dangerTitle')}
-            </p>
-            <p className="text-muted-foreground">
-              {t('aiConfig.commandExecutor.dangerDesc')}
-            </p>
-          </div>
-        </div>
+        <GlassAlert tone="danger" icon={ShieldAlert} className="p-4">
+          <p className="font-semibold">{t('aiConfig.commandExecutor.dangerTitle')}</p>
+          <p className="mt-1 text-muted-foreground">{t('aiConfig.commandExecutor.dangerDesc')}</p>
+        </GlassAlert>
       )}
 
       {/* 关闭态：占位提示 */}
       {!enableValue && (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground p-4 rounded-lg border border-border/30 bg-muted/20">
-          <AlertTriangle className="w-4 h-4" />
-          <span>{t('aiConfig.commandExecutor.disabledHint')}</span>
-        </div>
+        <GlassAlert tone="neutral" icon={AlertTriangle} className="p-4">
+          {t('aiConfig.commandExecutor.disabledHint')}
+        </GlassAlert>
       )}
 
-      {/* 3 列 grid：divider 占整行，其它字段占一格 */}
+      {/* 三列：divider 占整行，其它字段占一格 */}
       {enableValue && (
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {entries.map(([key, item]) => {
@@ -173,38 +157,27 @@ export function CommandExecutorSection({
               const rawOptions = (item.options || []) as string[];
               fieldDef = {
                 ...fieldDef,
-                options: rawOptions.map(
-                  (opt) =>
-                    APPROVAL_MODE_LABEL_KEYS[opt]
-                      ? t(APPROVAL_MODE_LABEL_KEYS[opt])
-                      : opt,
+                options: rawOptions.map((opt) =>
+                  APPROVAL_MODE_LABEL_KEYS[opt] ? t(APPROVAL_MODE_LABEL_KEYS[opt]) : opt,
                 ),
               };
             } else if (key === 'path_arg_policy') {
               const rawOptions = (item.options || []) as string[];
               fieldDef = {
                 ...fieldDef,
-                options: rawOptions.map(
-                  (opt) =>
-                    PATH_ARG_POLICY_LABEL_KEYS[opt]
-                      ? t(PATH_ARG_POLICY_LABEL_KEYS[opt])
-                      : opt,
+                options: rawOptions.map((opt) =>
+                  PATH_ARG_POLICY_LABEL_KEYS[opt] ? t(PATH_ARG_POLICY_LABEL_KEYS[opt]) : opt,
                 ),
               };
             }
 
             const isDivider = fieldDef.type === ('divider' as ConfigFieldType);
             return (
-              <div
-                key={key}
-                className={isDivider ? 'col-span-full' : undefined}
-              >
+              <div key={key} className={isDivider ? 'col-span-full' : undefined}>
                 <ConfigField
                   fieldKey={key}
                   field={fieldDef}
-                  onChange={(fieldKey, value) =>
-                    onUpdateConfig(configId, fieldKey, value)
-                  }
+                  onChange={(fieldKey, value) => onUpdateConfig(configId, fieldKey, value)}
                 />
               </div>
             );
@@ -212,9 +185,7 @@ export function CommandExecutorSection({
         </div>
       )}
 
-      <p className="text-xs text-muted-foreground">
-        {t('aiConfig.commandExecutor.footnote')}
-      </p>
+      <p className="text-xs text-muted-foreground">{t('aiConfig.commandExecutor.footnote')}</p>
     </div>
   );
 }

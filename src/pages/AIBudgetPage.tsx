@@ -1,9 +1,14 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { GlassAlert } from '@/components/ui/glass-alert';
 import { Skeleton } from '@/components/ui/skeleton';
-import { TabButtonGroup } from '@/components/ui/TabButtonGroup';
+import {
+  TabButtonGroup,
+  tabToolbarControlClass,
+  tabToolbarIconButtonClass,
+} from '@/components/ui/TabButtonGroup';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -104,57 +109,56 @@ export default function AIBudgetPage() {
   const { t } = useLanguage();
 
   const [activeTab, setActiveTab] = useState('overview');
-  const [isLoading, setIsLoading] = useState(false);
 
-  // Config save state lifted from ConfigTab for header save button
-  const [configDirty, setConfigDirty] = useState(false);
-  const [configSaving, setConfigSaving] = useState(false);
-  const configSaveRef = useRef<(() => void) | null>(null);
-
-  const tabOptions = useMemo(() => [
-    { value: 'overview', label: t('aiBudget.tabs.overview'), icon: <Gauge className="w-4 h-4" /> },
-    { value: 'config', label: t('aiBudget.tabs.config'), icon: <Settings className="w-4 h-4" /> },
-    { value: 'rules', label: t('aiBudget.tabs.rules'), icon: <Wallet className="w-4 h-4" /> },
-    { value: 'whitelist', label: t('aiBudget.tabs.whitelist'), icon: <Shield className="w-4 h-4" /> },
-    { value: 'diagnostic', label: t('aiBudget.tabs.diagnostic'), icon: <Eye className="w-4 h-4" /> },
-  ], [t]);
-
-  const handleConfigSave = () => {
-    if (configSaveRef.current) configSaveRef.current();
-  };
+  const tabOptions = useMemo(
+    () => [
+      {
+        value: 'overview',
+        label: t('aiBudget.tabs.overview'),
+        icon: <Gauge className="w-4 h-4" />,
+      },
+      {
+        value: 'rules',
+        label: t('aiBudget.tabs.rules'),
+        icon: <Wallet className="w-4 h-4" />,
+      },
+      {
+        value: 'manage',
+        label: t('aiBudget.tabs.manage'),
+        icon: <Settings className="w-4 h-4" />,
+      },
+      {
+        value: 'diagnostic',
+        label: t('aiBudget.tabs.diagnostic'),
+        icon: <Eye className="w-4 h-4" />,
+      },
+    ],
+    [t],
+  );
 
   return (
     <PinnedPage
+      className="gap-4"
       header={
         /* Header */
-        <div className="flex items-end justify-between">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h1 className="text-3xl font-bold flex items-center gap-3"><Wallet className="w-8 h-8" />{t('aiBudget.title')}</h1>
+            <h1 className="text-3xl font-bold flex items-center gap-3">
+              <Wallet className="w-8 h-8" />
+              {t('aiBudget.title')}
+            </h1>
             <p className="text-muted-foreground mt-1">{t('aiBudget.description')}</p>
           </div>
-          {activeTab === 'config' && (
-            <Button onClick={handleConfigSave} disabled={!configDirty || configSaving}>
-              {configSaving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
-              {t('aiBudget.config.save')}
-            </Button>
-          )}
         </div>
       }
       toolbar={
-        /* Tab Navigation */
-        <TabButtonGroup
-          options={tabOptions}
-          value={activeTab}
-          onValueChange={setActiveTab}
-          className="w-full justify-start"
-        />
+        <TabButtonGroup options={tabOptions} value={activeTab} onValueChange={setActiveTab} />
       }
     >
       {/* Tab Content */}
-      {activeTab === 'overview' && <OverviewTab />}
-      {activeTab === 'config' && <ConfigTab onDirtyChange={setConfigDirty} onSavingChange={setConfigSaving} saveRef={configSaveRef} />}
+      {activeTab === 'overview' && <OverviewTab onNavigateTab={setActiveTab} />}
       {activeTab === 'rules' && <RulesTab />}
-      {activeTab === 'whitelist' && <WhitelistTab />}
+      {activeTab === 'manage' && <ManageTab />}
       {activeTab === 'diagnostic' && <DiagnosticTab />}
     </PinnedPage>
   );
@@ -164,7 +168,7 @@ export default function AIBudgetPage() {
 // Overview Tab
 // ============================================================================
 
-function OverviewTab() {
+function OverviewTab({ onNavigateTab }: { onNavigateTab: (tab: string) => void }) {
   const { t } = useLanguage();
   const [overview, setOverview] = useState<AIBudgetOverview | null>(null);
   const [loading, setLoading] = useState(true);
@@ -183,172 +187,461 @@ function OverviewTab() {
     }
   }, [t]);
 
-  useEffect(() => { fetchOverview(); }, [fetchOverview]);
+  useEffect(() => {
+    fetchOverview();
+  }, [fetchOverview]);
 
   if (loading) return <OverviewSkeleton />;
-  if (error) return (
-    <Card className="glass-card">
-      <CardContent className="py-8 text-center">
-        <p className="text-muted-foreground mb-4">{error}</p>
-        <Button variant="outline" onClick={fetchOverview}>
-          <RefreshCw className="w-4 h-4 mr-2" /> {t('aiBudget.common.retry')}
-        </Button>
-      </CardContent>
-    </Card>
-  );
+  if (error)
+    return (
+      <Card className="glass-card">
+        <CardContent className="!py-8 text-center">
+          <p className="text-muted-foreground mb-4">{error}</p>
+          <Button variant="outline" onClick={fetchOverview}>
+            <RefreshCw className="w-4 h-4 mr-2" /> {t('aiBudget.common.retry')}
+          </Button>
+        </CardContent>
+      </Card>
+    );
 
   if (!overview) return null;
 
-  return (
-    <div className="space-y-6">
-      {/* Status Banner
-          移动端：整行堆叠、状态组允许换行——否则 Badge 自带 whitespace-nowrap 会独占宽度，
-          把状态文案挤成一列单字，并把刷新按钮顶出屏幕（en-US 的 tipOff 更长，更容易触发） */}
-      <Card className="glass-card">
-        <CardContent className="py-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
-              {overview.enabled
-                ? <CheckCircle2 className="w-5 h-5 shrink-0 text-green-500" />
-                : <AlertTriangle className="w-5 h-5 shrink-0 text-yellow-500" />}
-              <span className="font-medium">
-                {overview.enabled ? t('aiBudget.overview.statusOn') : t('aiBudget.overview.statusOff')}
-              </span>
-              {!overview.enabled && (
-                // 覆盖 Badge 默认的 whitespace-nowrap：窄屏放不下时在药丸内换行，而不是撑爆一行
-                <Badge variant="outline" className="max-w-full whitespace-normal text-yellow-500 border-yellow-500/30">
-                  {t('aiBudget.overview.tipOff')}
-                </Badge>
-              )}
-            </div>
-            <Button variant="outline" size="sm" onClick={fetchOverview} className="shrink-0 self-start sm:self-auto">
-              <RefreshCw className="w-4 h-4 mr-2" /> {t('aiBudget.overview.refresh')}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+  // 占比条以榜首为基准，不依赖后端是否已按降序返回
+  const topGroupsMax = overview.top_groups_24h.reduce((m, i) => Math.max(m, i.total_tokens), 0);
+  const topUsersMax = overview.top_users_24h.reduce((m, i) => Math.max(m, i.total_tokens), 0);
 
-      {/* Summary Cards */}
-      <div className="glass-card-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
-          icon={<Wallet className="w-5 h-5" />}
-          title={t('aiBudget.overview.ruleCount')}
-          value={overview.rule_count}
-        />
-        <StatCard
-          icon={<Zap className="w-5 h-5" />}
-          title={t('aiBudget.overview.enabledRuleCount')}
-          value={overview.enabled_rule_count}
-        />
-        <StatCard
-          icon={<Shield className="w-5 h-5" />}
-          title={t('aiBudget.overview.whitelistCount')}
-          value={overview.whitelist_count}
-        />
-        <StatCard
-          icon={<Activity className="w-5 h-5" />}
-          title={t('aiBudget.overview.totalTokens24h')}
-          value={formatTokens(overview.total_tokens_24h)}
-          valueSuffix=" tokens"
-        />
+  return (
+    <div className="flex flex-col gap-4">
+      {/* 顶部全局状态卡片（全宽） */}
+      <div
+        className={cn(
+          'glass-card rounded-xl p-4 border flex flex-col sm:flex-row sm:items-center justify-between gap-4',
+          overview.enabled
+            ? 'border-emerald-500/30 bg-emerald-500/5'
+            : 'border-amber-500/30 bg-amber-500/5',
+        )}
+      >
+        <div className="flex items-start sm:items-center gap-3 min-w-0">
+          <div
+            className={cn(
+              'w-10 h-10 rounded-lg flex items-center justify-center shrink-0',
+              overview.enabled
+                ? 'bg-emerald-500/10 text-emerald-500'
+                : 'bg-amber-500/10 text-amber-500',
+            )}
+          >
+            {overview.enabled ? (
+              <CheckCircle2 className="w-5 h-5" />
+            ) : (
+              <AlertTriangle className="w-5 h-5" />
+            )}
+          </div>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-semibold text-base text-foreground">
+                {overview.enabled
+                  ? t('aiBudget.overview.statusOn')
+                  : t('aiBudget.overview.statusOff')}
+              </span>
+              <Badge
+                variant="outline"
+                className={cn(
+                  'text-xs font-medium',
+                  overview.enabled
+                    ? 'text-emerald-500 border-emerald-500/30'
+                    : 'text-amber-500 border-amber-500/30',
+                )}
+              >
+                {overview.enabled
+                  ? t('aiBudget.overview.enabled')
+                  : t('aiBudget.overview.disabled')}
+              </Badge>
+            </div>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {overview.enabled
+                ? t('aiBudget.overview.statusOnDesc')
+                : t('aiBudget.overview.tipOff')}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+          {!overview.enabled && (
+            <Button
+              variant="outline"
+              onClick={() => onNavigateTab('manage')}
+              className={tabToolbarControlClass}
+            >
+              <Settings className="w-4 h-4 mr-1.5" />
+              {t('aiBudget.overview.configAction')}
+            </Button>
+          )}
+          <Button variant="outline" onClick={fetchOverview} className={tabToolbarControlClass}>
+            <RefreshCw className={cn('w-4 h-4 mr-1.5', loading && 'animate-spin')} />
+            {t('aiBudget.overview.refresh')}
+          </Button>
+        </div>
       </div>
 
-      {/* Blocked Rules */}
-      <Card className="glass-card">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <AlertTriangle className="w-5 h-5" />
-            {t('aiBudget.overview.blockedRules')}
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {overview.blocked_rules.length === 0 ? (
-            <p className="text-muted-foreground text-center py-4">{t('aiBudget.overview.noBlockedRules')}</p>
-          ) : (
-            <div className="space-y-3">
+      {/* 4 个核心指标卡片（全宽响应式网格） */}
+      <div className="glass-card-grid grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => onNavigateTab('rules')}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') onNavigateTab('rules');
+          }}
+          className="glass-card p-4 rounded-xl flex items-center justify-between gap-3 cursor-pointer hover:border-primary/40 transition-colors group"
+        >
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-muted-foreground truncate">
+              {t('aiBudget.overview.ruleCount')}
+            </p>
+            <p className="text-2xl font-bold tabular-nums mt-1 text-foreground">
+              {overview.rule_count}
+            </p>
+            <p className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-1 group-hover:text-primary transition-colors">
+              {t('aiBudget.overview.manageAction')} <ChevronRight className="w-3 h-3" />
+            </p>
+          </div>
+          <div className="w-10 h-10 rounded-lg bg-primary/10 text-primary flex items-center justify-center shrink-0">
+            <Wallet className="w-5 h-5" />
+          </div>
+        </div>
+
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => onNavigateTab('rules')}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') onNavigateTab('rules');
+          }}
+          className="glass-card p-4 rounded-xl flex items-center justify-between gap-3 cursor-pointer hover:border-primary/40 transition-colors group"
+        >
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-muted-foreground truncate">
+              {t('aiBudget.overview.enabledRuleCount')}
+            </p>
+            <p className="text-2xl font-bold tabular-nums mt-1 text-foreground">
+              {overview.enabled_rule_count}
+            </p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              {overview.rule_count - overview.enabled_rule_count > 0
+                ? `${overview.rule_count - overview.enabled_rule_count} ${t('aiBudget.rules.disabledOnly')}`
+                : t('aiBudget.rules.all')}
+            </p>
+          </div>
+          <div className="w-10 h-10 rounded-lg bg-amber-500/10 text-amber-500 flex items-center justify-center shrink-0">
+            <Zap className="w-5 h-5" />
+          </div>
+        </div>
+
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => onNavigateTab('manage')}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') onNavigateTab('manage');
+          }}
+          className="glass-card p-4 rounded-xl flex items-center justify-between gap-3 cursor-pointer hover:border-primary/40 transition-colors group"
+        >
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-muted-foreground truncate">
+              {t('aiBudget.overview.whitelistCount')}
+            </p>
+            <p className="text-2xl font-bold tabular-nums mt-1 text-foreground">
+              {overview.whitelist_count}
+            </p>
+            <p className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-1 group-hover:text-primary transition-colors">
+              {t('aiBudget.overview.configAction')} <ChevronRight className="w-3 h-3" />
+            </p>
+          </div>
+          <div className="w-10 h-10 rounded-lg bg-blue-500/10 text-blue-500 flex items-center justify-center shrink-0">
+            <Shield className="w-5 h-5" />
+          </div>
+        </div>
+
+        <div className="glass-card p-4 rounded-xl flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-muted-foreground truncate">
+              {t('aiBudget.overview.totalTokens24h')}
+            </p>
+            <p className="text-2xl font-bold tabular-nums mt-1 text-foreground">
+              {formatTokens(overview.total_tokens_24h)}
+            </p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">tokens / 24h</p>
+          </div>
+          <div className="w-10 h-10 rounded-lg bg-emerald-500/10 text-emerald-500 flex items-center justify-center shrink-0">
+            <Activity className="w-5 h-5" />
+          </div>
+        </div>
+      </div>
+
+      {/* 超限规则监控区 */}
+      {overview.blocked_rules.length === 0 ? (
+        <div className="glass-card p-3.5 px-4 rounded-xl flex items-center justify-between border border-border/50">
+          <div className="flex items-center gap-2.5 text-sm">
+            <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+            <span className="font-medium text-foreground">
+              {t('aiBudget.overview.noBlockedRules')}
+            </span>
+            <span className="text-xs text-muted-foreground hidden sm:inline">
+              · {t('aiBudget.overview.healthyDesc')}
+            </span>
+          </div>
+          <Badge
+            variant="outline"
+            className="text-xs text-emerald-500 border-emerald-500/30 bg-emerald-500/5 shrink-0"
+          >
+            {t('aiBudget.overview.healthyBadge')}
+          </Badge>
+        </div>
+      ) : (
+        <Card className="glass-card border-red-500/30">
+          <CardHeader className="p-4 py-3 sm:p-4 sm:py-3">
+            <div className="flex items-center justify-between">
+              <CardTitle className="flex items-center gap-2 text-base text-red-500">
+                <AlertTriangle className="h-4 w-4" />
+                {t('aiBudget.overview.blockedRules')} ({overview.blocked_rules.length})
+              </CardTitle>
+              <Badge variant="destructive" className="text-xs">
+                {t('aiBudget.rules.usage.over')}
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="px-4 pb-3 pt-0 sm:px-4 sm:pb-3 sm:pt-0">
+            <div className="space-y-2">
               {overview.blocked_rules.map((br) => (
                 <BlockedRuleItem key={'rule_id' in br ? br.rule_id : br.id} rule={br} />
               ))}
             </div>
-          )}
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      )}
 
-      {/* Top Groups / Users */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card className="glass-card">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Users className="w-5 h-5" />
+      {/* 24h 消耗排行 */}
+      <div className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-2">
+        <Card className="glass-card h-full">
+          <CardHeader className="p-4 py-3 sm:p-4 sm:py-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Users className="h-4 w-4" />
               {t('aiBudget.overview.topGroups24h')}
             </CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="px-4 pb-2 pt-0 sm:px-4 sm:pb-2 sm:pt-0">
             {overview.top_groups_24h.length === 0 ? (
-              <p className="text-muted-foreground text-center py-4">{t('aiBudget.overview.noData')}</p>
+              <p className="text-muted-foreground text-center py-4">
+                {t('aiBudget.overview.noData')}
+              </p>
             ) : (
-              <div className="space-y-2">
+              <div>
                 {overview.top_groups_24h.map((item, idx) => (
-                  <div key={item.group_id} className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
-                    <div className="flex items-center gap-2">
-                      <Badge variant="outline" className="w-6 h-6 justify-center text-xs font-mono">{idx + 1}</Badge>
-                      <span className="font-mono text-sm">{item.group_id}</span>
-                    </div>
-                    <span className="text-sm font-medium">{formatTokens(item.total_tokens)} {t('aiBudget.overview.tokens')}</span>
-                  </div>
+                  <TopConsumptionRow
+                    key={item.group_id}
+                    rank={idx + 1}
+                    label={item.group_id}
+                    tokens={item.total_tokens}
+                    maxTokens={topGroupsMax}
+                  />
                 ))}
               </div>
             )}
           </CardContent>
         </Card>
 
-        <Card className="glass-card">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Globe className="w-5 h-5" />
+        <Card className="glass-card h-full">
+          <CardHeader className="p-4 py-3 sm:p-4 sm:py-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Globe className="h-4 w-4" />
               {t('aiBudget.overview.topUsers24h')}
             </CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="px-4 pb-2 pt-0 sm:px-4 sm:pb-2 sm:pt-0">
             {overview.top_users_24h.length === 0 ? (
-              <p className="text-muted-foreground text-center py-4">{t('aiBudget.overview.noData')}</p>
+              <p className="text-muted-foreground text-center py-4">
+                {t('aiBudget.overview.noData')}
+              </p>
             ) : (
-              <div className="space-y-2">
+              <div>
                 {overview.top_users_24h.map((item, idx) => (
-                  <div key={item.user_id} className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
-                    <div className="flex items-center gap-2">
-                      <Badge variant="outline" className="w-6 h-6 justify-center text-xs font-mono">{idx + 1}</Badge>
-                      <span className="font-mono text-sm">{item.user_id}</span>
-                    </div>
-                    <span className="text-sm font-medium">{formatTokens(item.total_tokens)} {t('aiBudget.overview.tokens')}</span>
-                  </div>
+                  <TopConsumptionRow
+                    key={item.user_id}
+                    rank={idx + 1}
+                    label={item.user_id}
+                    tokens={item.total_tokens}
+                    maxTokens={topUsersMax}
+                  />
                 ))}
               </div>
             )}
           </CardContent>
         </Card>
+      </div>
+
+      {/* 底部快捷入口导航 */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4 mt-1">
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => onNavigateTab('rules')}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') onNavigateTab('rules');
+          }}
+          className="glass-card p-4 rounded-xl border border-border/60 hover:border-primary/50 transition-all cursor-pointer flex flex-col justify-between group"
+        >
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <Wallet className="h-4 w-4" />
+              </span>
+              <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
+            </div>
+            <h3 className="font-semibold text-sm text-foreground">
+              {t('aiBudget.overview.quickRulesTitle')}
+            </h3>
+            <p className="text-xs text-muted-foreground mt-1">
+              {t('aiBudget.overview.quickRulesDesc')}
+            </p>
+          </div>
+          <div className="mt-3 pt-3 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
+            <span>
+              {overview.rule_count} {t('aiBudget.overview.ruleCount')}
+            </span>
+            <span className="text-primary font-medium group-hover:underline">
+              {t('aiBudget.overview.manageAction')} →
+            </span>
+          </div>
+        </div>
+
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => onNavigateTab('manage')}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') onNavigateTab('manage');
+          }}
+          className="glass-card p-4 rounded-xl border border-border/60 hover:border-primary/50 transition-all cursor-pointer flex flex-col justify-between group"
+        >
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500/10 text-blue-500">
+                <Settings className="h-4 w-4" />
+              </span>
+              <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
+            </div>
+            <h3 className="font-semibold text-sm text-foreground">
+              {t('aiBudget.overview.quickManageTitle')}
+            </h3>
+            <p className="text-xs text-muted-foreground mt-1">
+              {t('aiBudget.overview.quickManageDesc')}
+            </p>
+          </div>
+          <div className="mt-3 pt-3 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
+            <span>
+              {overview.whitelist_count} {t('aiBudget.overview.whitelistCount')}
+            </span>
+            <span className="text-primary font-medium group-hover:underline">
+              {t('aiBudget.overview.configAction')} →
+            </span>
+          </div>
+        </div>
+
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => onNavigateTab('diagnostic')}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') onNavigateTab('diagnostic');
+          }}
+          className="glass-card p-4 rounded-xl border border-border/60 hover:border-primary/50 transition-all cursor-pointer flex flex-col justify-between group"
+        >
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-purple-500/10 text-purple-500">
+                <Eye className="h-4 w-4" />
+              </span>
+              <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
+            </div>
+            <h3 className="font-semibold text-sm text-foreground">
+              {t('aiBudget.overview.quickDiagTitle')}
+            </h3>
+            <p className="text-xs text-muted-foreground mt-1">
+              {t('aiBudget.overview.quickDiagDesc')}
+            </p>
+          </div>
+          <div className="mt-3 pt-3 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
+            <span>{t('aiBudget.diagnostic.resultTitle')}</span>
+            <span className="text-primary font-medium group-hover:underline">
+              {t('aiBudget.overview.diagAction')} →
+            </span>
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
-function StatCard({ icon, title, value, valueSuffix = '' }: {
-  icon: React.ReactNode; title: string; value: number | string; valueSuffix?: string;
-}) {
+function ManageTab() {
+  const { t } = useLanguage();
   return (
-    <Card className="glass-card">
-      <CardContent className="py-4">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center justify-center rounded-lg w-8 h-8 bg-primary/10 text-primary">
-            {icon}
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">{title}</p>
-            <p className="text-lg font-bold">{value}{valueSuffix}</p>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
+    <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
+      <section className="flex min-w-0 flex-col gap-2">
+        <h2 className="flex items-center gap-2 px-1 text-base font-semibold">
+          <Settings className="h-4 w-4" />
+          {t('aiBudget.config.title')}
+        </h2>
+        <ConfigTab />
+      </section>
+      <section className="flex min-w-0 flex-col gap-2">
+        <h2 className="flex items-center gap-2 px-1 text-base font-semibold">
+          <Shield className="h-4 w-4" />
+          {t('aiBudget.whitelist.title')}
+        </h2>
+        <WhitelistTab />
+      </section>
+    </div>
+  );
+}
+
+/** 24h 排行行：群号 / 用户 ID 常是超长字符串，名字区必须 min-w-0 才能截断，
+ *  否则长名字撑破卡片、右侧数值被挤换行（P-28：桌面下不允许出现横向溢出）。 */
+function TopConsumptionRow({
+  rank,
+  label,
+  tokens,
+  maxTokens,
+}: {
+  rank: number;
+  label: string;
+  tokens: number;
+  maxTokens: number;
+}) {
+  const { t } = useLanguage();
+  const pct = maxTokens > 0 ? Math.max((tokens / maxTokens) * 100, 2) : 0;
+
+  return (
+    <div className="py-2 border-b border-border/50 last:border-0">
+      <div className="flex items-center gap-3">
+        <Badge
+          variant="outline"
+          className="w-6 h-6 shrink-0 justify-center text-xs font-mono tabular-nums"
+        >
+          {rank}
+        </Badge>
+        <span className="min-w-0 flex-1 truncate font-mono text-sm" title={label}>
+          {label}
+        </span>
+        <span className="shrink-0 whitespace-nowrap text-sm font-medium tabular-nums">
+          {formatTokens(tokens)}
+          <span className="ml-1 text-xs font-normal text-muted-foreground">
+            {t('aiBudget.overview.tokens')}
+          </span>
+        </span>
+      </div>
+      <div className="mt-1.5 ml-9 h-1 rounded-full bg-muted/60 overflow-hidden">
+        <div className="h-full rounded-full bg-primary/60" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
   );
 }
 
@@ -364,19 +657,23 @@ function BlockedRuleItem({ rule }: { rule: AIBudgetBlockedRule }) {
   const usageSummary = isGroupEach ? rule.usage_summary : undefined;
 
   return (
-    <div className={cn("rounded-lg p-3 border glass-card border-red-500/30")}>
+    <div className={cn('rounded-lg p-3 border glass-card border-red-500/30')}>
       <div className="flex items-center gap-2 mb-2">
         <XCircle className="w-4 h-4 text-red-500" />
         <span className="font-medium text-sm">{label}</span>
-        <Badge variant="destructive" className="text-xs">{t('aiBudget.rules.usage.over')}</Badge>
+        <Badge variant="destructive" className="text-xs">
+          {t('aiBudget.rules.usage.over')}
+        </Badge>
       </div>
       {usageSummary ? (
         <GroupEachUsageSummary summary={usageSummary} />
       ) : (
         <div className="space-y-2">
-          {windows.filter(w => w.over).map(w => (
-            <WindowProgressBar key={w.window} window={w} />
-          ))}
+          {windows
+            .filter((w) => w.over)
+            .map((w) => (
+              <WindowProgressBar key={w.window} window={w} />
+            ))}
         </div>
       )}
     </div>
@@ -392,9 +689,14 @@ function WindowProgressBar({ window: w }: { window: AIBudgetWindowUsage }) {
     <div className="flex items-center gap-3 text-sm">
       <span className="w-16 font-medium">{windowLabel}</span>
       <div className="flex-1">
-        <Progress value={pct} className={cn("h-3", isOver && "[&>div]:bg-red-500")} />
+        <Progress value={pct} className={cn('h-3', isOver && '[&>div]:bg-red-500')} />
       </div>
-      <span className={cn("font-mono text-xs whitespace-nowrap", isOver ? "text-red-500" : "text-muted-foreground")}>
+      <span
+        className={cn(
+          'font-mono text-xs whitespace-nowrap',
+          isOver ? 'text-red-500' : 'text-muted-foreground',
+        )}
+      >
         {formatTokens(w.used)}/{formatTokens(w.limit)}
       </span>
       {w.reset_at && (
@@ -409,15 +711,22 @@ function WindowProgressBar({ window: w }: { window: AIBudgetWindowUsage }) {
 
 function OverviewSkeleton() {
   return (
-    <div className="space-y-6">
-      <Skeleton className="h-16 w-full rounded-lg" />
-      <div className="glass-card-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {[1,2,3,4].map(i => <Skeleton key={i} className="h-16 rounded-lg" />)}
+    <div className="flex flex-col gap-4">
+      <Skeleton className="h-20 w-full rounded-xl" />
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        {[1, 2, 3, 4].map((i) => (
+          <Skeleton key={i} className="h-24 rounded-xl" />
+        ))}
       </div>
-      <Skeleton className="h-48 w-full rounded-lg" />
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Skeleton className="h-32 rounded-lg" />
-        <Skeleton className="h-32 rounded-lg" />
+      <Skeleton className="h-12 w-full rounded-xl" />
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <Skeleton className="h-56 rounded-xl" />
+        <Skeleton className="h-56 rounded-xl" />
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4">
+        {[1, 2, 3].map((i) => (
+          <Skeleton key={i} className="h-28 rounded-xl" />
+        ))}
       </div>
     </div>
   );
@@ -427,11 +736,15 @@ function OverviewSkeleton() {
 // Config Tab
 // ============================================================================
 
-function ConfigTab({ onDirtyChange, onSavingChange, saveRef }: {
-  onDirtyChange: (dirty: boolean) => void;
-  onSavingChange: (saving: boolean) => void;
-  saveRef: React.MutableRefObject<(() => void) | null>;
-}) {
+function ConfigTab({
+  onDirtyChange,
+  onSavingChange,
+  saveRef,
+}: {
+  onDirtyChange?: (dirty: boolean) => void;
+  onSavingChange?: (saving: boolean) => void;
+  saveRef?: React.MutableRefObject<(() => void) | null>;
+} = {}) {
   const { t } = useLanguage();
   const [config, setConfig] = useState<AIBudgetConfig | null>(null);
   const [loading, setLoading] = useState(true);
@@ -459,11 +772,24 @@ function ConfigTab({ onDirtyChange, onSavingChange, saveRef }: {
       notifyCooldown !== config.notify_cooldown ||
       blockMessage !== config.block_message
     );
-  }, [config, enable, countMode, countExemptUsage, exemptMasters, notifyOnBlock, notifyCooldown, blockMessage]);
+  }, [
+    config,
+    enable,
+    countMode,
+    countExemptUsage,
+    exemptMasters,
+    notifyOnBlock,
+    notifyCooldown,
+    blockMessage,
+  ]);
 
   // Sync dirty/saving state to parent for header save button
-  useEffect(() => { onDirtyChange(isDirty); }, [isDirty, onDirtyChange]);
-  useEffect(() => { onSavingChange(saving); }, [saving, onSavingChange]);
+  useEffect(() => {
+    onDirtyChange?.(isDirty);
+  }, [isDirty, onDirtyChange]);
+  useEffect(() => {
+    onSavingChange?.(saving);
+  }, [saving, onSavingChange]);
 
   const fetchConfig = useCallback(async () => {
     setLoading(true);
@@ -485,7 +811,9 @@ function ConfigTab({ onDirtyChange, onSavingChange, saveRef }: {
     }
   }, [t]);
 
-  useEffect(() => { fetchConfig(); }, [fetchConfig]);
+  useEffect(() => {
+    fetchConfig();
+  }, [fetchConfig]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -507,19 +835,20 @@ function ConfigTab({ onDirtyChange, onSavingChange, saveRef }: {
       setSaving(false);
     }
   };
-  saveRef.current = handleSave;
+  if (saveRef) saveRef.current = handleSave;
 
   if (loading) return <ConfigSkeleton />;
-  if (error) return (
-    <Card className="glass-card">
-      <CardContent className="py-8 text-center">
-        <p className="text-muted-foreground mb-4">{error}</p>
-        <Button variant="outline" onClick={fetchConfig}>
-          <RefreshCw className="w-4 h-4 mr-2" /> {t('aiBudget.common.retry')}
-        </Button>
-      </CardContent>
-    </Card>
-  );
+  if (error)
+    return (
+      <Card className="glass-card">
+        <CardContent className="!py-8 text-center">
+          <p className="text-muted-foreground mb-4">{error}</p>
+          <Button variant="outline" onClick={fetchConfig}>
+            <RefreshCw className="w-4 h-4 mr-2" /> {t('aiBudget.common.retry')}
+          </Button>
+        </CardContent>
+      </Card>
+    );
 
   const countModeOptions = [
     { value: 'input_output', label: t('aiBudget.config.countModeOptions.inputOutput') },
@@ -528,7 +857,7 @@ function ConfigTab({ onDirtyChange, onSavingChange, saveRef }: {
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-4">
       {/* Master Switch */}
       <Card className="glass-card">
         <CardHeader>
@@ -542,7 +871,9 @@ function ConfigTab({ onDirtyChange, onSavingChange, saveRef }: {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <Switch checked={enable} onCheckedChange={setEnable} />
-              <span className="font-medium">{enable ? t('aiBudget.common.enabled') : t('aiBudget.common.disabled')}</span>
+              <span className="font-medium">
+                {enable ? t('aiBudget.common.enabled') : t('aiBudget.common.disabled')}
+              </span>
             </div>
             {!enable && (
               <Badge variant="outline" className="text-yellow-500 border-yellow-500/30">
@@ -583,8 +914,10 @@ function ConfigTab({ onDirtyChange, onSavingChange, saveRef }: {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {countModeOptions.map(opt => (
-                    <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                  {countModeOptions.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -607,7 +940,7 @@ function ConfigTab({ onDirtyChange, onSavingChange, saveRef }: {
               <Input
                 type="number"
                 value={notifyCooldown}
-                onChange={e => setNotifyCooldown(Number(e.target.value))}
+                onChange={(e) => setNotifyCooldown(Number(e.target.value))}
                 min={0}
                 className="h-9"
               />
@@ -628,7 +961,9 @@ function ConfigTab({ onDirtyChange, onSavingChange, saveRef }: {
           <div className="flex items-center justify-between py-2">
             <div>
               <Label className="font-medium">{t('aiBudget.config.exemptMasters')}</Label>
-              <p className="text-xs text-muted-foreground">{t('aiBudget.config.exemptMastersDesc')}</p>
+              <p className="text-xs text-muted-foreground">
+                {t('aiBudget.config.exemptMastersDesc')}
+              </p>
             </div>
             <Switch checked={exemptMasters} onCheckedChange={setExemptMasters} />
           </div>
@@ -636,7 +971,9 @@ function ConfigTab({ onDirtyChange, onSavingChange, saveRef }: {
           <div className="flex items-center justify-between py-2">
             <div>
               <Label className="font-medium">{t('aiBudget.config.countExemptUsage')}</Label>
-              <p className="text-xs text-muted-foreground">{t('aiBudget.config.countExemptUsageDesc')}</p>
+              <p className="text-xs text-muted-foreground">
+                {t('aiBudget.config.countExemptUsageDesc')}
+              </p>
             </div>
             <Switch checked={countExemptUsage} onCheckedChange={setCountExemptUsage} />
           </div>
@@ -644,7 +981,9 @@ function ConfigTab({ onDirtyChange, onSavingChange, saveRef }: {
           <div className="flex items-center justify-between py-2">
             <div>
               <Label className="font-medium">{t('aiBudget.config.notifyOnBlock')}</Label>
-              <p className="text-xs text-muted-foreground">{t('aiBudget.config.notifyOnBlockDesc')}</p>
+              <p className="text-xs text-muted-foreground">
+                {t('aiBudget.config.notifyOnBlockDesc')}
+              </p>
             </div>
             <Switch checked={notifyOnBlock} onCheckedChange={setNotifyOnBlock} />
           </div>
@@ -660,7 +999,7 @@ function ConfigTab({ onDirtyChange, onSavingChange, saveRef }: {
         <CardContent>
           <Textarea
             value={blockMessage}
-            onChange={e => setBlockMessage(e.target.value)}
+            onChange={(e) => setBlockMessage(e.target.value)}
             rows={3}
             className="font-mono text-sm"
           />
@@ -669,8 +1008,12 @@ function ConfigTab({ onDirtyChange, onSavingChange, saveRef }: {
 
       {/* Save Button (Bottom) */}
       <div className="flex justify-end">
-        <Button onClick={handleSave} disabled={!isDirty || saving}>
-          {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+        <Button className="button-solid" onClick={handleSave} disabled={!isDirty || saving}>
+          {saving ? (
+            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+          ) : (
+            <Save className="w-4 h-4 mr-2" />
+          )}
           {t('aiBudget.config.save')}
         </Button>
       </div>
@@ -680,9 +1023,13 @@ function ConfigTab({ onDirtyChange, onSavingChange, saveRef }: {
 
 function ConfigSkeleton() {
   return (
-    <div className="space-y-6">
-      {[1,2,3,4].map(i => <Skeleton key={i} className="h-24 rounded-lg" />)}
-      <div className="flex justify-end"><Skeleton className="h-10 w-24 rounded-lg" /></div>
+    <div className="flex flex-col gap-4">
+      {[1, 2, 3, 4].map((i) => (
+        <Skeleton key={i} className="h-24 rounded-lg" />
+      ))}
+      <div className="flex justify-end">
+        <Skeleton className="h-10 w-24 rounded-lg" />
+      </div>
     </div>
   );
 }
@@ -731,14 +1078,18 @@ function RulesTab() {
     }
   }, [t, scopeTypeFilter, enabledFilter, search, withUsage]);
 
-  useEffect(() => { fetchRules(); }, [fetchRules]);
+  useEffect(() => {
+    fetchRules();
+  }, [fetchRules]);
 
   const handleToggle = async (rule: AIBudgetRule) => {
     try {
       await aiBudgetApi.toggleRule(rule.id);
-      toast.success(rule.enabled
-        ? t('aiBudget.rules.form.toggleSuccessDisabled')
-        : t('aiBudget.rules.form.toggleSuccessEnabled'));
+      toast.success(
+        rule.enabled
+          ? t('aiBudget.rules.form.toggleSuccessDisabled')
+          : t('aiBudget.rules.form.toggleSuccessEnabled'),
+      );
       fetchRules();
     } catch (e: any) {
       toast.error(t('aiBudget.rules.form.toggleFailed') + ': ' + e.message);
@@ -772,20 +1123,26 @@ function RulesTab() {
     }
   };
 
-  const scopeTypeOptions = useMemo(() => [
-    { value: '__all__', label: t('aiBudget.rules.all') },
-    { value: 'global', label: t('aiBudget.rules.scopeTypes.global') },
-    { value: 'group_each', label: t('aiBudget.rules.scopeTypes.group_each') },
-    { value: 'group', label: t('aiBudget.rules.scopeTypes.group') },
-    { value: 'member', label: t('aiBudget.rules.scopeTypes.member') },
-    { value: 'user', label: t('aiBudget.rules.scopeTypes.user') },
-  ], [t]);
+  const scopeTypeOptions = useMemo(
+    () => [
+      { value: '__all__', label: t('aiBudget.rules.all') },
+      { value: 'global', label: t('aiBudget.rules.scopeTypes.global') },
+      { value: 'group_each', label: t('aiBudget.rules.scopeTypes.group_each') },
+      { value: 'group', label: t('aiBudget.rules.scopeTypes.group') },
+      { value: 'member', label: t('aiBudget.rules.scopeTypes.member') },
+      { value: 'user', label: t('aiBudget.rules.scopeTypes.user') },
+    ],
+    [t],
+  );
 
-  const enabledOptions = useMemo(() => [
-    { value: '__all__', label: t('aiBudget.rules.all') },
-    { value: 'true', label: t('aiBudget.rules.enabledOnly') },
-    { value: 'false', label: t('aiBudget.rules.disabledOnly') },
-  ], [t]);
+  const enabledOptions = useMemo(
+    () => [
+      { value: '__all__', label: t('aiBudget.rules.all') },
+      { value: 'true', label: t('aiBudget.rules.enabledOnly') },
+      { value: 'false', label: t('aiBudget.rules.disabledOnly') },
+    ],
+    [t],
+  );
 
   const filteredRules = useMemo(() => {
     return rules;
@@ -793,7 +1150,7 @@ function RulesTab() {
   }, [rules]);
 
   return (
-    <div className="space-y-4">
+    <div className="flex flex-col gap-4">
       {/* Toolbar */}
       <Card className="glass-card">
         <CardContent className="py-3">
@@ -804,28 +1161,32 @@ function RulesTab() {
                 <Input
                   placeholder={t('aiBudget.rules.searchPlaceholder')}
                   value={search}
-                  onChange={e => setSearch(e.target.value)}
-                  className="h-9 pl-9"
+                  onChange={(e) => setSearch(e.target.value)}
+                  className={cn(tabToolbarControlClass, 'pl-9')}
                 />
               </div>
             </div>
             <Select value={scopeTypeFilter} onValueChange={setScopeTypeFilter}>
-              <SelectTrigger className="w-[140px] h-9">
+              <SelectTrigger className={cn(tabToolbarControlClass, 'w-[140px]')}>
                 <SelectValue placeholder={t('aiBudget.rules.filterScopeType')} />
               </SelectTrigger>
               <SelectContent>
-                {scopeTypeOptions.map(opt => (
-                  <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                {scopeTypeOptions.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
             <Select value={enabledFilter} onValueChange={setEnabledFilter}>
-              <SelectTrigger className="w-[140px] h-9">
+              <SelectTrigger className={cn(tabToolbarControlClass, 'w-[140px]')}>
                 <SelectValue placeholder={t('aiBudget.rules.filterEnabled')} />
               </SelectTrigger>
               <SelectContent>
-                {enabledOptions.map(opt => (
-                  <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                {enabledOptions.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -833,10 +1194,15 @@ function RulesTab() {
               <Switch checked={withUsage} onCheckedChange={setWithUsage} />
               <span className="text-muted-foreground">{t('aiBudget.rules.withUsage')}</span>
             </div>
-            <Button size="sm" className="h-9" onClick={() => setCreateDialogOpen(true)}>
+            <Button className={tabToolbarControlClass} onClick={() => setCreateDialogOpen(true)}>
               <Plus className="w-4 h-4 mr-2" /> {t('aiBudget.rules.createRule')}
             </Button>
-            <Button variant="outline" size="icon" className="h-9 w-9" onClick={fetchRules}>
+            <Button
+              variant="outline"
+              size="icon"
+              className={tabToolbarIconButtonClass}
+              onClick={fetchRules}
+            >
               <RefreshCw className="w-4 h-4" />
             </Button>
           </div>
@@ -844,9 +1210,11 @@ function RulesTab() {
       </Card>
 
       {/* Rules List */}
-      {loading ? <RulesSkeleton /> : error ? (
+      {loading ? (
+        <RulesSkeleton />
+      ) : error ? (
         <Card className="glass-card">
-          <CardContent className="py-8 text-center">
+          <CardContent className="!py-8 text-center">
             <p className="text-muted-foreground mb-4">{error}</p>
             <Button variant="outline" onClick={fetchRules}>
               <RefreshCw className="w-4 h-4 mr-2" /> {t('aiBudget.common.retry')}
@@ -855,20 +1223,29 @@ function RulesTab() {
         </Card>
       ) : filteredRules.length === 0 ? (
         <Card className="glass-card">
-          <CardContent className="py-8 text-center">
+          <CardContent className="!py-8 text-center">
             <Wallet className="w-8 h-8 text-muted-foreground mx-auto mb-3" />
             <p className="text-muted-foreground">{t('aiBudget.rules.noRules')}</p>
+            <Button className="mt-4" onClick={() => setCreateDialogOpen(true)}>
+              <Plus className="w-4 h-4 mr-2" /> {t('aiBudget.rules.createRule')}
+            </Button>
           </CardContent>
         </Card>
       ) : (
         <div className="space-y-3">
-          {filteredRules.map(rule => (
+          {filteredRules.map((rule) => (
             <RuleCard
               key={rule.id}
               rule={rule}
               onToggle={() => handleToggle(rule)}
-              onEdit={() => { setEditingRule(rule); setEditDialogOpen(true); }}
-              onDelete={() => { setDeletingRule(rule); setDeleteDialogOpen(true); }}
+              onEdit={() => {
+                setEditingRule(rule);
+                setEditDialogOpen(true);
+              }}
+              onDelete={() => {
+                setDeletingRule(rule);
+                setDeleteDialogOpen(true);
+              }}
               onViewDetail={() => handleViewDetail(rule)}
             />
           ))}
@@ -910,7 +1287,7 @@ function RulesTab() {
 
       {/* Detail Dialog */}
       <Dialog open={detailDialogOpen} onOpenChange={setDetailDialogOpen}>
-        <DialogContent className={cn("max-w-2xl", "glass-card")}>
+        <DialogContent className={cn('max-w-2xl', 'glass-card')}>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Eye className="w-5 h-5" />
@@ -921,7 +1298,9 @@ function RulesTab() {
             </DialogDescription>
           </DialogHeader>
           {detailLoading ? (
-            <div className="py-8 text-center"><Loader2 className="w-6 h-6 animate-spin mx-auto" /></div>
+            <div className="py-8 text-center">
+              <Loader2 className="w-6 h-6 animate-spin mx-auto" />
+            </div>
           ) : detailRule && (detailRule.usage || detailRule.usage_summary) ? (
             <div className="space-y-4">
               <RuleInfoSection rule={detailRule} />
@@ -931,7 +1310,7 @@ function RulesTab() {
                 {detailRule.usage_summary ? (
                   <GroupEachUsageSummary summary={detailRule.usage_summary} />
                 ) : detailRule.usage ? (
-                  detailRule.usage.windows.map(w => (
+                  detailRule.usage.windows.map((w) => (
                     <WindowProgressBar key={w.window} window={w} />
                   ))
                 ) : null}
@@ -946,31 +1325,56 @@ function RulesTab() {
   );
 }
 
-function RuleCard({ rule, onToggle, onEdit, onDelete, onViewDetail }: {
+function RuleCard({
+  rule,
+  onToggle,
+  onEdit,
+  onDelete,
+  onViewDetail,
+}: {
   rule: AIBudgetRule;
-  onToggle: () => void; onEdit: () => void; onDelete: () => void; onViewDetail: () => void;
+  onToggle: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  onViewDetail: () => void;
 }) {
   const { t } = useLanguage();
   const scopeTypeLabel = t(`aiBudget.rules.scopeTypes.${rule.scope_type}`);
   const periodModeLabel = t(`aiBudget.rules.periodModes.${rule.period_mode}`);
 
   return (
-    <Card className={cn("glass-card", rule.enabled ? "" : "opacity-60")}>
+    <Card className={cn('glass-card', rule.enabled ? '' : 'opacity-60')}>
       <CardContent className="py-3">
         <div className="flex items-start justify-between gap-4">
           <div className="flex-1 min-w-0 flex items-center gap-2">
             <Switch checked={rule.enabled} onCheckedChange={onToggle} />
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="font-medium truncate">{rule.name || t('aiBudget.common.globalScope')}</span>
-                <Badge variant="outline" className="text-xs">{scopeTypeLabel}</Badge>
-                {rule.scope_id && <span className="text-xs font-mono text-muted-foreground">{rule.scope_id}</span>}
-                {rule.member_id && <span className="text-xs font-mono text-muted-foreground">→{rule.member_id}</span>}
-                <Badge variant="secondary" className="text-xs">{periodModeLabel}</Badge>
-                {!rule.enabled && <Badge variant="outline" className="text-xs text-muted-foreground">{t('aiBudget.common.disabled')}</Badge>}
+              <div className="flex flex-wrap items-center gap-2 mb-1">
+                <span className="font-medium truncate">
+                  {rule.name || t('aiBudget.common.globalScope')}
+                </span>
+                <Badge variant="outline" className="text-xs">
+                  {scopeTypeLabel}
+                </Badge>
+                {rule.scope_id && (
+                  <span className="text-xs font-mono text-muted-foreground">{rule.scope_id}</span>
+                )}
+                {rule.member_id && (
+                  <span className="text-xs font-mono text-muted-foreground">→{rule.member_id}</span>
+                )}
+                <Badge variant="secondary" className="text-xs">
+                  {periodModeLabel}
+                </Badge>
+                {!rule.enabled && (
+                  <Badge variant="outline" className="text-xs text-muted-foreground">
+                    {t('aiBudget.common.disabled')}
+                  </Badge>
+                )}
               </div>
               <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                <span>{t('aiBudget.rules.columns.priority')}: {rule.priority}</span>
+                <span>
+                  {t('aiBudget.rules.columns.priority')}: {rule.priority}
+                </span>
                 {rule.limit_short > 0 && <span>S:{formatTokens(rule.limit_short)}</span>}
                 {rule.limit_day > 0 && <span>D:{formatTokens(rule.limit_day)}</span>}
                 {rule.limit_week > 0 && <span>W:{formatTokens(rule.limit_week)}</span>}
@@ -984,7 +1388,12 @@ function RuleCard({ rule, onToggle, onEdit, onDelete, onViewDetail }: {
             <Button variant="ghost" size="icon" onClick={onEdit}>
               <Pencil className="w-4 h-4" />
             </Button>
-            <Button variant="ghost" size="icon" onClick={onDelete} className="text-red-500 hover:text-red-600">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onDelete}
+              className="text-red-500 hover:text-red-600"
+            >
               <Trash2 className="w-4 h-4" />
             </Button>
           </div>
@@ -996,7 +1405,7 @@ function RuleCard({ rule, onToggle, onEdit, onDelete, onViewDetail }: {
           </div>
         ) : rule.usage && rule.usage.windows.length > 0 ? (
           <div className="mt-4 space-y-2">
-            {rule.usage.windows.map(w => (
+            {rule.usage.windows.map((w) => (
               <WindowProgressBar key={w.window} window={w} />
             ))}
           </div>
@@ -1049,23 +1458,62 @@ function RuleInfoSection({ rule }: { rule: AIBudgetRule }) {
   const { t } = useLanguage();
   return (
     <div className="grid grid-cols-2 gap-2 text-sm">
-      <div><span className="text-muted-foreground">{t('aiBudget.rules.columns.name')}:</span> {rule.name || '-'}</div>
-      <div><span className="text-muted-foreground">{t('aiBudget.rules.columns.scopeType')}:</span> {t(`aiBudget.rules.scopeTypes.${rule.scope_type}`)}</div>
-      <div><span className="text-muted-foreground">{t('aiBudget.rules.columns.scopeId')}:</span> {rule.scope_id || '-'}</div>
-      <div><span className="text-muted-foreground">{t('aiBudget.rules.columns.memberId')}:</span> {rule.member_id || '-'}</div>
-      <div><span className="text-muted-foreground">{t('aiBudget.rules.columns.periodMode')}:</span> {t(`aiBudget.rules.periodModes.${rule.period_mode}`)}</div>
-      <div><span className="text-muted-foreground">{t('aiBudget.rules.form.shortWindowHours')}:</span> {rule.short_window_hours}h</div>
-      <div><span className="text-muted-foreground">{t('aiBudget.rules.form.limitShort')}:</span> {formatTokens(rule.limit_short)}</div>
-      <div><span className="text-muted-foreground">{t('aiBudget.rules.form.limitDay')}:</span> {formatTokens(rule.limit_day)}</div>
-      <div><span className="text-muted-foreground">{t('aiBudget.rules.form.limitWeek')}:</span> {formatTokens(rule.limit_week)}</div>
-      <div><span className="text-muted-foreground">{t('aiBudget.rules.columns.priority')}:</span> {rule.priority}</div>
+      <div>
+        <span className="text-muted-foreground">{t('aiBudget.rules.columns.name')}:</span>{' '}
+        {rule.name || '-'}
+      </div>
+      <div>
+        <span className="text-muted-foreground">{t('aiBudget.rules.columns.scopeType')}:</span>{' '}
+        {t(`aiBudget.rules.scopeTypes.${rule.scope_type}`)}
+      </div>
+      <div>
+        <span className="text-muted-foreground">{t('aiBudget.rules.columns.scopeId')}:</span>{' '}
+        {rule.scope_id || '-'}
+      </div>
+      <div>
+        <span className="text-muted-foreground">{t('aiBudget.rules.columns.memberId')}:</span>{' '}
+        {rule.member_id || '-'}
+      </div>
+      <div>
+        <span className="text-muted-foreground">{t('aiBudget.rules.columns.periodMode')}:</span>{' '}
+        {t(`aiBudget.rules.periodModes.${rule.period_mode}`)}
+      </div>
+      <div>
+        <span className="text-muted-foreground">{t('aiBudget.rules.form.shortWindowHours')}:</span>{' '}
+        {rule.short_window_hours}h
+      </div>
+      <div>
+        <span className="text-muted-foreground">{t('aiBudget.rules.form.limitShort')}:</span>{' '}
+        {formatTokens(rule.limit_short)}
+      </div>
+      <div>
+        <span className="text-muted-foreground">{t('aiBudget.rules.form.limitDay')}:</span>{' '}
+        {formatTokens(rule.limit_day)}
+      </div>
+      <div>
+        <span className="text-muted-foreground">{t('aiBudget.rules.form.limitWeek')}:</span>{' '}
+        {formatTokens(rule.limit_week)}
+      </div>
+      <div>
+        <span className="text-muted-foreground">{t('aiBudget.rules.columns.priority')}:</span>{' '}
+        {rule.priority}
+      </div>
     </div>
   );
 }
 
-function RuleFormDialog({ open, onOpenChange, mode, rule, onSuccess }: {
-  open: boolean; onOpenChange: (v: boolean) => void;
-  mode: 'create' | 'edit'; rule?: AIBudgetRule | null; onSuccess: () => void;
+function RuleFormDialog({
+  open,
+  onOpenChange,
+  mode,
+  rule,
+  onSuccess,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  mode: 'create' | 'edit';
+  rule?: AIBudgetRule | null;
+  onSuccess: () => void;
 }) {
   const { t } = useLanguage();
   const [saving, setSaving] = useState(false);
@@ -1117,16 +1565,44 @@ function RuleFormDialog({ open, onOpenChange, mode, rule, onSuccess }: {
   }, [open, mode, rule]);
 
   const scopeTypeOptions = [
-    { value: 'global', label: t('aiBudget.rules.scopeTypes.global'), desc: t('aiBudget.rules.scopeTypeDesc.global') },
-    { value: 'group_each', label: t('aiBudget.rules.scopeTypes.group_each'), desc: t('aiBudget.rules.scopeTypeDesc.group_each') },
-    { value: 'group', label: t('aiBudget.rules.scopeTypes.group'), desc: t('aiBudget.rules.scopeTypeDesc.group') },
-    { value: 'member', label: t('aiBudget.rules.scopeTypes.member'), desc: t('aiBudget.rules.scopeTypeDesc.member') },
-    { value: 'user', label: t('aiBudget.rules.scopeTypes.user'), desc: t('aiBudget.rules.scopeTypeDesc.user') },
+    {
+      value: 'global',
+      label: t('aiBudget.rules.scopeTypes.global'),
+      desc: t('aiBudget.rules.scopeTypeDesc.global'),
+    },
+    {
+      value: 'group_each',
+      label: t('aiBudget.rules.scopeTypes.group_each'),
+      desc: t('aiBudget.rules.scopeTypeDesc.group_each'),
+    },
+    {
+      value: 'group',
+      label: t('aiBudget.rules.scopeTypes.group'),
+      desc: t('aiBudget.rules.scopeTypeDesc.group'),
+    },
+    {
+      value: 'member',
+      label: t('aiBudget.rules.scopeTypes.member'),
+      desc: t('aiBudget.rules.scopeTypeDesc.member'),
+    },
+    {
+      value: 'user',
+      label: t('aiBudget.rules.scopeTypes.user'),
+      desc: t('aiBudget.rules.scopeTypeDesc.user'),
+    },
   ];
 
   const periodModeOptions = [
-    { value: 'rolling', label: t('aiBudget.rules.periodModes.rolling'), desc: t('aiBudget.rules.periodModeDesc.rolling') },
-    { value: 'fixed', label: t('aiBudget.rules.periodModes.fixed'), desc: t('aiBudget.rules.periodModeDesc.fixed') },
+    {
+      value: 'rolling',
+      label: t('aiBudget.rules.periodModes.rolling'),
+      desc: t('aiBudget.rules.periodModeDesc.rolling'),
+    },
+    {
+      value: 'fixed',
+      label: t('aiBudget.rules.periodModes.fixed'),
+      desc: t('aiBudget.rules.periodModeDesc.fixed'),
+    },
   ];
 
   const handleSave = async () => {
@@ -1174,7 +1650,13 @@ function RuleFormDialog({ open, onOpenChange, mode, rule, onSuccess }: {
       onOpenChange(false);
       onSuccess();
     } catch (e: any) {
-      toast.error((mode === 'create' ? t('aiBudget.rules.form.createFailed') : t('aiBudget.rules.form.updateFailed')) + ': ' + e.message);
+      toast.error(
+        (mode === 'create'
+          ? t('aiBudget.rules.form.createFailed')
+          : t('aiBudget.rules.form.updateFailed')) +
+          ': ' +
+          e.message,
+      );
     } finally {
       setSaving(false);
     }
@@ -1182,9 +1664,11 @@ function RuleFormDialog({ open, onOpenChange, mode, rule, onSuccess }: {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={cn("max-w-2xl max-h-[80vh] flex flex-col", "glass-card")}>
+      <DialogContent className={cn('max-w-2xl max-h-[80vh] flex flex-col', 'glass-card')}>
         <DialogHeader className="shrink-0">
-          <DialogTitle>{mode === 'create' ? t('aiBudget.rules.createRule') : t('aiBudget.rules.editRule')}</DialogTitle>
+          <DialogTitle>
+            {mode === 'create' ? t('aiBudget.rules.createRule') : t('aiBudget.rules.editRule')}
+          </DialogTitle>
           <DialogDescription className="sr-only">
             {t('aiBudget.rules.ruleFormAriaDesc')}
           </DialogDescription>
@@ -1195,15 +1679,15 @@ function RuleFormDialog({ open, onOpenChange, mode, rule, onSuccess }: {
           <div className="space-y-2">
             <Label className="font-medium">{t('aiBudget.rules.form.scopeType')}</Label>
             <div className="grid grid-cols-2 gap-2">
-              {scopeTypeOptions.map(opt => (
+              {scopeTypeOptions.map((opt) => (
                 <button
                   key={opt.value}
                   onClick={() => setScopeType(opt.value as any)}
                   className={cn(
-                    "flex flex-col items-start p-3 rounded-lg border text-sm transition-all",
+                    'flex flex-col items-start p-3 rounded-lg border text-sm transition-all',
                     scopeType === opt.value
-                      ? "border-primary bg-primary/10 text-primary"
-                      : "border-border hover:border-primary/50"
+                      ? 'border-primary bg-primary/10 text-primary'
+                      : 'border-border hover:border-primary/50',
                   )}
                 >
                   <span className="font-medium">{opt.label}</span>
@@ -1218,13 +1702,21 @@ function RuleFormDialog({ open, onOpenChange, mode, rule, onSuccess }: {
             {scopeType !== 'global' && scopeType !== 'group_each' && (
               <div className="space-y-2">
                 <Label>{t('aiBudget.rules.form.scopeId')}</Label>
-                <Input value={scopeId} onChange={e => setScopeId(e.target.value)} placeholder={t('aiBudget.rules.form.scopeIdPlaceholder')} />
+                <Input
+                  value={scopeId}
+                  onChange={(e) => setScopeId(e.target.value)}
+                  placeholder={t('aiBudget.rules.form.scopeIdPlaceholder')}
+                />
               </div>
             )}
             {scopeType === 'member' && (
               <div className="space-y-2">
                 <Label>{t('aiBudget.rules.form.memberId')}</Label>
-                <Input value={memberId} onChange={e => setMemberId(e.target.value)} placeholder={t('aiBudget.rules.form.memberIdPlaceholder')} />
+                <Input
+                  value={memberId}
+                  onChange={(e) => setMemberId(e.target.value)}
+                  placeholder={t('aiBudget.rules.form.memberIdPlaceholder')}
+                />
               </div>
             )}
           </div>
@@ -1233,15 +1725,27 @@ function RuleFormDialog({ open, onOpenChange, mode, rule, onSuccess }: {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="space-y-2">
               <Label>{t('aiBudget.rules.form.name')}</Label>
-              <Input value={name} onChange={e => setName(e.target.value)} placeholder={t('aiBudget.rules.form.namePlaceholder')} />
+              <Input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder={t('aiBudget.rules.form.namePlaceholder')}
+              />
             </div>
             <div className="space-y-2">
               <Label>{t('aiBudget.rules.form.botId')}</Label>
-              <Input value={botId} onChange={e => setBotId(e.target.value)} placeholder={t('aiBudget.rules.form.botIdPlaceholder')} />
+              <Input
+                value={botId}
+                onChange={(e) => setBotId(e.target.value)}
+                placeholder={t('aiBudget.rules.form.botIdPlaceholder')}
+              />
             </div>
             <div className="space-y-2">
               <Label>{t('aiBudget.rules.form.priority')}</Label>
-              <Input type="number" value={priority} onChange={e => setPriority(Number(e.target.value))} />
+              <Input
+                type="number"
+                value={priority}
+                onChange={(e) => setPriority(Number(e.target.value))}
+              />
             </div>
           </div>
 
@@ -1249,15 +1753,15 @@ function RuleFormDialog({ open, onOpenChange, mode, rule, onSuccess }: {
           <div className="space-y-2">
             <Label className="font-medium">{t('aiBudget.rules.form.periodMode')}</Label>
             <div className="grid grid-cols-2 gap-2">
-              {periodModeOptions.map(opt => (
+              {periodModeOptions.map((opt) => (
                 <button
                   key={opt.value}
                   onClick={() => setPeriodMode(opt.value as any)}
                   className={cn(
-                    "flex flex-col items-start p-3 rounded-lg border text-sm transition-all",
+                    'flex flex-col items-start p-3 rounded-lg border text-sm transition-all',
                     periodMode === opt.value
-                      ? "border-primary bg-primary/10 text-primary"
-                      : "border-border hover:border-primary/50"
+                      ? 'border-primary bg-primary/10 text-primary'
+                      : 'border-border hover:border-primary/50',
                   )}
                 >
                   <span className="font-medium">{opt.label}</span>
@@ -1270,8 +1774,16 @@ function RuleFormDialog({ open, onOpenChange, mode, rule, onSuccess }: {
           {/* Short Window Hours */}
           <div className="space-y-2">
             <Label>{t('aiBudget.rules.form.shortWindowHours')}</Label>
-            <Input type="number" value={shortWindowHours} onChange={e => setShortWindowHours(Number(e.target.value))} min={1} max={168} />
-            <p className="text-xs text-muted-foreground">{t('aiBudget.rules.form.shortWindowHoursDesc')}</p>
+            <Input
+              type="number"
+              value={shortWindowHours}
+              onChange={(e) => setShortWindowHours(Number(e.target.value))}
+              min={1}
+              max={168}
+            />
+            <p className="text-xs text-muted-foreground">
+              {t('aiBudget.rules.form.shortWindowHoursDesc')}
+            </p>
           </div>
 
           {/* Limits */}
@@ -1281,18 +1793,39 @@ function RuleFormDialog({ open, onOpenChange, mode, rule, onSuccess }: {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="space-y-1">
                 <Label className="text-xs">{t('aiBudget.rules.form.limitShort')}</Label>
-                <Input type="number" value={limitShort || ''} onChange={e => setLimitShort(Number(e.target.value) || 0)} min={0} />
-                <p className="text-xs text-muted-foreground">{t('aiBudget.rules.form.limitShortDesc')}</p>
+                <Input
+                  type="number"
+                  value={limitShort || ''}
+                  onChange={(e) => setLimitShort(Number(e.target.value) || 0)}
+                  min={0}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t('aiBudget.rules.form.limitShortDesc')}
+                </p>
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">{t('aiBudget.rules.form.limitDay')}</Label>
-                <Input type="number" value={limitDay || ''} onChange={e => setLimitDay(Number(e.target.value) || 0)} min={0} />
-                <p className="text-xs text-muted-foreground">{t('aiBudget.rules.form.limitDayDesc')}</p>
+                <Input
+                  type="number"
+                  value={limitDay || ''}
+                  onChange={(e) => setLimitDay(Number(e.target.value) || 0)}
+                  min={0}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t('aiBudget.rules.form.limitDayDesc')}
+                </p>
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">{t('aiBudget.rules.form.limitWeek')}</Label>
-                <Input type="number" value={limitWeek || ''} onChange={e => setLimitWeek(Number(e.target.value) || 0)} min={0} />
-                <p className="text-xs text-muted-foreground">{t('aiBudget.rules.form.limitWeekDesc')}</p>
+                <Input
+                  type="number"
+                  value={limitWeek || ''}
+                  onChange={(e) => setLimitWeek(Number(e.target.value) || 0)}
+                  min={0}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t('aiBudget.rules.form.limitWeekDesc')}
+                </p>
               </div>
             </div>
           </div>
@@ -1306,12 +1839,18 @@ function RuleFormDialog({ open, onOpenChange, mode, rule, onSuccess }: {
           </div>
           <div className="space-y-2">
             <Label>{t('aiBudget.rules.form.note')}</Label>
-            <Input value={note} onChange={e => setNote(e.target.value)} placeholder={t('aiBudget.rules.form.notePlaceholder')} />
+            <Input
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder={t('aiBudget.rules.form.notePlaceholder')}
+            />
           </div>
         </div>
 
         <DialogFooter className="shrink-0">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>{t('aiBudget.common.cancel')}</Button>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            {t('aiBudget.common.cancel')}
+          </Button>
           <Button onClick={handleSave} disabled={saving}>
             {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
             {mode === 'create' ? t('aiBudget.common.create') : t('aiBudget.common.save')}
@@ -1325,7 +1864,9 @@ function RuleFormDialog({ open, onOpenChange, mode, rule, onSuccess }: {
 function RulesSkeleton() {
   return (
     <div className="space-y-3">
-      {[1,2,3,4].map(i => <Skeleton key={i} className="h-24 rounded-lg" />)}
+      {[1, 2, 3, 4].map((i) => (
+        <Skeleton key={i} className="h-24 rounded-lg" />
+      ))}
     </div>
   );
 }
@@ -1359,7 +1900,9 @@ function WhitelistTab() {
     }
   }, [t]);
 
-  useEffect(() => { fetchEntries(); }, [fetchEntries]);
+  useEffect(() => {
+    fetchEntries();
+  }, [fetchEntries]);
 
   const handleDelete = async () => {
     if (!deletingEntry) return;
@@ -1375,7 +1918,7 @@ function WhitelistTab() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="flex flex-col gap-4">
       {/* Toolbar */}
       <Card className="glass-card">
         <CardContent className="py-3">
@@ -1393,11 +1936,13 @@ function WhitelistTab() {
       {/* Entries List */}
       {loading ? (
         <div className="space-y-3">
-          {[1,2,3].map(i => <Skeleton key={i} className="h-16 rounded-lg" />)}
+          {[1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-16 rounded-lg" />
+          ))}
         </div>
       ) : error ? (
         <Card className="glass-card">
-          <CardContent className="py-8 text-center">
+          <CardContent className="!py-8 text-center">
             <p className="text-muted-foreground mb-4">{error}</p>
             <Button variant="outline" onClick={fetchEntries}>
               <RefreshCw className="w-4 h-4 mr-2" /> {t('aiBudget.common.retry')}
@@ -1406,19 +1951,25 @@ function WhitelistTab() {
         </Card>
       ) : entries.length === 0 ? (
         <Card className="glass-card">
-          <CardContent className="py-8 text-center">
+          <CardContent className="!py-8 text-center">
             <Shield className="w-8 h-8 text-muted-foreground mx-auto mb-3" />
             <p className="text-muted-foreground">{t('aiBudget.whitelist.noEntries')}</p>
           </CardContent>
         </Card>
       ) : (
         <div className="space-y-3">
-          {entries.map(entry => (
+          {entries.map((entry) => (
             <WhitelistEntryCard
               key={entry.id}
               entry={entry}
-              onEdit={() => { setEditingEntry(entry); setEditDialogOpen(true); }}
-              onDelete={() => { setDeletingEntry(entry); setDeleteDialogOpen(true); }}
+              onEdit={() => {
+                setEditingEntry(entry);
+                setEditDialogOpen(true);
+              }}
+              onDelete={() => {
+                setDeletingEntry(entry);
+                setDeleteDialogOpen(true);
+              }}
             />
           ))}
         </div>
@@ -1460,35 +2011,55 @@ function WhitelistTab() {
   );
 }
 
-function WhitelistEntryCard({ entry, onEdit, onDelete }: {
-  entry: AIBudgetWhitelistEntry; onEdit: () => void; onDelete: () => void;
+function WhitelistEntryCard({
+  entry,
+  onEdit,
+  onDelete,
+}: {
+  entry: AIBudgetWhitelistEntry;
+  onEdit: () => void;
+  onDelete: () => void;
 }) {
   const { t } = useLanguage();
   const isGlobal = !entry.group_id;
 
   return (
-    <Card className={cn("glass-card", !entry.enabled && "opacity-60")}>
+    <Card className={cn('glass-card', !entry.enabled && 'opacity-60')}>
       <CardContent className="py-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Shield className="w-4 h-4 text-primary" />
-            <div>
-              <div className="flex items-center gap-2">
+        <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-center gap-3">
+            <Shield className="w-4 h-4 text-primary shrink-0" />
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="font-mono text-sm font-medium">{entry.user_id}</span>
-                {isGlobal
-                  ? <Badge className="bg-green-500/10 text-green-500 border-green-500/30">{t('aiBudget.whitelist.scope.global')}</Badge>
-                  : <Badge variant="outline" className="text-xs">{t('aiBudget.whitelist.scope.groupOnly')} · {entry.group_id}</Badge>
-                }
-                {!entry.enabled && <Badge variant="outline" className="text-xs text-muted-foreground">{t('aiBudget.common.disabled')}</Badge>}
+                {isGlobal ? (
+                  <Badge className="bg-green-500/10 text-green-500 border-green-500/30">
+                    {t('aiBudget.whitelist.scope.global')}
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="text-xs">
+                    {t('aiBudget.whitelist.scope.groupOnly')} · {entry.group_id}
+                  </Badge>
+                )}
+                {!entry.enabled && (
+                  <Badge variant="outline" className="text-xs text-muted-foreground">
+                    {t('aiBudget.common.disabled')}
+                  </Badge>
+                )}
               </div>
               {entry.note && <p className="text-xs text-muted-foreground mt-1">{entry.note}</p>}
             </div>
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex shrink-0 items-center gap-1">
             <Button variant="ghost" size="icon" onClick={onEdit}>
               <Pencil className="w-4 h-4" />
             </Button>
-            <Button variant="ghost" size="icon" onClick={onDelete} className="text-red-500 hover:text-red-600">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onDelete}
+              className="text-red-500 hover:text-red-600"
+            >
               <Trash2 className="w-4 h-4" />
             </Button>
           </div>
@@ -1498,9 +2069,18 @@ function WhitelistEntryCard({ entry, onEdit, onDelete }: {
   );
 }
 
-function WhitelistFormDialog({ open, onOpenChange, mode, entry, onSuccess }: {
-  open: boolean; onOpenChange: (v: boolean) => void;
-  mode: 'create' | 'edit'; entry?: AIBudgetWhitelistEntry | null; onSuccess: () => void;
+function WhitelistFormDialog({
+  open,
+  onOpenChange,
+  mode,
+  entry,
+  onSuccess,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  mode: 'create' | 'edit';
+  entry?: AIBudgetWhitelistEntry | null;
+  onSuccess: () => void;
 }) {
   const { t } = useLanguage();
   const [saving, setSaving] = useState(false);
@@ -1552,7 +2132,13 @@ function WhitelistFormDialog({ open, onOpenChange, mode, entry, onSuccess }: {
       onOpenChange(false);
       onSuccess();
     } catch (e: any) {
-      toast.error((mode === 'create' ? t('aiBudget.whitelist.form.createFailed') : t('aiBudget.whitelist.form.updateFailed')) + ': ' + e.message);
+      toast.error(
+        (mode === 'create'
+          ? t('aiBudget.whitelist.form.createFailed')
+          : t('aiBudget.whitelist.form.updateFailed')) +
+          ': ' +
+          e.message,
+      );
     } finally {
       setSaving(false);
     }
@@ -1560,9 +2146,13 @@ function WhitelistFormDialog({ open, onOpenChange, mode, entry, onSuccess }: {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={cn("max-w-lg", "glass-card")}>
+      <DialogContent className={cn('max-w-lg', 'glass-card')}>
         <DialogHeader>
-          <DialogTitle>{mode === 'create' ? t('aiBudget.whitelist.createEntry') : t('aiBudget.whitelist.editEntry')}</DialogTitle>
+          <DialogTitle>
+            {mode === 'create'
+              ? t('aiBudget.whitelist.createEntry')
+              : t('aiBudget.whitelist.editEntry')}
+          </DialogTitle>
           <DialogDescription className="sr-only">
             {t('aiBudget.whitelist.whitelistFormAriaDesc')}
           </DialogDescription>
@@ -1570,18 +2160,32 @@ function WhitelistFormDialog({ open, onOpenChange, mode, entry, onSuccess }: {
         <div className="space-y-4 py-2">
           <div className="space-y-2">
             <Label>{t('aiBudget.whitelist.form.userId')} *</Label>
-            <Input value={userId} onChange={e => setUserId(e.target.value)} placeholder={t('aiBudget.whitelist.form.userIdPlaceholder')} />
+            <Input
+              value={userId}
+              onChange={(e) => setUserId(e.target.value)}
+              placeholder={t('aiBudget.whitelist.form.userIdPlaceholder')}
+            />
           </div>
           <div className="space-y-2">
             <Label>{t('aiBudget.whitelist.form.groupId')}</Label>
-            <Input value={groupId} onChange={e => setGroupId(e.target.value)} placeholder={t('aiBudget.whitelist.form.groupIdPlaceholder')} />
+            <Input
+              value={groupId}
+              onChange={(e) => setGroupId(e.target.value)}
+              placeholder={t('aiBudget.whitelist.form.groupIdPlaceholder')}
+            />
             <p className="text-xs text-muted-foreground">
-              {isGlobal ? t('aiBudget.whitelist.scope.global') : t('aiBudget.whitelist.form.groupIdHint')}
+              {isGlobal
+                ? t('aiBudget.whitelist.scope.global')
+                : t('aiBudget.whitelist.form.groupIdHint')}
             </p>
           </div>
           <div className="space-y-2">
             <Label>{t('aiBudget.whitelist.form.botId')}</Label>
-            <Input value={botId} onChange={e => setBotId(e.target.value)} placeholder={t('aiBudget.whitelist.form.botIdPlaceholder')} />
+            <Input
+              value={botId}
+              onChange={(e) => setBotId(e.target.value)}
+              placeholder={t('aiBudget.whitelist.form.botIdPlaceholder')}
+            />
           </div>
           <div className="flex items-center gap-2">
             <Switch checked={enabled} onCheckedChange={setEnabled} />
@@ -1589,11 +2193,17 @@ function WhitelistFormDialog({ open, onOpenChange, mode, entry, onSuccess }: {
           </div>
           <div className="space-y-2">
             <Label>{t('aiBudget.whitelist.form.note')}</Label>
-            <Input value={note} onChange={e => setNote(e.target.value)} placeholder={t('aiBudget.whitelist.form.notePlaceholder')} />
+            <Input
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder={t('aiBudget.whitelist.form.notePlaceholder')}
+            />
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>{t('aiBudget.common.cancel')}</Button>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            {t('aiBudget.common.cancel')}
+          </Button>
           <Button onClick={handleSave} disabled={saving}>
             {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
             {mode === 'create' ? t('aiBudget.common.create') : t('aiBudget.common.save')}
@@ -1684,7 +2294,7 @@ function DiagnosticTab() {
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-4">
       {/* Dry Run Check */}
       <Card className="glass-card">
         <CardHeader>
@@ -1700,7 +2310,11 @@ function DiagnosticTab() {
               <div className="flex items-center gap-1.5 min-h-[20px]">
                 <Label>{t('aiBudget.diagnostic.userId')} *</Label>
               </div>
-              <Input value={checkUserId} onChange={e => setCheckUserId(e.target.value)} placeholder={t('aiBudget.diagnostic.userIdPlaceholder')} />
+              <Input
+                value={checkUserId}
+                onChange={(e) => setCheckUserId(e.target.value)}
+                placeholder={t('aiBudget.diagnostic.userIdPlaceholder')}
+              />
             </div>
             <div className="space-y-2">
               <div className="flex items-center gap-1.5 min-h-[20px]">
@@ -1718,18 +2332,30 @@ function DiagnosticTab() {
                   </Tooltip>
                 </TooltipProvider>
               </div>
-              <Input value={checkGroupId} onChange={e => setCheckGroupId(e.target.value)} placeholder={t('aiBudget.diagnostic.groupIdPlaceholder')} />
+              <Input
+                value={checkGroupId}
+                onChange={(e) => setCheckGroupId(e.target.value)}
+                placeholder={t('aiBudget.diagnostic.groupIdPlaceholder')}
+              />
             </div>
             <div className="space-y-2">
               <div className="flex items-center gap-1.5 min-h-[20px]">
                 <Label>{t('aiBudget.diagnostic.botId')}</Label>
               </div>
-              <Input value={checkBotId} onChange={e => setCheckBotId(e.target.value)} placeholder={t('aiBudget.diagnostic.botIdPlaceholder')} />
+              <Input
+                value={checkBotId}
+                onChange={(e) => setCheckBotId(e.target.value)}
+                placeholder={t('aiBudget.diagnostic.botIdPlaceholder')}
+              />
             </div>
           </div>
           <div className="flex justify-end">
             <Button onClick={handleCheck} disabled={checking}>
-              {checking ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Search className="w-4 h-4 mr-2" />}
+              {checking ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <Search className="w-4 h-4 mr-2" />
+              )}
               {checking ? t('aiBudget.diagnostic.checking') : t('aiBudget.diagnostic.runCheck')}
             </Button>
           </div>
@@ -1738,36 +2364,49 @@ function DiagnosticTab() {
 
       {/* Check Result */}
       {checkError && (
-        <Card className={cn("glass-card", "border-red-500/30")}>
-          <CardContent className="py-4 text-center text-red-500">{checkError}</CardContent>
+        <Card className={cn('glass-card', 'border-red-500/30')}>
+          <CardContent className="!py-4 text-center text-red-500">{checkError}</CardContent>
         </Card>
       )}
       {checkResult && (
         <Card className="glass-card">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              {checkResult.allowed
-                ? <CheckCircle2 className="w-5 h-5 text-green-500" />
-                : <XCircle className="w-5 h-5 text-red-500" />}
+              {checkResult.allowed ? (
+                <CheckCircle2 className="w-5 h-5 text-green-500" />
+              ) : (
+                <XCircle className="w-5 h-5 text-red-500" />
+              )}
               {t('aiBudget.diagnostic.resultTitle')}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             {/* Summary */}
-            <div className={cn(
-              "rounded-lg p-4",
-              checkResult.allowed ? "bg-green-500/5 border border-green-500/30" : "bg-red-500/5 border border-red-500/30"
-            )}>
+            <div
+              className={cn(
+                'rounded-lg border p-4 glass-card glass-alert glass-alert-tint',
+                checkResult.allowed
+                  ? 'border-green-500/30 glass-alert-tint-success'
+                  : 'border-red-500/30 glass-alert-tint-danger',
+              )}
+            >
               <div className="flex items-center gap-2 font-medium mb-2">
-                {checkResult.allowed ? t('aiBudget.diagnostic.allowed') : t('aiBudget.diagnostic.blocked')}
+                {checkResult.allowed
+                  ? t('aiBudget.diagnostic.allowed')
+                  : t('aiBudget.diagnostic.blocked')}
               </div>
               {!checkResult.enabled && (
-                <p className="text-sm text-muted-foreground">{t('aiBudget.diagnostic.notEnabled')}</p>
+                <p className="text-sm text-muted-foreground">
+                  {t('aiBudget.diagnostic.notEnabled')}
+                </p>
               )}
               {checkResult.exempt && (
                 <div className="flex items-center gap-2 text-sm">
                   <Shield className="w-4 h-4 text-primary" />
-                  <span>{t('aiBudget.diagnostic.exempt')}: {t(`aiBudget.diagnostic.exemptReasons.${checkResult.exempt_reason}`)}</span>
+                  <span>
+                    {t('aiBudget.diagnostic.exempt')}:{' '}
+                    {t(`aiBudget.diagnostic.exemptReasons.${checkResult.exempt_reason}`)}
+                  </span>
                 </div>
               )}
             </div>
@@ -1780,14 +2419,39 @@ function DiagnosticTab() {
                   {t('aiBudget.diagnostic.blockDetail')}
                 </h4>
                 <div className="grid grid-cols-2 gap-2 text-sm bg-muted/50 rounded-lg p-3">
-                  <div><span className="text-muted-foreground">{t('aiBudget.diagnostic.blockRule')}:</span> {checkResult.block_scope_label}</div>
+                  <div>
+                    <span className="text-muted-foreground">
+                      {t('aiBudget.diagnostic.blockRule')}:
+                    </span>{' '}
+                    {checkResult.block_scope_label}
+                  </div>
                   {checkResult.block_window && (
                     <>
-                      <div><span className="text-muted-foreground">{t('aiBudget.diagnostic.blockWindow')}:</span> {checkResult.block_window.window}</div>
-                      <div><span className="text-muted-foreground">{t('aiBudget.rules.usage.limit')}:</span> {formatTokens(checkResult.block_window.limit)}</div>
-                      <div><span className="text-muted-foreground">{t('aiBudget.rules.usage.used')}:</span> {formatTokens(checkResult.block_window.used)}</div>
+                      <div>
+                        <span className="text-muted-foreground">
+                          {t('aiBudget.diagnostic.blockWindow')}:
+                        </span>{' '}
+                        {checkResult.block_window.window}
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">
+                          {t('aiBudget.rules.usage.limit')}:
+                        </span>{' '}
+                        {formatTokens(checkResult.block_window.limit)}
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">
+                          {t('aiBudget.rules.usage.used')}:
+                        </span>{' '}
+                        {formatTokens(checkResult.block_window.used)}
+                      </div>
                       {checkResult.block_window.reset_at && (
-                        <div><span className="text-muted-foreground">{t('aiBudget.rules.usage.resetAt')}:</span> {formatTimestamp(checkResult.block_window.reset_at)}</div>
+                        <div>
+                          <span className="text-muted-foreground">
+                            {t('aiBudget.rules.usage.resetAt')}:
+                          </span>{' '}
+                          {formatTimestamp(checkResult.block_window.reset_at)}
+                        </div>
                       )}
                     </>
                   )}
@@ -1800,17 +2464,26 @@ function DiagnosticTab() {
               <div className="space-y-2">
                 <h4 className="font-medium text-sm">{t('aiBudget.diagnostic.ruleStatuses')}</h4>
                 <div className="space-y-3">
-                  {checkResult.rule_statuses.map(rs => (
-                    <div key={rs.rule_id} className={cn(
-                      "rounded-lg p-3 border",
-                      rs.blocked ? "border-red-500/30 bg-red-500/5" : "border-border"
-                    )}>
+                  {checkResult.rule_statuses.map((rs) => (
+                    <div
+                      key={rs.rule_id}
+                      className={cn(
+                        'rounded-lg p-3 border',
+                        rs.blocked ? 'border-red-500/30 bg-red-500/5' : 'border-border',
+                      )}
+                    >
                       <div className="flex items-center gap-2 mb-2">
-                        {rs.blocked ? <XCircle className="w-4 h-4 text-red-500" /> : <CheckCircle2 className="w-4 h-4 text-green-500" />}
+                        {rs.blocked ? (
+                          <XCircle className="w-4 h-4 text-red-500" />
+                        ) : (
+                          <CheckCircle2 className="w-4 h-4 text-green-500" />
+                        )}
                         <span className="text-sm font-medium">{rs.scope_label}</span>
-                        <Badge variant="outline" className="text-xs">{t(`aiBudget.rules.scopeTypes.${rs.scope_type}`)}</Badge>
+                        <Badge variant="outline" className="text-xs">
+                          {t(`aiBudget.rules.scopeTypes.${rs.scope_type}`)}
+                        </Badge>
                       </div>
-                      {rs.windows.map(w => (
+                      {rs.windows.map((w) => (
                         <WindowProgressBar key={w.window} window={w} />
                       ))}
                     </div>
@@ -1835,11 +2508,18 @@ function DiagnosticTab() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="space-y-2">
               <Label>{t('aiBudget.diagnostic.resetScopeType')}</Label>
-              <Select value={resetScopeType} onValueChange={value => setResetScopeType(value as AIBudgetConcreteScopeType)}>
-                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+              <Select
+                value={resetScopeType}
+                onValueChange={(value) => setResetScopeType(value as AIBudgetConcreteScopeType)}
+              >
+                <SelectTrigger className="h-9">
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
-                  {scopeTypeOptions.map(opt => (
-                    <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                  {scopeTypeOptions.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -1847,34 +2527,58 @@ function DiagnosticTab() {
             {resetScopeType !== 'global' && (
               <div className="space-y-2">
                 <Label>{t('aiBudget.diagnostic.resetScopeId')}</Label>
-                <Input value={resetScopeId} onChange={e => setResetScopeId(e.target.value)} className="h-9" />
+                <Input
+                  value={resetScopeId}
+                  onChange={(e) => setResetScopeId(e.target.value)}
+                  className="h-9"
+                />
               </div>
             )}
             {resetScopeType === 'member' && (
               <div className="space-y-2">
                 <Label>{t('aiBudget.diagnostic.resetMemberId')}</Label>
-                <Input value={resetMemberId} onChange={e => setResetMemberId(e.target.value)} className="h-9" />
+                <Input
+                  value={resetMemberId}
+                  onChange={(e) => setResetMemberId(e.target.value)}
+                  className="h-9"
+                />
               </div>
             )}
             <div className="space-y-2">
               <Label>{t('aiBudget.diagnostic.resetBotId')}</Label>
-              <Input value={resetBotId} onChange={e => setResetBotId(e.target.value)} className="h-9" />
+              <Input
+                value={resetBotId}
+                onChange={(e) => setResetBotId(e.target.value)}
+                className="h-9"
+              />
             </div>
             <div className="space-y-2">
               <Label>{t('aiBudget.diagnostic.resetWindow')}</Label>
               <Select value={resetWindow} onValueChange={setResetWindow}>
-                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="h-9">
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
-                  {windowOptions.map(opt => (
-                    <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                  {windowOptions.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
           </div>
           <div className="flex justify-end">
-            <Button variant="destructive" onClick={() => setResetConfirmOpen(true)} disabled={resetting}>
-              {resetting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+            <Button
+              variant="destructive"
+              onClick={() => setResetConfirmOpen(true)}
+              disabled={resetting}
+            >
+              {resetting ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4 mr-2" />
+              )}
               {t('aiBudget.diagnostic.resetBtn')}
             </Button>
           </div>

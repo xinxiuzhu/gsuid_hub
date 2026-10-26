@@ -60,6 +60,7 @@
   "downloadSuccess": "会话 JSON 已保存",
   "waterfall": {
     "agentRun": "Agent 运行",
+    "thinkingEffort": "思考强度",
     "chat": "对话",
     "tool": "工具",
     "subAgent": "子 Agent",
@@ -84,5 +85,6 @@
     }
   },
   "linkedAgents": "关联 Agent",
+  "linkedAgentsSummary": "关联 {count} 个 Agent · {entries} 条",
   "loadLinkedFailed": "加载关联 Agent 失败"
 }

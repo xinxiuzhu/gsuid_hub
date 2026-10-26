@@ -13,8 +13,8 @@
   "filter": {
     "allFolders": "All Folders",
     "allStatus": "All Status",
-    "allPersonas": "All Personas",
-    "persona": "Filter by persona",
+    "allPersonas": "All packs",
+    "persona": "Filter by pack",
     "searchPlaceholder": "Search meme description or tags...",
     "sortBy": "Sort By",
     "createdAtDesc": "Newest Upload",
@@ -22,7 +22,7 @@
     "useCountAsc": "Use Count (Low→High)",
     "folder": "Folder",
     "status": "Status",
-    "commonPersona": "Public"
+    "commonPersona": "Common"
   },
   "status": {
     "pending": "Pending",
@@ -42,8 +42,8 @@
     "emotionTags": "Emotion Tags",
     "sceneTags": "Scene Tags",
     "customTags": "Custom Tags",
-    "personaHint": "Persona Hint",
-    "personaHintPlaceholder": "Enter persona name...",
+    "personaHint": "Hint",
+    "personaHintPlaceholder": "For display only. It does not choose what is sent.",
     "fileInfo": "File Info",
     "fileSize": "File Size",
     "dimensions": "Dimensions",
@@ -196,6 +196,10 @@
     "statusFailed": "Unable to load deletion progress; retrying"
   },
   "exportDotMeme": "Export .meme",
+  "exportDotMemeTitle": "Export .meme",
+  "exportDotMemeDesc": "Choose one sticker pack, or export all. A chosen pack puts only its images in the archive.",
+  "exportDotMemePack": "Sticker pack",
+  "exportDotMemePackRequired": "Choose a sticker pack first",
   "exportDotMemeSuccess": ".meme download started",
   "exportDotMemeFailed": ".meme export failed",
   "importDotMeme": "Import .meme",

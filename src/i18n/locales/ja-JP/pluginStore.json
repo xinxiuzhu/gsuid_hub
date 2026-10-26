@@ -2,12 +2,12 @@
   "title": "プラグイン商城",
   "description": "閲覧、安装と管理システムプラグイン",
   "refresh": "更新",
-  "searchPlugin": "検索プラグイン名前、説明またはタグ...",
-  "allPlugins": "すべてプラグイン",
+  "searchPlugin": "名前、説明またはタグで検索...",
+  "allPlugins": "すべて",
   "installed": "安装",
   "updates": "可更新",
-  "funPlugins": "娱乐プラグイン",
-  "toolPlugins": "ツールプラグイン",
+  "funPlugins": "エンタメ",
+  "toolPlugins": "ツール",
   "noMatchedPlugins": "没有找へ匹配のプラグイン",
   "noInstalledPlugins": "还没有安装なしプラグイン",
   "allPluginsUpdated": "すべてプラグイン都是最新版",
@@ -54,8 +54,5 @@
   "urlProtocolInvalid": "http(s) / ssh / git@ で始まる URL のみ対応しています",
   "urlRequired": "リポジトリ URL を入力してください",
   "cancel": "キャンセル",
-  "installing": "インストール中...",
-  "statTotal": "合計",
-  "statInstalled": "導入済",
-  "statUpdates": "更新可"
+  "installing": "インストール中..."
 }

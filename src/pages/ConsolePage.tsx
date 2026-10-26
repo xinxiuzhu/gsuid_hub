@@ -1,21 +1,28 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
-import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
-import { Terminal, Trash2, Download, Circle, Check, Minus } from "lucide-react";
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { Card } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
+import { Terminal, Trash2, Download, Circle, Check, Minus } from 'lucide-react';
 import {
   remoteCommandApi,
+  getAuthToken,
   logsApi,
   logsConfigApi,
   sanitizeVisibleLevels,
   DEFAULT_LOGS_CONFIG,
-} from "@/lib/api";
-import { useLanguage } from "@/contexts/LanguageContext";
-import { useTheme } from "@/contexts/ThemeContext";
-import { cn } from "@/lib/utils";
-import { ConsolePanel, LogEntry, buildLogAnchor, computeLineCount } from "@/components/ConsolePanel";
-import { PinnedPage } from '@/components/layout/PinnedPage';
+} from '@/lib/api';
+import { useLanguage } from '@/contexts/LanguageContext';
+import { useTheme } from '@/contexts/ThemeContext';
+import { cn } from '@/lib/utils';
+import {
+  ConsolePanel,
+  type LogEntry,
+  buildLogAnchor,
+  computeLineCount,
+} from '@/components/ConsolePanel';
+import { headerActionRowClass, PinnedPage } from '@/components/layout/PinnedPage';
+import { tabToolbarControlClass } from '@/components/ui/TabButtonGroup';
 
 let logCounter = 0;
 
@@ -27,9 +34,9 @@ let logCounter = 0;
  */
 const LOG_VERSION_THROTTLE_MS = 100;
 
-const LEVEL_ORDER = ["trace", "debug", "info", "success", "warning", "error", "critical"];
+const LEVEL_ORDER = ['trace', 'debug', 'info', 'success', 'warning', 'error', 'critical'];
 
-const VISIBLE_LEVELS_STORAGE_KEY = "console_visible_levels";
+const VISIBLE_LEVELS_STORAGE_KEY = 'console_visible_levels';
 
 // 持久化读�?写入：使�?localStorage 实现跨刷新记�?
 function loadVisibleLevelsFromStorage(): string[] | null {
@@ -38,7 +45,7 @@ function loadVisibleLevelsFromStorage(): string[] | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
-      return parsed.filter((v): v is string => typeof v === "string");
+      return parsed.filter((v): v is string => typeof v === 'string');
     }
     return null;
   } catch {
@@ -48,10 +55,7 @@ function loadVisibleLevelsFromStorage(): string[] | null {
 
 function saveVisibleLevelsToStorage(levels: Set<string>) {
   try {
-    localStorage.setItem(
-      VISIBLE_LEVELS_STORAGE_KEY,
-      JSON.stringify(Array.from(levels)),
-    );
+    localStorage.setItem(VISIBLE_LEVELS_STORAGE_KEY, JSON.stringify(Array.from(levels)));
   } catch {
     /* ignore quota errors */
   }
@@ -69,11 +73,9 @@ function resolvePluginAndContent(
   message: unknown,
   pluginField: unknown,
 ): { plugin?: string; content: string } {
-  let content = typeof message === "string" ? message : String(message ?? "");
+  let content = typeof message === 'string' ? message : String(message ?? '');
   let plugin =
-    typeof pluginField === "string" && pluginField.trim()
-      ? pluginField.trim()
-      : undefined;
+    typeof pluginField === 'string' && pluginField.trim() ? pluginField.trim() : undefined;
 
   // 旧后端：plugin 落在正文 extras 行，例如 "plugin=WutheringWavesUID, pathname=..."
   if (!plugin) {
@@ -86,10 +88,10 @@ function resolvePluginAndContent(
   if (plugin) {
     // 去掉 plugin=xxx 键值（单独一段或夹在逗号列表里）
     content = content
-      .replace(/(?:^|\n)\s*plugin=[^\n,]*(?:,\s*)?/gi, "\n")
-      .replace(/,\s*plugin=[^\n,]*/gi, "")
-      .replace(/\n{3,}/g, "\n\n")
-      .replace(/^\n+|\n+$/g, "");
+      .replace(/(?:^|\n)\s*plugin=[^\n,]*(?:,\s*)?/gi, '\n')
+      .replace(/,\s*plugin=[^\n,]*/gi, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/^\n+|\n+$/g, '');
   }
 
   return { plugin, content };
@@ -98,7 +100,7 @@ function resolvePluginAndContent(
 export default function ConsolePage() {
   const { t } = useLanguage();
   const { style, mode } = useTheme();
-  const isGlass = style === 'glassmorphism';
+  const isGlass = style !== 'solid';
   const isDark = mode === 'dark';
 
   // 数据存在 ref 中，避免 React 遍历大数�?
@@ -139,7 +141,7 @@ export default function ConsolePage() {
     };
   }, []);
 
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState('');
   const [commandHistory, setCommandHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [autoScroll, setAutoScroll] = useState(false);
@@ -147,7 +149,9 @@ export default function ConsolePage() {
   const autoScrollRef = useRef(autoScroll);
   autoScrollRef.current = autoScroll;
 
-  const [availableLevels, setAvailableLevels] = useState<Array<{ label: string; value: string }>>([]);
+  const [availableLevels, setAvailableLevels] = useState<Array<{ label: string; value: string }>>(
+    [],
+  );
   const [visibleLevels, setVisibleLevels] = useState<Set<string>>(
     () => new Set<string>(DEFAULT_LOGS_CONFIG.visible_levels),
   );
@@ -244,13 +248,11 @@ export default function ConsolePage() {
 
   // SSE stream for real-time logs - 始终接收所有级别，前端通过 filteredLogs 控制显示
   useEffect(() => {
-    const token = localStorage.getItem('auth_token');
+    const token = getAuthToken() || localStorage.getItem('auth_token');
     if (!token) return;
 
     const resumeFrom = lastEventIdRef.current;
-    const url =
-      `/api/logs/stream?token=${encodeURIComponent(token)}&level=all` +
-      (resumeFrom ? `&last_event_id=${encodeURIComponent(resumeFrom)}` : '');
+    const url = logsApi.getStreamUrl(token, 'all', resumeFrom);
     const authEventSource = new EventSource(url, { withCredentials: true });
 
     authEventSource.onmessage = (event) => {
@@ -277,23 +279,34 @@ export default function ConsolePage() {
         const logData = JSON.parse(event.data);
         const rawLevel = parseLogLevel(logData.level);
 
-        let logType: LogEntry["type"] = "info";
+        let logType: LogEntry['type'] = 'info';
         switch (rawLevel) {
-          case "error": logType = "error"; break;
-          case "warning":
-          case "warn": logType = "warning"; break;
-          case "info": logType = "info"; break;
-          case "success": logType = "success"; break;
-          case "debug": logType = "debug"; break;
-          case "trace": logType = "trace"; break;
-          case "critical": logType = "critical"; break;
+          case 'error':
+            logType = 'error';
+            break;
+          case 'warning':
+          case 'warn':
+            logType = 'warning';
+            break;
+          case 'info':
+            logType = 'info';
+            break;
+          case 'success':
+            logType = 'success';
+            break;
+          case 'debug':
+            logType = 'debug';
+            break;
+          case 'trace':
+            logType = 'trace';
+            break;
+          case 'critical':
+            logType = 'critical';
+            break;
         }
 
         const ts = new Date(logData.timestamp);
-        const { plugin, content } = resolvePluginAndContent(
-          logData.message,
-          logData.plugin,
-        );
+        const { plugin, content } = resolvePluginAndContent(logData.message, logData.plugin);
         allLogsRef.current.push({
           id: (++logCounter).toString(),
           type: logType,
@@ -321,12 +334,12 @@ export default function ConsolePage() {
         // 节流后通知 React，不要每条都重渲染
         scheduleLogVersionFlush();
       } catch (e) {
-        console.error("Failed to parse log message:", e);
+        console.error('Failed to parse log message:', e);
       }
     };
 
     authEventSource.onerror = (error) => {
-      console.error("Log stream error:", error);
+      console.error('Log stream error:', error);
       authEventSource.close();
       // 延迟后尝试重�?
       setTimeout(() => {
@@ -339,30 +352,33 @@ export default function ConsolePage() {
     };
   }, [reconnectCount]);
 
-  const addLogs = useCallback((entries: LogEntry[]) => {
-    if (entries.length === 0) return;
-    // 补齐 anchor 与 lineCount：
-    // - anchor：用于过滤切换 / 新日志到达时精确定位
-    // - lineCount：用于虚拟化器在初次布局时预估多行内容的行高，
-    //   避免多行日志（异常堆栈 / 多行输出）与下一条日志重叠
-    const stamped = entries.map((e) => {
-      const lineCount =
-        e.lineCount ?? (typeof e.content === 'string' ? computeLineCount(e.content) : 1);
-      return e.anchor
-        ? { ...e, lineCount }
-        : { ...e, anchor: buildLogAnchor(e.timestamp, e.content), lineCount };
-    });
-    allLogsRef.current.push(...stamped);
-    const cap = autoScrollRef.current ? 2000 : 10000;
-    if (allLogsRef.current.length > cap) {
-      if (autoScrollRef.current) {
-        allLogsRef.current = allLogsRef.current.slice(-cap);
-      } else {
-        allLogsRef.current = allLogsRef.current.slice(-(cap - 2000));
+  const addLogs = useCallback(
+    (entries: LogEntry[]) => {
+      if (entries.length === 0) return;
+      // 补齐 anchor 与 lineCount：
+      // - anchor：用于过滤切换 / 新日志到达时精确定位
+      // - lineCount：用于虚拟化器在初次布局时预估多行内容的行高，
+      //   避免多行日志（异常堆栈 / 多行输出）与下一条日志重叠
+      const stamped = entries.map((e) => {
+        const lineCount =
+          e.lineCount ?? (typeof e.content === 'string' ? computeLineCount(e.content) : 1);
+        return e.anchor
+          ? { ...e, lineCount }
+          : { ...e, anchor: buildLogAnchor(e.timestamp, e.content), lineCount };
+      });
+      allLogsRef.current.push(...stamped);
+      const cap = autoScrollRef.current ? 2000 : 10000;
+      if (allLogsRef.current.length > cap) {
+        if (autoScrollRef.current) {
+          allLogsRef.current = allLogsRef.current.slice(-cap);
+        } else {
+          allLogsRef.current = allLogsRef.current.slice(-(cap - 2000));
+        }
       }
-    }
-    scheduleLogVersionFlush();
-  }, [scheduleLogVersionFlush]);
+      scheduleLogVersionFlush();
+    },
+    [scheduleLogVersionFlush],
+  );
 
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
@@ -371,18 +387,20 @@ export default function ConsolePage() {
 
       const command = input.trim();
 
-      addLogs([{
-        id: (++logCounter).toString(),
-        type: "input",
-        content: `$ ${command}`,
-        timestamp: new Date(),
-      }]);
+      addLogs([
+        {
+          id: (++logCounter).toString(),
+          type: 'input',
+          content: `$ ${command}`,
+          timestamp: new Date(),
+        },
+      ]);
 
       setCommandHistory((prev) => [command, ...prev].slice(0, 50));
       setHistoryIndex(-1);
-      setInput("");
+      setInput('');
 
-      if (command.toLowerCase() === "clear") {
+      if (command.toLowerCase() === 'clear') {
         allLogsRef.current = [];
         scheduleLogVersionFlush();
         return;
@@ -394,7 +412,7 @@ export default function ConsolePage() {
         if (response.output) {
           outputLogs.push({
             id: (++logCounter).toString(),
-            type: "output",
+            type: 'output',
             content: response.output,
             timestamp: new Date(),
           });
@@ -402,7 +420,7 @@ export default function ConsolePage() {
         if (response.error) {
           outputLogs.push({
             id: (++logCounter).toString(),
-            type: "error",
+            type: 'error',
             content: response.error,
             timestamp: new Date(),
           });
@@ -411,26 +429,31 @@ export default function ConsolePage() {
           addLogs(outputLogs);
         }
       } catch (error) {
-        addLogs([{
-          id: (++logCounter).toString(),
-          type: "error",
-          content: error instanceof Error ? error.message : (t('console.commandFailed') || "Command execution failed"),
-          timestamp: new Date(),
-        }]);
+        addLogs([
+          {
+            id: (++logCounter).toString(),
+            type: 'error',
+            content:
+              error instanceof Error
+                ? error.message
+                : t('console.commandFailed') || 'Command execution failed',
+            timestamp: new Date(),
+          },
+        ]);
       }
     },
     [input, addLogs, t],
   );
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "ArrowUp") {
+    if (e.key === 'ArrowUp') {
       e.preventDefault();
       if (historyIndex < commandHistory.length - 1) {
         const newIndex = historyIndex + 1;
         setHistoryIndex(newIndex);
         setInput(commandHistory[newIndex]);
       }
-    } else if (e.key === "ArrowDown") {
+    } else if (e.key === 'ArrowDown') {
       e.preventDefault();
       if (historyIndex > 0) {
         const newIndex = historyIndex - 1;
@@ -438,7 +461,7 @@ export default function ConsolePage() {
         setInput(commandHistory[newIndex]);
       } else if (historyIndex === 0) {
         setHistoryIndex(-1);
-        setInput("");
+        setInput('');
       }
     }
   };
@@ -452,13 +475,13 @@ export default function ConsolePage() {
   const exportLogs = () => {
     const content = allLogsRef.current
       .map((log) => {
-        const pluginTag = log.plugin ? ` {${log.plugin}}` : "";
+        const pluginTag = log.plugin ? ` {${log.plugin}}` : '';
         return `[${log.timestamp.toISOString()}] [${log.type.toUpperCase()}]${pluginTag} ${log.content}`;
       })
-      .join("\n");
-    const blob = new Blob([content], { type: "text/plain" });
+      .join('\n');
+    const blob = new Blob([content], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
+    const a = document.createElement('a');
     a.href = url;
     a.download = `console-logs-${new Date().toISOString().slice(0, 10)}.txt`;
     a.click();
@@ -479,11 +502,7 @@ export default function ConsolePage() {
 
   const enableAllLevels = () => {
     setVisibleLevels(
-      new Set(
-        availableLevels
-          .filter((lv) => lv.value !== 'all')
-          .map((lv) => lv.value),
-      ),
+      new Set(availableLevels.filter((lv) => lv.value !== 'all').map((lv) => lv.value)),
     );
   };
 
@@ -500,39 +519,32 @@ export default function ConsolePage() {
    */
   const levelBadgeStyle = (value: string, active: boolean) => {
     const base =
-      "group inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-full " +
-      "font-medium transition-all duration-200 border select-none " +
-      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1";
+      'group inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-full ' +
+      'font-medium transition-all duration-200 border select-none ' +
+      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1';
 
     // 激活态：实心主题�?+ 微阴�?
     if (active) {
       return cn(
         base,
-        "shadow-sm hover:shadow-md hover:-translate-y-px",
-        isGlass && "backdrop-blur-sm",
+        'shadow-sm hover:shadow-md hover:-translate-y-px',
+        isGlass && 'backdrop-blur-sm',
       );
     }
 
     // 非激活态：低饱和度背景 + 主题色细�?
-    return cn(
-      base,
-      "hover:-translate-y-px",
-      isGlass && "backdrop-blur-sm",
-    );
+    return cn(base, 'hover:-translate-y-px', isGlass && 'backdrop-blur-sm');
   };
 
   // 渲染 badge：根据激活态应用不同主题变�?
-  const renderLevelBadge = (
-    lv: { label: string; value: string },
-    active: boolean,
-  ) => {
+  const renderLevelBadge = (lv: { label: string; value: string }, active: boolean) => {
     // 通过 CSS 自定义属性把主题色直接注�?inline style，避免硬编码 Tailwind 颜色
-    // 激活态：根据明暗主题直接使用固定前景色，避免依赖 --primary-foreground 变量
-    // （该变量在不同主题下深浅不一，无法保证 --primary 背景上的可读性）。
+    // 激活态：使用主题变量 --primary-foreground 保证高对比前景色
+    // （避免在暗色模式或 shadcn 预设下文字与背景同色无法阅读）
     const activeStyle: React.CSSProperties = active
       ? {
           backgroundColor: 'hsl(var(--primary) / 0.95)',
-          color: isDark ? '#ffffff' : '#000000',
+          color: 'hsl(var(--primary-foreground))',
           borderColor: 'hsl(var(--primary))',
           boxShadow: isGlass
             ? '0 4px 14px hsl(var(--primary) / 0.25)'
@@ -545,9 +557,7 @@ export default function ConsolePage() {
             : isDark
               ? 'hsl(var(--primary) / 0.08)'
               : 'hsl(var(--primary) / 0.06)',
-          color: isDark
-            ? 'hsl(var(--primary) / 0.85)'
-            : 'hsl(var(--primary) / 0.75)',
+          color: isDark ? 'hsl(var(--primary) / 0.85)' : 'hsl(var(--primary) / 0.75)',
           borderColor: 'hsl(var(--primary) / 0.25)',
         };
 
@@ -562,15 +572,17 @@ export default function ConsolePage() {
       >
         <span
           className={cn(
-            "inline-flex items-center justify-center w-3.5 h-3.5 rounded-full border transition-colors",
+            'inline-flex items-center justify-center w-3.5 h-3.5 rounded-full border transition-colors',
             // 激活态：圆点描边/背景继承父级文字色，确保深色主题下与白色文字一致
-            active
-              ? "bg-current/20 border-current/40"
-              : "border-current/50 bg-current/10",
+            active ? 'bg-current/20 border-current/40' : 'border-current/50 bg-current/10',
           )}
           aria-hidden="true"
         >
-          {active ? <Check className="w-2.5 h-2.5" /> : <Minus className="w-2.5 h-2.5 opacity-70 group-hover:opacity-100 transition-opacity" />}
+          {active ? (
+            <Check className="w-2.5 h-2.5" />
+          ) : (
+            <Minus className="w-2.5 h-2.5 opacity-70 group-hover:opacity-100 transition-opacity" />
+          )}
         </span>
         {lv.label}
       </button>
@@ -594,34 +606,50 @@ export default function ConsolePage() {
   );
 
   const allActive =
-    renderableLevels.length > 0 &&
-    renderableLevels.every((lv) => visibleLevels.has(lv.value));
+    renderableLevels.length > 0 && renderableLevels.every((lv) => visibleLevels.has(lv.value));
 
   return (
     <PinnedPage
+      className="console-mobile-fill max-md:min-h-0 max-md:flex-1 max-md:overflow-hidden"
+      bodyClassName="max-md:flex max-md:min-h-0 max-md:flex-1 max-md:flex-col max-md:overflow-hidden"
       header={
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div className="min-w-0 overflow-x-auto">
-            <h1 className="whitespace-nowrap text-3xl font-bold flex items-center gap-3">
+          <div className="min-w-0 sm:overflow-x-auto">
+            <h1 className="sm:whitespace-nowrap text-3xl font-bold flex items-center gap-3">
               <Terminal className="w-8 h-8 shrink-0" />
               {t('console.title')}
             </h1>
-            <p className="whitespace-nowrap text-muted-foreground mt-1">{t('console.description')}</p>
+            <p className="sm:whitespace-nowrap text-muted-foreground mt-1">
+              {t('console.description')}
+            </p>
           </div>
-          <div className="flex flex-wrap items-center justify-end gap-2 self-end sm:self-auto">
+          <div className={headerActionRowClass}>
             <div className="flex items-center gap-2 text-sm text-muted-foreground whitespace-nowrap">
               <Circle className="w-2 h-2 fill-green-500 text-green-500 animate-pulse" />
               {t('console.connected')}
             </div>
-            <div className="flex items-center gap-2 whitespace-nowrap">
+            <div
+              className={cn(
+                tabToolbarControlClass,
+                'flex items-center gap-2 whitespace-nowrap px-1',
+              )}
+            >
               <span className="text-sm text-muted-foreground">{t('console.autoScroll')}</span>
               <Switch checked={autoScroll} onCheckedChange={setAutoScroll} />
             </div>
-            <Button variant="outline" size="sm" onClick={exportLogs} className="whitespace-nowrap">
+            <Button
+              variant="outline"
+              onClick={exportLogs}
+              className={cn(tabToolbarControlClass, 'whitespace-nowrap max-sm:!grow-0')}
+            >
               <Download className="w-4 h-4 mr-2" />
               {t('console.exportLogs')}
             </Button>
-            <Button variant="outline" size="sm" onClick={clearLogs} className="whitespace-nowrap">
+            <Button
+              variant="outline"
+              onClick={clearLogs}
+              className={cn(tabToolbarControlClass, 'whitespace-nowrap max-sm:!grow-0')}
+            >
               <Trash2 className="w-4 h-4 mr-2" />
               {t('console.clear')}
             </Button>
@@ -632,15 +660,12 @@ export default function ConsolePage() {
         /* 日志级别过滤 */
         <div
           className={cn(
-            "flex flex-wrap items-center gap-2 p-3 rounded-xl border",
-            isGlass
-              ? "bg-white/5 border-white/15 backdrop-blur-sm"
-              : "bg-card/40 border-border/50",
+            'flex flex-wrap items-center gap-2 p-3 rounded-xl border',
+            isGlass ? 'bg-white/5 border-white/15 backdrop-blur-sm' : 'bg-card/40 border-border/50',
           )}
           style={{
             // 注入一个很淡的主题色背景渐变，让整个过滤器与主题联动
-            backgroundImage:
-              'linear-gradient(90deg, hsl(var(--primary) / 0.04), transparent 60%)',
+            backgroundImage: 'linear-gradient(90deg, hsl(var(--primary) / 0.04), transparent 60%)',
           }}
         >
           <span className="text-sm font-medium text-muted-foreground whitespace-nowrap mr-1">
@@ -661,15 +686,17 @@ export default function ConsolePage() {
         </div>
       }
     >
-      <Card className={cn(
-        // 非 glass-card 宿主，overflow-hidden 安全；用于裁终端头/输入条的直角底色
-        "flex flex-col overflow-hidden h-[calc(100vh-130px)]",
-        isGlass
-          ? "backdrop-blur-md bg-white/10 dark:bg-black/10 border border-white/20 dark:border-black/20 shadow-lg"
-          : "bg-card border border-border/50"
-      )}>
+      <Card
+        className={cn(
+          // 非 glass-card 宿主，overflow-hidden 安全；用于裁终端头/输入条的直角底色
+          'flex min-w-0 w-full flex-col overflow-hidden max-md:min-h-0 max-md:flex-1 md:h-[calc(100vh-130px)]',
+          isGlass
+            ? 'backdrop-blur-md bg-white/10 dark:bg-black/10 border border-white/20 dark:border-black/20 shadow-lg'
+            : 'bg-card border border-border/50',
+        )}
+      >
         {/* Terminal Header */}
-        <div className="flex items-center gap-2 px-4 py-3 bg-background/50 border-b border-border/30">
+        <div className="flex shrink-0 items-center gap-2 px-3 py-2.5 bg-background/50 border-b border-border/30 sm:px-4 sm:py-3">
           <div className="flex gap-1.5">
             <div className="w-3 h-3 rounded-full bg-red-500" />
             <div className="w-3 h-3 rounded-full bg-yellow-500" />
@@ -679,14 +706,13 @@ export default function ConsolePage() {
         </div>
 
         {/* Terminal Content - Virtual Scroll */}
-        <ConsolePanel
-          logs={filteredLogs}
-          autoScroll={autoScroll}
-          version={logVersion}
-        />
+        <ConsolePanel logs={filteredLogs} autoScroll={autoScroll} version={logVersion} />
 
         {/* Input */}
-        <form onSubmit={handleSubmit} className="flex items-center gap-2 p-4 bg-background/50 border-t border-border/30">
+        <form
+          onSubmit={handleSubmit}
+          className="flex shrink-0 items-center gap-2 p-3 bg-background/50 border-t border-border/30 sm:p-4"
+        >
           <span className="text-primary font-mono">$</span>
           <Input
             ref={inputRef}

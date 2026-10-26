@@ -55,28 +55,24 @@ export function McpToolDialog({
 }: McpToolDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[560px] max-h-[80vh] glass-card">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-[560px] max-h-[85vh] flex flex-col p-6 glass-card">
+        <DialogHeader className="shrink-0 pb-1">
           <DialogTitle className="flex items-center gap-2">
-            <Wrench className="w-5 h-5" />
+            <Wrench className="w-5 h-5 text-primary" />
             {t('aiConfig.mcpTool.selectTool')}
           </DialogTitle>
           <DialogDescription>
             {serviceType === 'websearch' && t('aiConfig.mcpTool.webSearchMcpTool')}
-            {serviceType === 'image_understand' &&
-              t('aiConfig.mcpTool.imageUnderstandMcpTool')}
+            {serviceType === 'image_understand' && t('aiConfig.mcpTool.imageUnderstandMcpTool')}
             {serviceType === 'asr' && t('aiConfig.mcpTool.asrMcpTool')}
-            {serviceType === 'document_extract' &&
-              t('aiConfig.mcpTool.documentExtractMcpTool')}
-            {serviceType === 'video_extract' &&
-              t('aiConfig.mcpTool.videoExtractMcpTool')}
-            {serviceType === 'video_understand' &&
-              t('aiConfig.mcpTool.videoUnderstandMcpTool')}
+            {serviceType === 'document_extract' && t('aiConfig.mcpTool.documentExtractMcpTool')}
+            {serviceType === 'video_extract' && t('aiConfig.mcpTool.videoExtractMcpTool')}
+            {serviceType === 'video_understand' && t('aiConfig.mcpTool.videoUnderstandMcpTool')}
           </DialogDescription>
         </DialogHeader>
 
         {currentDialogMcpToolId && selectedMcpToolInfo && (
-          <div className="rounded-xl border border-primary/20 bg-primary/5 p-3">
+          <div className="rounded-xl p-3 glass-card glass-alert glass-alert-tint glass-alert-tint-primary">
             <div className="flex items-start justify-between gap-2">
               <div className="flex items-center gap-2 min-w-0">
                 <div className="flex items-center justify-center flex-shrink-0 w-7 h-7 rounded-lg bg-primary/10 text-primary">
@@ -117,7 +113,7 @@ export function McpToolDialog({
           </div>
         )}
 
-        <div className="space-y-1 max-h-[50vh] overflow-y-auto">
+        <div className="flex-1 min-h-0 overflow-y-auto pr-1 py-1 space-y-1">
           {mcpConfigs.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-10 text-center">
               <Server className="h-8 w-8 text-muted-foreground/50 mb-2" />
@@ -175,9 +171,7 @@ export function McpToolDialog({
                             <Wrench
                               className={cn(
                                 'h-3.5 w-3.5 shrink-0 mt-0.5',
-                                isSelected
-                                  ? 'text-primary'
-                                  : 'text-muted-foreground',
+                                isSelected ? 'text-primary' : 'text-muted-foreground',
                               )}
                             />
                             <div className="flex-1 min-w-0">
@@ -185,9 +179,7 @@ export function McpToolDialog({
                                 <span
                                   className={cn(
                                     'text-sm truncate',
-                                    isSelected
-                                      ? 'font-semibold text-primary'
-                                      : 'font-medium',
+                                    isSelected ? 'font-semibold text-primary' : 'font-medium',
                                   )}
                                 >
                                   {tool.name}
@@ -213,7 +205,7 @@ export function McpToolDialog({
           )}
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="shrink-0 pt-3 border-t border-border/40">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             {t('common.confirm')}
           </Button>

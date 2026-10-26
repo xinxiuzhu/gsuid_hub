@@ -60,6 +60,7 @@
   "downloadSuccess": "Session JSON saved",
   "waterfall": {
     "agentRun": "Agent Run",
+    "thinkingEffort": "Thinking effort",
     "chat": "Chat",
     "tool": "Tool",
     "subAgent": "Sub-Agent",
@@ -84,5 +85,6 @@
     }
   },
   "linkedAgents": "Linked agents",
+  "linkedAgentsSummary": "{count} linked agents · {entries} entries",
   "loadLinkedFailed": "Failed to load linked agents"
 }

@@ -325,6 +325,7 @@ export default defineConfig(({ command, mode }) => {
     },
     define: {
       PACKAGE_VERSION: JSON.stringify(packageJson.version),
+      'import.meta.env.PACKAGE_VERSION': JSON.stringify(packageJson.version),
       // 编译期常量：只有 demo 模式为 true，普通 build 下为 undefined → 分支被 tree-shake。
       'import.meta.env.VITE_DEMO': JSON.stringify(isDemo),
     },
@@ -365,6 +366,7 @@ export default defineConfig(({ command, mode }) => {
             const versionInfo = {
               version: packageJson.version || '0.0.0',
               mode,
+              custom_build: true,
             };
             fs.writeFileSync(
               path.join(outDir, 'version.json'),

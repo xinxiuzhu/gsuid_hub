@@ -10,6 +10,15 @@
   "checkConfig": "Check Configuration",
   "manageConfig": "Manage Configs",
   "manageConfigDesc": "Manage AI model configuration files used by high / low level tasks",
+  "copyConfig": "Copy config",
+  "copyConfigDesc": "Copy \"{name}\". Keys and parameters are copied with it. You can rename it before saving.",
+  "copyConfigName": "New name",
+  "copyConfigSuccess": "Copied as {name}",
+  "copyConfigFailed": "Failed to copy config",
+  "copyConfigNameRequired": "Enter a new name",
+  "copyConfigSameName": "The new name must differ from the original",
+  "copyConfigNamePlus": "The name cannot contain +",
+  "copyConfigSuffix": " copy",
   "aiHistory": "AI History",
   "taskConfig": {
     "title": "Task Configuration",
@@ -106,7 +115,9 @@
       "low": "Low",
       "medium": "Medium",
       "high": "High",
-      "xhigh": "Extra High"
+      "xhigh": "Extra High",
+      "adaptive": "Adaptive",
+      "max": "Max"
     },
     "maxConcurrency": "Max Concurrency",
     "maxTokens": "Max Output Tokens",
@@ -153,6 +164,41 @@
     "endUserIdSalt": "Digest Salt",
     "endUserIdSaltPlaceholder": "Leave empty for an unkeyed digest",
     "endUserIdSaltHint": "An empty salt means an unkeyed digest: when the identity space is small (numeric account IDs), it can be brute-forced back, so it only obfuscates. Changing the salt orphans every previously sent digest and breaks upstream per-caller history.",
+    "sectionBasic": "Basic & Connection",
+    "sectionBasicDesc": "Provider type, profile name, endpoint and credentials",
+    "sectionCapabilities": "Model & Reasoning",
+    "sectionCapabilitiesDesc": "Capabilities, thinking level, and concurrency control",
+    "sectionNetwork": "Protocol & Advanced Network",
+    "sectionNetworkDesc": "Request method, usage stats, identity forwarding, and remote search",
+    "sectionVideo": "Multimodal Video Input",
+    "sectionVideoDesc": "Video block format and sampling settings for OpenAI-compatible interfaces",
+    "sectionVideoAlert": "Optimized for omni models such as Xiaomi MiMo, DashScope compatible mode, and OpenRouter. Effective only with chat_completions.",
+    "videoInputFormat": "Video Input Format",
+    "videoInputFormatOptions": {
+      "file": "file (compatible with LiteLLM / Gemini proxies)",
+      "video_url": "video_url (adapted for MiMo / DashScope / OpenRouter omni models)"
+    },
+    "videoInputFormatDescription": {
+      "file": "OpenAI-compatible video input format using file structure (type=file), ideal for LiteLLM / Gemini proxies.",
+      "video_url": "Generates type=video_url blocks, ideal for Xiaomi MiMo, DashScope compatible mode, and OpenRouter omni models (effective in chat_completions only)."
+    },
+    "videoFps": "Video Sample Rate (FPS)",
+    "videoFpsDescription": "Frame rate (FPS) for video sampling under video_url mode. Values > 0 send fps parameter (e.g. 0.5 or 2.0); 0 means not sent.",
+    "videoInlineMaxMb": "Video Inline Limit (MB)",
+    "videoInlineMaxMbDescription": "Maximum size (MB) for converting video to DataURI under video_url mode. Exceeding videos fall back to frame extraction or placeholders.",
+    "videoUrlPassthrough": "Video Public URL Passthrough",
+    "videoUrlPassthroughOptions": {
+      "off": "Off (download & convert to DataURI, default)",
+      "on": "On (passthrough public URL directly)"
+    },
+    "videoUrlPassthroughDescription": {
+      "off": "Recommended default. Downloads and converts to DataURI to avoid multi-turn failures due to expired temporary URLs.",
+      "on": "Passes the raw http(s) URL directly into video_url.url. Suitable when URLs are persistent and accessible by the upstream provider."
+    },
+    "videoPartExtra": "Video Part Extra Parameters (JSON)",
+    "videoPartExtraDescription": "JSON object merged into the video part under video_url mode. Merged at top level (e.g. {\"media_resolution\":\"default\"}) or inside video_url if key exists.",
+    "videoPartExtraPlaceholder": "e.g.: {\"media_resolution\": \"default\"}",
+    "videoFileModeHint": "Currently in file mode (LiteLLM / Gemini proxy compatible). Switch to video_url to configure sampling rate, inline limit, and extra JSON params.",
     "capabilityText": "Text Chat",
     "capabilityImage": "Image Understanding",
     "capabilityAudio": "Audio Processing",
@@ -184,6 +230,7 @@
     "rerankServiceDisabled": "Enable Rerank to improve RAG retrieval quality",
     "embeddingSaveWarningTitle": "Modify Vector Database Configuration",
     "embeddingSaveWarningDesc": "Modifying the embedding model service / Qdrant deployment will require historical vector data to be migrated and rebuilt. It is recommended to back up the data/ai_core folder first; a service restart is required after saving, and migration may take a long time.",
+    "webSearchFetch": "Web Search / Fetch",
     "webSearchService": "Web Search Service",
     "webSearchServiceDesc": "Configure web search capability",
     "primaryProvider": "Primary search provider",
@@ -208,16 +255,23 @@
     "anysearchConfig": "AnySearch Configuration",
     "firecrawlConfig": "Firecrawl Configuration",
     "jinaConfig": "Jina config (s.jina.ai / r.jina.ai)",
+    "deepseekConfig": "DeepSeek config (search & fetch)",
     "miniMaxConfig": "MiniMax Configuration",
     "maxResults": "Max Results",
     "searchDepth": "Search Depth",
-    "searchType": "Search Type",
     "apiHost": "API Host",
-    "resourceMode": "Resource Mode"
+    "resourceMode": "Resource Mode",
+    "renderImageSources": "Image sources for cards",
+    "renderImageSourcesDesc": "render_agent searches images in this order and stops when a source fills the count. Leave empty to skip image search. Plugin library uses images registered by plugins; Tavily uses the Tavily key on this page; Firecrawl is the official image search and uses the free tier when no key is set; 360 is a public image search and needs no key.",
+    "renderEmbedImages": "Embed photos in cards",
+    "renderEmbedImagesDesc": "When on, cards search the configured sources and embed the photos. When off, cards use built-in icons instead of searching. On by default.",
+    "renderCardSection": "Card Image & Illustration",
+    "renderCardSectionDesc": "Configure image search sources and embedding behavior when generating AI response cards.",
+    "renderEmbedImagesDisabledHint": "Image embedding is disabled. Cards will use built-in icons without searching the web."
   },
   "webFetch": {
     "title": "Web Fetch Service",
-    "description": "Configure web_fetch_tool: primary Jina / local with error switch and auto balance. Changes apply immediately—no restart.",
+    "description": "Configure web_fetch_tool: primary Jina / DeepSeek / local with error switch and auto balance. Changes apply immediately—no restart.",
     "provider": "Fetch provider",
     "primaryProvider": "Primary fetch provider",
     "lbStrategy": "Multi-source strategy",
@@ -230,10 +284,13 @@
     "fallbackConfigSectionDesc": "Options for fallback fetch providers; used when primary fails.",
     "providerLocal": "Local",
     "providerJina": "Jina (r.jina.ai)",
+    "providerDeepSeek": "DeepSeek (Fetch API)",
     "localHint": "Direct aiohttp fetch with optional proxy / UA / timeout.",
     "jinaHint": "Read via r.jina.ai; API key optional (higher quota when set). Default primary.",
+    "deepseekHint": "Fetch and extract Markdown via official DeepSeek Fetch API, requires API Key.",
     "configNotLoaded": "Web fetch service config not loaded. Ensure the backend is running and WebFetch config is registered",
-    "jinaConfigNotLoaded": "Jina config not loaded; ensure backend registered Jina search/fetch settings"
+    "jinaConfigNotLoaded": "Jina config not loaded; ensure backend registered Jina search/fetch settings",
+    "deepseekConfigNotLoaded": "DeepSeek config not loaded; ensure backend registered DeepSeek search/fetch settings"
   },
   "relationshipSettings": {
     "title": "Relationship",
@@ -353,6 +410,9 @@
     "noActiveConfigTitle": "Config Not Activated",
     "noConfigFileTitle": "No Config Files Available",
     "noConfigFileWarning": "Please click \"New Config\" in the top right to create a config file first, then assign it to high level and low level tasks"
+  },
+  "multimodal": {
+    "title": "Multimodal"
   },
   "imageUnderstand": {
     "title": "Image Understanding",

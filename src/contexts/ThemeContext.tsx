@@ -1,5 +1,14 @@
-﻿import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback, useMemo, useRef } from 'react';
-import { themeApi, ThemeConfig, getAuthToken } from '@/lib/api';
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  type ReactNode,
+  useCallback,
+  useMemo,
+  useRef,
+} from 'react';
+import { themeApi, type ThemeConfig, getAuthToken } from '@/lib/api';
 
 /** 与 LanguageContext 共用：浏览器侧语言偏好（登录前也可持久） */
 const LANGUAGE_STORAGE_KEY = 'gsuid_hub_language';
@@ -25,7 +34,13 @@ function readStoredLanguage(): Language | null {
 // ============================================================================
 
 type ThemeMode = 'light' | 'dark';
-type ThemeStyle = 'solid' | 'glassmorphism';
+type ThemeStyle = 'solid' | 'glassmorphism' | 'luminous' | 'liquid';
+
+function parseThemeStyle(v: unknown): ThemeStyle | null {
+  if (v === 'solid' || v === 'glassmorphism' || v === 'luminous' || v === 'liquid') return v;
+  return null;
+}
+
 type ThemeColor = 'red' | 'orchid' | 'blue' | 'green' | 'orange' | 'pink';
 type ThemePreset = 'default' | 'shadcn';
 type IconColor = 'white' | 'black' | 'colored';
@@ -45,6 +60,9 @@ const UI_SCALE_DEFAULT = 97;
 const SHADOW_INTENSITY_MIN = 0;
 const SHADOW_INTENSITY_MAX = 200;
 const SHADOW_INTENSITY_DEFAULT = 55;
+const BACKGROUND_BLUR_MIN = 0;
+const BACKGROUND_BLUR_MAX = 40;
+const BACKGROUND_BLUR_DEFAULT = 0;
 
 function clampInt(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, Math.round(n)));
@@ -79,6 +97,15 @@ function readStoredMode(): ThemeMode | null {
   return null;
 }
 
+function readStoredStyle(): ThemeStyle | null {
+  try {
+    return parseThemeStyle(sessionStorage.getItem('theme_style'));
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
 function readSessionInt(key: string, min: number, max: number): number | null {
   try {
     const raw = sessionStorage.getItem(key);
@@ -107,6 +134,13 @@ interface ThemeColorContextType {
   setColor: (color: ThemeColor, autoSave?: boolean) => void;
   themePreset: ThemePreset;
   setThemePreset: (preset: ThemePreset, autoSave?: boolean) => void;
+  /**
+   * 当前主色的 HSL 三元组（如 `220 70% 50%`），未包 `hsl()`。
+   * 图表等 canvas 组件要从它推色阶，但**不能**自己去 `getComputedStyle(--primary)` 读：
+   * 上面那个「批量应用到 DOM」的 effect 是 `requestAnimationFrame` 异步落地的，
+   * 子组件的 effect 必然跑在它前面，读到的只会是 index.css 里的静态默认值。
+   */
+  primary: string;
 }
 
 interface ThemeBackgroundContextType {
@@ -114,6 +148,9 @@ interface ThemeBackgroundContextType {
   setBackgroundImage: (url: string | null, autoSave?: boolean) => void;
   blurIntensity: number;
   setBlurIntensity: (value: number, autoSave?: boolean) => void;
+  /** 背景图模糊（px，0 = 原图）。与毛玻璃强度 blurIntensity 无关。 */
+  backgroundBlur: number;
+  setBackgroundBlur: (value: number, autoSave?: boolean) => void;
   /** Card opacity percentage (0-100). Applies to both solid and glassmorphism styles. */
   cardOpacity: number;
   setCardOpacity: (value: number, autoSave?: boolean) => void;
@@ -152,6 +189,10 @@ interface ThemeActionsContextType {
   getThemeConfig: () => ThemeConfig;
   /** Apply a full theme config to the live UI without re-persisting to the backend. */
   applyThemeConfig: (config: Partial<ThemeConfig>) => void;
+  /** 从后端重新加载主题配置并应用到界面（支持登录后或更换 Host 后重拉） */
+  reloadTheme: () => Promise<void>;
+  /** 将主题重置为安全默认值（清空背景图、浅色、默认圆角等） */
+  resetThemeToDefaults: () => void;
 }
 
 // ============================================================================
@@ -197,14 +238,17 @@ const BASE_COLORS = {
   },
 };
 
-const THEME_COLORS: Record<ThemeColor, Record<ThemeMode, { primary: string; primaryForeground: string; ring: string }>> = {
+const THEME_COLORS: Record<
+  ThemeColor,
+  Record<ThemeMode, { primary: string; primaryForeground: string; ring: string }>
+> = {
   red: {
     light: { primary: '0 80% 55%', primaryForeground: '0 0% 100%', ring: '0 80% 55%' },
     dark: { primary: '0 70% 60%', primaryForeground: '0 0% 100%', ring: '0 70% 60%' },
   },
   orchid: {
     light: { primary: '270 50% 50%', primaryForeground: '0 0% 100%', ring: '270 50% 50%' },
-    dark: { primary: '270 70% 70%', primaryForeground: '0 0% 100%', ring: '270 70% 70%' },
+    dark: { primary: '270 70% 70%', primaryForeground: '270 70% 10%', ring: '270 70% 70%' },
   },
   blue: {
     light: { primary: '220 70% 50%', primaryForeground: '0 0% 100%', ring: '220 70% 50%' },
@@ -224,9 +268,16 @@ const THEME_COLORS: Record<ThemeColor, Record<ThemeMode, { primary: string; prim
   },
 };
 
-const SHADCN_COLORS: Record<ThemeMode, { primary: string; primaryForeground: string; ring: string }> = {
+const SHADCN_COLORS: Record<
+  ThemeMode,
+  { primary: string; primaryForeground: string; ring: string }
+> = {
   light: { primary: '222.2 47.4% 11.2%', primaryForeground: '210 40% 98%', ring: '222.2 84% 4.9%' },
-  dark: { primary: '210 40% 98%', primaryForeground: '222.2 47.4% 11.2%', ring: '212.7 26.8% 83.9%' },
+  dark: {
+    primary: '210 40% 98%',
+    primaryForeground: '222.2 47.4% 11.2%',
+    ring: '212.7 26.8% 83.9%',
+  },
 };
 
 // ============================================================================
@@ -236,7 +287,7 @@ const SHADCN_COLORS: Record<ThemeMode, { primary: string; primaryForeground: str
 function computeThemeColors(
   mode: ThemeMode,
   color: ThemeColor,
-  preset: ThemePreset
+  preset: ThemePreset,
 ): Record<string, string> {
   const base = BASE_COLORS[mode];
   let primaryConfig;
@@ -245,18 +296,18 @@ function computeThemeColors(
   } else {
     primaryConfig = THEME_COLORS[color][mode];
   }
-  
+
   const accentHsl = primaryConfig.primary.split(' ');
   const accentHue = parseInt(accentHsl[0]);
   const accentSaturation = mode === 'dark' ? '30%' : '40%';
   const accentLightness = mode === 'dark' ? '20%' : '96%';
   const accent = `${accentHue} ${accentSaturation} ${accentLightness}`;
-  
+
   const accentForegroundHue = accentHue;
   const accentForegroundSaturation = mode === 'dark' ? '80%' : '50%';
   const accentForegroundLightness = mode === 'dark' ? '90%' : '40%';
   const accentForeground = `${accentForegroundHue} ${accentForegroundSaturation} ${accentForegroundLightness}`;
-  
+
   return {
     '--background': base.background,
     '--foreground': base.foreground,
@@ -319,10 +370,15 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   // 浅色是「拿不到后端配置」时唯一站得住的底色：后端不可达意味着这个页面
   // 大概率会渲染离线警告，浅底比深底更可读，也比硬编码 dark 更符合直觉。
   const [mode, setModeState] = useState<ThemeMode>(() => readStoredMode() ?? 'light');
-  const [style, setStyleState] = useState<ThemeStyle>('glassmorphism');
+  const [style, setStyleState] = useState<ThemeStyle>(() => readStoredStyle() ?? 'glassmorphism');
   const [color, setColorState] = useState<ThemeColor>('red');
   const [backgroundImage, setBackgroundImageState] = useState<string | null>(null);
   const [blurIntensity, setBlurIntensityState] = useState<number>(12);
+  const [backgroundBlur, setBackgroundBlurState] = useState<number>(
+    () =>
+      readSessionInt('theme_background_blur', BACKGROUND_BLUR_MIN, BACKGROUND_BLUR_MAX) ??
+      BACKGROUND_BLUR_DEFAULT,
+  );
   const [cardOpacity, setCardOpacityState] = useState<number>(25);
   const [iconColor, setIconColorState] = useState<IconColor>('colored');
   const [themePreset, setThemePresetState] = useState<ThemePreset>('default');
@@ -331,93 +387,194 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [sidebarLayout, setSidebarLayoutState] = useState<SidebarLayout>('floating');
   // 杂项：优先读 session，避免首屏闪回默认值
   const [borderRadius, setBorderRadiusState] = useState<number>(
-    () => readSessionInt('theme_border_radius', BORDER_RADIUS_MIN, BORDER_RADIUS_MAX) ?? BORDER_RADIUS_DEFAULT
+    () =>
+      readSessionInt('theme_border_radius', BORDER_RADIUS_MIN, BORDER_RADIUS_MAX) ??
+      BORDER_RADIUS_DEFAULT,
   );
   const [uiScale, setUiScaleState] = useState<number>(
-    () => readSessionInt('theme_ui_scale', UI_SCALE_MIN, UI_SCALE_MAX) ?? UI_SCALE_DEFAULT
+    () => readSessionInt('theme_ui_scale', UI_SCALE_MIN, UI_SCALE_MAX) ?? UI_SCALE_DEFAULT,
   );
   const [shadowIntensity, setShadowIntensityState] = useState<number>(
-    () => readSessionInt('theme_shadow_intensity', SHADOW_INTENSITY_MIN, SHADOW_INTENSITY_MAX) ?? SHADOW_INTENSITY_DEFAULT
+    () =>
+      readSessionInt('theme_shadow_intensity', SHADOW_INTENSITY_MIN, SHADOW_INTENSITY_MAX) ??
+      SHADOW_INTENSITY_DEFAULT,
   );
   const [sidebarDefaultCollapsed, setSidebarDefaultCollapsedState] = useState<boolean>(
-    () => readSessionBool('theme_sidebar_default_collapsed') ?? false
+    () => readSessionBool('theme_sidebar_default_collapsed') ?? false,
   );
   const [isInitialized, setIsInitialized] = useState(false);
-  
+
   // 使用ref存储配置，用于自动保存
   const configRef = useRef({
-    mode, style, color, iconColor, backgroundImage, blurIntensity, cardOpacity,
-    themePreset, language, sidebarLayout, borderRadius, uiScale, shadowIntensity, sidebarDefaultCollapsed,
+    mode,
+    style,
+    color,
+    iconColor,
+    backgroundImage,
+    blurIntensity,
+    backgroundBlur,
+    cardOpacity,
+    themePreset,
+    language,
+    sidebarLayout,
+    borderRadius,
+    uiScale,
+    shadowIntensity,
+    sidebarDefaultCollapsed,
   });
 
   // 更新ref
   useEffect(() => {
     configRef.current = {
-      mode, style, color, iconColor, backgroundImage, blurIntensity, cardOpacity,
-      themePreset, language, sidebarLayout, borderRadius, uiScale, shadowIntensity, sidebarDefaultCollapsed,
+      mode,
+      style,
+      color,
+      iconColor,
+      backgroundImage,
+      blurIntensity,
+      backgroundBlur,
+      cardOpacity,
+      themePreset,
+      language,
+      sidebarLayout,
+      borderRadius,
+      uiScale,
+      shadowIntensity,
+      sidebarDefaultCollapsed,
     };
-  }, [mode, style, color, iconColor, backgroundImage, blurIntensity, cardOpacity, themePreset, language, sidebarLayout, borderRadius, uiScale, shadowIntensity, sidebarDefaultCollapsed]);
+  }, [
+    mode,
+    style,
+    color,
+    iconColor,
+    backgroundImage,
+    blurIntensity,
+    backgroundBlur,
+    cardOpacity,
+    themePreset,
+    language,
+    sidebarLayout,
+    borderRadius,
+    uiScale,
+    shadowIntensity,
+    sidebarDefaultCollapsed,
+  ]);
 
   // 计算当前主题颜色
   const themeColors = useMemo(
     () => computeThemeColors(mode, color, themePreset),
-    [mode, color, themePreset]
+    [mode, color, themePreset],
   );
 
-  // 初始�?
+  // 将服务端完整配置应用到 state，对于服务端未提供的字段安全回退到默认值
+  const applyServerConfig = useCallback((config: Partial<ThemeConfig>) => {
+    if (config.mode && ['light', 'dark'].includes(config.mode)) {
+      setModeState(config.mode as ThemeMode);
+    } else {
+      setModeState('light');
+    }
+    const loadedStyle = parseThemeStyle(config.style);
+    setStyleState(loadedStyle ?? 'glassmorphism');
+    if (
+      config.color &&
+      ['red', 'orchid', 'blue', 'green', 'orange', 'pink'].includes(config.color)
+    ) {
+      setColorState(config.color as ThemeColor);
+    } else {
+      setColorState('red');
+    }
+    setBackgroundImageState(config.background_image ?? null);
+    setBlurIntensityState(typeof config.blur_intensity === 'number' ? config.blur_intensity : 12);
+    setBackgroundBlurState(
+      typeof config.background_blur === 'number'
+        ? clampInt(config.background_blur, BACKGROUND_BLUR_MIN, BACKGROUND_BLUR_MAX)
+        : BACKGROUND_BLUR_DEFAULT,
+    );
+    setCardOpacityState(typeof config.card_opacity === 'number' ? config.card_opacity : 25);
+    setIconColorState(
+      config.icon_color && ['white', 'black', 'colored'].includes(config.icon_color)
+        ? (config.icon_color as IconColor)
+        : 'colored',
+    );
+    setThemePresetState(
+      config.theme_preset && ['default', 'shadcn'].includes(config.theme_preset)
+        ? (config.theme_preset as ThemePreset)
+        : 'default',
+    );
+    // 语言：浏览器本地偏好优先（登录页切换后刷新不应被服务端默认中文覆盖）
+    const storedLang = readStoredLanguage();
+    if (storedLang) {
+      setLanguageState(storedLang);
+    } else if (config.language && ['zh-CN', 'en-US', 'ja-JP'].includes(config.language)) {
+      setLanguageState(config.language as Language);
+    }
+    setSidebarLayoutState(
+      config.sidebar_layout &&
+        (SIDEBAR_LAYOUTS as readonly string[]).includes(config.sidebar_layout)
+        ? (config.sidebar_layout as SidebarLayout)
+        : 'floating',
+    );
+    setBorderRadiusState(
+      typeof config.border_radius === 'number'
+        ? clampInt(config.border_radius, BORDER_RADIUS_MIN, BORDER_RADIUS_MAX)
+        : BORDER_RADIUS_DEFAULT,
+    );
+    setUiScaleState(
+      typeof config.ui_scale === 'number'
+        ? clampInt(config.ui_scale, UI_SCALE_MIN, UI_SCALE_MAX)
+        : UI_SCALE_DEFAULT,
+    );
+    setShadowIntensityState(
+      typeof config.shadow_intensity === 'number'
+        ? clampInt(config.shadow_intensity, SHADOW_INTENSITY_MIN, SHADOW_INTENSITY_MAX)
+        : SHADOW_INTENSITY_DEFAULT,
+    );
+    setSidebarDefaultCollapsedState(
+      typeof config.sidebar_default_collapsed === 'boolean'
+        ? config.sidebar_default_collapsed
+        : false,
+    );
+  }, []);
+
+  // 重置主题为安全默认值（清空壁纸等，用于切换 API Host 时清理旧残留）
+  const resetThemeToDefaults = useCallback(() => {
+    setModeState('light');
+    setStyleState('glassmorphism');
+    setColorState('red');
+    setBackgroundImageState(null);
+    setBlurIntensityState(12);
+    setBackgroundBlurState(BACKGROUND_BLUR_DEFAULT);
+    setCardOpacityState(25);
+    setIconColorState('colored');
+    setThemePresetState('default');
+    setSidebarLayoutState('floating');
+    setBorderRadiusState(BORDER_RADIUS_DEFAULT);
+    setUiScaleState(UI_SCALE_DEFAULT);
+    setShadowIntensityState(SHADOW_INTENSITY_DEFAULT);
+    setSidebarDefaultCollapsedState(false);
+  }, []);
+
+  // 从后端重新获取主题配置并应用
+  const reloadTheme = useCallback(async () => {
+    try {
+      const response = await themeApi.getConfig();
+      if (response.status === 0 && response.data) {
+        applyServerConfig(response.data);
+      }
+    } catch (err) {
+      console.warn('[ThemeContext] failed to reload theme from backend:', err);
+    }
+  }, [applyServerConfig]);
+
+  // 初始化
   useEffect(() => {
     const initTheme = async () => {
       try {
         const response = await themeApi.getConfig();
         if (response.status === 0 && response.data) {
-          const config = response.data;
-          
-          if (config.mode && ['light', 'dark'].includes(config.mode)) {
-            setModeState(config.mode as ThemeMode);
-          }
-          if (config.style && ['solid', 'glassmorphism'].includes(config.style)) {
-            setStyleState(config.style as ThemeStyle);
-          }
-          if (config.color && ['red', 'orchid', 'blue', 'green', 'orange', 'pink'].includes(config.color)) {
-            setColorState(config.color as ThemeColor);
-          }
-          if (config.background_image !== undefined) {
-            setBackgroundImageState(config.background_image);
-          }
-          if (config.blur_intensity !== undefined) {
-            setBlurIntensityState(config.blur_intensity);
-          }
-          if (config.card_opacity !== undefined && config.card_opacity !== null) {
-            setCardOpacityState(config.card_opacity);
-          }
-          if (config.icon_color && ['white', 'black', 'colored'].includes(config.icon_color)) {
-            setIconColorState(config.icon_color as IconColor);
-          }
-          if (config.theme_preset && ['default', 'shadcn'].includes(config.theme_preset)) {
-            setThemePresetState(config.theme_preset as ThemePreset);
-          }
-          // 语言：浏览器本地偏好优先（登录页切换后刷新不应被服务端默认中文覆盖）
-          const storedLang = readStoredLanguage();
-          if (storedLang) {
-            setLanguageState(storedLang);
-          } else if (config.language && ['zh-CN', 'en-US', 'ja-JP'].includes(config.language)) {
-            setLanguageState(config.language as Language);
-          }
-          if (config.sidebar_layout && (SIDEBAR_LAYOUTS as readonly string[]).includes(config.sidebar_layout)) {
-            setSidebarLayoutState(config.sidebar_layout as SidebarLayout);
-          }
-          if (typeof config.border_radius === 'number') {
-            setBorderRadiusState(clampInt(config.border_radius, BORDER_RADIUS_MIN, BORDER_RADIUS_MAX));
-          }
-          if (typeof config.ui_scale === 'number') {
-            setUiScaleState(clampInt(config.ui_scale, UI_SCALE_MIN, UI_SCALE_MAX));
-          }
-          if (typeof config.shadow_intensity === 'number') {
-            setShadowIntensityState(clampInt(config.shadow_intensity, SHADOW_INTENSITY_MIN, SHADOW_INTENSITY_MAX));
-          }
-          if (typeof config.sidebar_default_collapsed === 'boolean') {
-            setSidebarDefaultCollapsedState(config.sidebar_default_collapsed);
-          }
+          applyServerConfig(response.data);
+        } else {
+          loadFromSessionStorage();
         }
       } catch {
         loadFromSessionStorage();
@@ -426,23 +583,36 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     };
 
     initTheme();
-  }, []);
+  }, [applyServerConfig]);
 
   const loadFromSessionStorage = () => {
     try {
       const savedMode = sessionStorage.getItem('theme_mode') as ThemeMode;
-      const savedStyle = sessionStorage.getItem('theme_style') as ThemeStyle;
+      const savedStyle = parseThemeStyle(sessionStorage.getItem('theme_style'));
       const savedColor = sessionStorage.getItem('theme_color') as ThemeColor;
       const savedBg = sessionStorage.getItem('theme_bg');
       const savedBlur = sessionStorage.getItem('theme_blur');
+      const savedBackgroundBlur = readSessionInt(
+        'theme_background_blur',
+        BACKGROUND_BLUR_MIN,
+        BACKGROUND_BLUR_MAX,
+      );
       const savedCardOpacity = sessionStorage.getItem('theme_card_opacity');
       const savedIconColor = sessionStorage.getItem('theme_icon_color') as IconColor;
       const savedPreset = sessionStorage.getItem('theme_preset') as ThemePreset;
       const savedLanguage = readStoredLanguage();
       const savedSidebarLayout = sessionStorage.getItem('theme_sidebar_layout') as SidebarLayout;
-      const savedBorderRadius = readSessionInt('theme_border_radius', BORDER_RADIUS_MIN, BORDER_RADIUS_MAX);
+      const savedBorderRadius = readSessionInt(
+        'theme_border_radius',
+        BORDER_RADIUS_MIN,
+        BORDER_RADIUS_MAX,
+      );
       const savedUiScale = readSessionInt('theme_ui_scale', UI_SCALE_MIN, UI_SCALE_MAX);
-      const savedShadowIntensity = readSessionInt('theme_shadow_intensity', SHADOW_INTENSITY_MIN, SHADOW_INTENSITY_MAX);
+      const savedShadowIntensity = readSessionInt(
+        'theme_shadow_intensity',
+        SHADOW_INTENSITY_MIN,
+        SHADOW_INTENSITY_MAX,
+      );
       const savedSidebarCollapsed = readSessionBool('theme_sidebar_default_collapsed');
 
       if (savedMode) setModeState(savedMode);
@@ -450,11 +620,15 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       if (savedColor) setColorState(savedColor);
       if (savedBg) setBackgroundImageState(savedBg);
       if (savedBlur) setBlurIntensityState(parseInt(savedBlur, 10));
+      if (savedBackgroundBlur != null) setBackgroundBlurState(savedBackgroundBlur);
       if (savedCardOpacity) setCardOpacityState(parseInt(savedCardOpacity, 10));
       if (savedIconColor) setIconColorState(savedIconColor);
       if (savedPreset) setThemePresetState(savedPreset);
       if (savedLanguage) setLanguageState(savedLanguage);
-      if (savedSidebarLayout && (SIDEBAR_LAYOUTS as readonly string[]).includes(savedSidebarLayout)) {
+      if (
+        savedSidebarLayout &&
+        (SIDEBAR_LAYOUTS as readonly string[]).includes(savedSidebarLayout)
+      ) {
         setSidebarLayoutState(savedSidebarLayout);
       }
       if (savedBorderRadius != null) setBorderRadiusState(savedBorderRadius);
@@ -477,36 +651,39 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   // 批量应用所有主题设置到DOM - 合并为单一effect减少重绘
   useEffect(() => {
     if (!isInitialized) return;
-    
+
     // 批量DOM操作，使用requestAnimationFrame确保在同一帧内完成
     const applyTheme = () => {
       // 应用主题颜色
       applyThemeToDOM(themeColors);
-      
+
       // 应用模式
       sessionStorage.setItem('theme_mode', mode);
       document.documentElement.classList.toggle('dark', mode === 'dark');
-      
+
       // 应用风格
       sessionStorage.setItem('theme_style', style);
       document.documentElement.setAttribute('data-style', style);
-      
+
       // 保存其他设置到sessionStorage
       sessionStorage.setItem('theme_color', color);
       sessionStorage.setItem('theme_preset', themePreset);
-      
+      document.documentElement.setAttribute('data-preset', themePreset);
+
       if (backgroundImage) {
         sessionStorage.setItem('theme_bg', backgroundImage);
       } else {
         sessionStorage.removeItem('theme_bg');
       }
-      
+
       sessionStorage.setItem('theme_blur', blurIntensity.toString());
       document.documentElement.style.setProperty('--blur-intensity', `${blurIntensity}px`);
+      sessionStorage.setItem('theme_background_blur', String(backgroundBlur));
+      document.documentElement.style.setProperty('--background-blur', `${backgroundBlur}px`);
 
       sessionStorage.setItem('theme_card_opacity', cardOpacity.toString());
       document.documentElement.style.setProperty('--card-opacity', String(cardOpacity / 100));
-      
+
       sessionStorage.setItem('theme_icon_color', iconColor);
       document.documentElement.setAttribute('data-icon-color', iconColor);
 
@@ -521,14 +698,37 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       document.documentElement.style.fontSize = uiScale === 100 ? '' : `${uiScale}%`;
 
       sessionStorage.setItem('theme_shadow_intensity', String(shadowIntensity));
-      document.documentElement.style.setProperty('--shadow-strength', String(shadowIntensity / 100));
+      document.documentElement.style.setProperty(
+        '--shadow-strength',
+        String(shadowIntensity / 100),
+      );
 
-      sessionStorage.setItem('theme_sidebar_default_collapsed', sidebarDefaultCollapsed ? '1' : '0');
+      sessionStorage.setItem(
+        'theme_sidebar_default_collapsed',
+        sidebarDefaultCollapsed ? '1' : '0',
+      );
     };
-    
+
     // 使用requestAnimationFrame确保批量执行
     requestAnimationFrame(applyTheme);
-  }, [themeColors, mode, style, color, themePreset, backgroundImage, blurIntensity, cardOpacity, iconColor, sidebarLayout, borderRadius, uiScale, shadowIntensity, sidebarDefaultCollapsed, isInitialized]);
+  }, [
+    themeColors,
+    mode,
+    style,
+    color,
+    themePreset,
+    backgroundImage,
+    blurIntensity,
+    backgroundBlur,
+    cardOpacity,
+    iconColor,
+    sidebarLayout,
+    borderRadius,
+    uiScale,
+    shadowIntensity,
+    sidebarDefaultCollapsed,
+    isInitialized,
+  ]);
 
   // 保存到后端的统一方法
   const saveToBackend = useCallback(async (overrides?: Partial<typeof configRef.current>) => {
@@ -541,6 +741,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         icon_color: config.iconColor,
         background_image: config.backgroundImage,
         blur_intensity: config.blurIntensity,
+        background_blur: config.backgroundBlur,
         card_opacity: config.cardOpacity,
         theme_preset: config.themePreset,
         language: config.language,
@@ -556,114 +757,167 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // 包装的setter方法
-  const setMode = useCallback((newMode: ThemeMode, autoSave?: boolean) => {
-    setModeState(newMode);
-    if (autoSave && isInitialized) {
-      saveToBackend({ mode: newMode });
-    }
-  }, [isInitialized, saveToBackend]);
+  const setMode = useCallback(
+    (newMode: ThemeMode, autoSave?: boolean) => {
+      setModeState(newMode);
+      if (autoSave && isInitialized) {
+        saveToBackend({ mode: newMode });
+      }
+    },
+    [isInitialized, saveToBackend],
+  );
 
-  const setStyle = useCallback((newStyle: ThemeStyle, autoSave?: boolean) => {
-    setStyleState(newStyle);
-    if (autoSave && isInitialized) {
-      saveToBackend({ style: newStyle });
-    }
-  }, [isInitialized, saveToBackend]);
+  const setStyle = useCallback(
+    (newStyle: ThemeStyle, autoSave?: boolean) => {
+      setStyleState(newStyle);
+      if (autoSave && isInitialized) {
+        saveToBackend({ style: newStyle });
+      }
+    },
+    [isInitialized, saveToBackend],
+  );
 
-  const setColor = useCallback((newColor: ThemeColor, autoSave?: boolean) => {
-    setColorState(newColor);
-    if (autoSave && isInitialized) {
-      saveToBackend({ color: newColor });
-    }
-  }, [isInitialized, saveToBackend]);
+  const setColor = useCallback(
+    (newColor: ThemeColor, autoSave?: boolean) => {
+      setColorState(newColor);
+      if (autoSave && isInitialized) {
+        saveToBackend({ color: newColor });
+      }
+    },
+    [isInitialized, saveToBackend],
+  );
 
-  const setThemePreset = useCallback((newPreset: ThemePreset, autoSave?: boolean) => {
-    setThemePresetState(newPreset);
-    if (autoSave && isInitialized) {
-      saveToBackend({ themePreset: newPreset });
-    }
-  }, [isInitialized, saveToBackend]);
+  const setThemePreset = useCallback(
+    (newPreset: ThemePreset, autoSave?: boolean) => {
+      setThemePresetState(newPreset);
+      if (autoSave && isInitialized) {
+        saveToBackend({ themePreset: newPreset });
+      }
+    },
+    [isInitialized, saveToBackend],
+  );
 
-  const setIconColor = useCallback((newIconColor: IconColor, autoSave?: boolean) => {
-    setIconColorState(newIconColor);
-    if (autoSave && isInitialized) {
-      saveToBackend({ iconColor: newIconColor });
-    }
-  }, [isInitialized, saveToBackend]);
+  const setIconColor = useCallback(
+    (newIconColor: IconColor, autoSave?: boolean) => {
+      setIconColorState(newIconColor);
+      if (autoSave && isInitialized) {
+        saveToBackend({ iconColor: newIconColor });
+      }
+    },
+    [isInitialized, saveToBackend],
+  );
 
-  const setBackgroundImage = useCallback((url: string | null, autoSave?: boolean) => {
-    setBackgroundImageState(url);
-    if (autoSave && isInitialized) {
-      saveToBackend({ backgroundImage: url });
-    }
-  }, [isInitialized, saveToBackend]);
+  const setBackgroundImage = useCallback(
+    (url: string | null, autoSave?: boolean) => {
+      setBackgroundImageState(url);
+      if (autoSave && isInitialized) {
+        saveToBackend({ backgroundImage: url });
+      }
+    },
+    [isInitialized, saveToBackend],
+  );
 
-  const setBlurIntensity = useCallback((value: number, autoSave?: boolean) => {
-    setBlurIntensityState(value);
-    if (autoSave && isInitialized) {
-      saveToBackend({ blurIntensity: value });
-    }
-  }, [isInitialized, saveToBackend]);
+  const setBlurIntensity = useCallback(
+    (value: number, autoSave?: boolean) => {
+      setBlurIntensityState(value);
+      if (autoSave && isInitialized) {
+        saveToBackend({ blurIntensity: value });
+      }
+    },
+    [isInitialized, saveToBackend],
+  );
 
-  const setCardOpacity = useCallback((value: number, autoSave?: boolean) => {
-    setCardOpacityState(value);
-    if (autoSave && isInitialized) {
-      saveToBackend({ cardOpacity: value });
-    }
-  }, [isInitialized, saveToBackend]);
+  const setBackgroundBlur = useCallback(
+    (value: number, autoSave?: boolean) => {
+      const next = clampInt(value, BACKGROUND_BLUR_MIN, BACKGROUND_BLUR_MAX);
+      setBackgroundBlurState(next);
+      if (autoSave && isInitialized) {
+        saveToBackend({ backgroundBlur: next });
+      }
+    },
+    [isInitialized, saveToBackend],
+  );
 
-  const setLanguage = useCallback((lang: Language) => {
-    setLanguageState(lang);
-    try {
-      sessionStorage.setItem('theme_language', lang);
-      localStorage.setItem(LANGUAGE_STORAGE_KEY, lang);
-    } catch {
-      // ignore storage access errors
-    }
-    // 未登录时保存主题会 401，api 层会整页跳转登录页，导致语言被重置。
-    // 登录前只写本地存储；登录后再同步到后端。
-    if (isInitialized && getAuthToken()) {
-      saveToBackend({ language: lang });
-    }
-  }, [isInitialized, saveToBackend]);
+  const setCardOpacity = useCallback(
+    (value: number, autoSave?: boolean) => {
+      setCardOpacityState(value);
+      if (autoSave && isInitialized) {
+        saveToBackend({ cardOpacity: value });
+      }
+    },
+    [isInitialized, saveToBackend],
+  );
 
-  const setSidebarLayout = useCallback((layout: SidebarLayout, autoSave?: boolean) => {
-    setSidebarLayoutState(layout);
-    if (autoSave && isInitialized) {
-      saveToBackend({ sidebarLayout: layout });
-    }
-  }, [isInitialized, saveToBackend]);
+  const setLanguage = useCallback(
+    (lang: Language) => {
+      setLanguageState(lang);
+      try {
+        sessionStorage.setItem('theme_language', lang);
+        localStorage.setItem(LANGUAGE_STORAGE_KEY, lang);
+      } catch {
+        // ignore storage access errors
+      }
+      // 未登录时保存主题会 401，api 层会整页跳转登录页，导致语言被重置。
+      // 登录前只写本地存储；登录后再同步到后端。
+      if (isInitialized && getAuthToken()) {
+        saveToBackend({ language: lang });
+      }
+    },
+    [isInitialized, saveToBackend],
+  );
 
-  const setBorderRadius = useCallback((value: number, autoSave?: boolean) => {
-    const next = clampInt(value, BORDER_RADIUS_MIN, BORDER_RADIUS_MAX);
-    setBorderRadiusState(next);
-    if (autoSave && isInitialized) {
-      saveToBackend({ borderRadius: next });
-    }
-  }, [isInitialized, saveToBackend]);
+  const setSidebarLayout = useCallback(
+    (layout: SidebarLayout, autoSave?: boolean) => {
+      setSidebarLayoutState(layout);
+      if (autoSave && isInitialized) {
+        saveToBackend({ sidebarLayout: layout });
+      }
+    },
+    [isInitialized, saveToBackend],
+  );
 
-  const setUiScale = useCallback((value: number, autoSave?: boolean) => {
-    const next = clampInt(value, UI_SCALE_MIN, UI_SCALE_MAX);
-    setUiScaleState(next);
-    if (autoSave && isInitialized) {
-      saveToBackend({ uiScale: next });
-    }
-  }, [isInitialized, saveToBackend]);
+  const setBorderRadius = useCallback(
+    (value: number, autoSave?: boolean) => {
+      const next = clampInt(value, BORDER_RADIUS_MIN, BORDER_RADIUS_MAX);
+      setBorderRadiusState(next);
+      if (autoSave && isInitialized) {
+        saveToBackend({ borderRadius: next });
+      }
+    },
+    [isInitialized, saveToBackend],
+  );
 
-  const setShadowIntensity = useCallback((value: number, autoSave?: boolean) => {
-    const next = clampInt(value, SHADOW_INTENSITY_MIN, SHADOW_INTENSITY_MAX);
-    setShadowIntensityState(next);
-    if (autoSave && isInitialized) {
-      saveToBackend({ shadowIntensity: next });
-    }
-  }, [isInitialized, saveToBackend]);
+  const setUiScale = useCallback(
+    (value: number, autoSave?: boolean) => {
+      const next = clampInt(value, UI_SCALE_MIN, UI_SCALE_MAX);
+      setUiScaleState(next);
+      if (autoSave && isInitialized) {
+        saveToBackend({ uiScale: next });
+      }
+    },
+    [isInitialized, saveToBackend],
+  );
 
-  const setSidebarDefaultCollapsed = useCallback((value: boolean, autoSave?: boolean) => {
-    setSidebarDefaultCollapsedState(value);
-    if (autoSave && isInitialized) {
-      saveToBackend({ sidebarDefaultCollapsed: value });
-    }
-  }, [isInitialized, saveToBackend]);
+  const setShadowIntensity = useCallback(
+    (value: number, autoSave?: boolean) => {
+      const next = clampInt(value, SHADOW_INTENSITY_MIN, SHADOW_INTENSITY_MAX);
+      setShadowIntensityState(next);
+      if (autoSave && isInitialized) {
+        saveToBackend({ shadowIntensity: next });
+      }
+    },
+    [isInitialized, saveToBackend],
+  );
+
+  const setSidebarDefaultCollapsed = useCallback(
+    (value: boolean, autoSave?: boolean) => {
+      setSidebarDefaultCollapsedState(value);
+      if (autoSave && isInitialized) {
+        saveToBackend({ sidebarDefaultCollapsed: value });
+      }
+    },
+    [isInitialized, saveToBackend],
+  );
 
   // 把当前主题快照成后端 ThemeConfig 结构（用于保存预设）
   const getThemeConfig = useCallback((): ThemeConfig => {
@@ -675,6 +929,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       icon_color: c.iconColor,
       background_image: c.backgroundImage,
       blur_intensity: c.blurIntensity,
+      background_blur: c.backgroundBlur,
       card_opacity: c.cardOpacity,
       theme_preset: c.themePreset,
       language: c.language,
@@ -692,10 +947,14 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     if (config.mode && ['light', 'dark'].includes(config.mode)) {
       setModeState(config.mode as ThemeMode);
     }
-    if (config.style && ['solid', 'glassmorphism'].includes(config.style)) {
-      setStyleState(config.style as ThemeStyle);
+    const loadedStyle = parseThemeStyle(config.style);
+    if (loadedStyle) {
+      setStyleState(loadedStyle);
     }
-    if (config.color && ['red', 'orchid', 'blue', 'green', 'orange', 'pink'].includes(config.color)) {
+    if (
+      config.color &&
+      ['red', 'orchid', 'blue', 'green', 'orange', 'pink'].includes(config.color)
+    ) {
       setColorState(config.color as ThemeColor);
     }
     if (config.background_image !== undefined) {
@@ -703,6 +962,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     }
     if (typeof config.blur_intensity === 'number') {
       setBlurIntensityState(Math.max(0, Math.min(24, config.blur_intensity)));
+    }
+    if (typeof config.background_blur === 'number') {
+      setBackgroundBlurState(
+        clampInt(config.background_blur, BACKGROUND_BLUR_MIN, BACKGROUND_BLUR_MAX),
+      );
     }
     if (typeof config.card_opacity === 'number') {
       setCardOpacityState(Math.max(0, Math.min(100, config.card_opacity)));
@@ -722,7 +986,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         // ignore
       }
     }
-    if (config.sidebar_layout && (SIDEBAR_LAYOUTS as readonly string[]).includes(config.sidebar_layout)) {
+    if (
+      config.sidebar_layout &&
+      (SIDEBAR_LAYOUTS as readonly string[]).includes(config.sidebar_layout)
+    ) {
       setSidebarLayoutState(config.sidebar_layout as SidebarLayout);
     }
     if (typeof config.border_radius === 'number') {
@@ -732,7 +999,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       setUiScaleState(clampInt(config.ui_scale, UI_SCALE_MIN, UI_SCALE_MAX));
     }
     if (typeof config.shadow_intensity === 'number') {
-      setShadowIntensityState(clampInt(config.shadow_intensity, SHADOW_INTENSITY_MIN, SHADOW_INTENSITY_MAX));
+      setShadowIntensityState(
+        clampInt(config.shadow_intensity, SHADOW_INTENSITY_MIN, SHADOW_INTENSITY_MAX),
+      );
     }
     if (typeof config.sidebar_default_collapsed === 'boolean') {
       setSidebarDefaultCollapsedState(config.sidebar_default_collapsed);
@@ -742,18 +1011,64 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   // Context values
   const modeContext = useMemo(() => ({ mode, setMode }), [mode, setMode]);
   const styleContext = useMemo(() => ({ style, setStyle }), [style, setStyle]);
-  const colorContext = useMemo(() => ({ color, setColor, themePreset, setThemePreset }), [color, setColor, themePreset, setThemePreset]);
-  const backgroundContext = useMemo(() => ({ backgroundImage, setBackgroundImage, blurIntensity, setBlurIntensity, cardOpacity, setCardOpacity }), [backgroundImage, setBackgroundImage, blurIntensity, setBlurIntensity, cardOpacity, setCardOpacity]);
+  const colorContext = useMemo(
+    () => ({ color, setColor, themePreset, setThemePreset, primary: themeColors['--primary'] }),
+    [color, setColor, themePreset, setThemePreset, themeColors],
+  );
+  const backgroundContext = useMemo(
+    () => ({
+      backgroundImage,
+      setBackgroundImage,
+      blurIntensity,
+      setBlurIntensity,
+      backgroundBlur,
+      setBackgroundBlur,
+      cardOpacity,
+      setCardOpacity,
+    }),
+    [
+      backgroundImage,
+      setBackgroundImage,
+      blurIntensity,
+      setBlurIntensity,
+      backgroundBlur,
+      setBackgroundBlur,
+      cardOpacity,
+      setCardOpacity,
+    ],
+  );
   const iconColorContext = useMemo(() => ({ iconColor, setIconColor }), [iconColor, setIconColor]);
   const languageContext = useMemo(() => ({ language, setLanguage }), [language, setLanguage]);
-  const miscContext = useMemo(() => ({
-    sidebarLayout, setSidebarLayout,
-    borderRadius, setBorderRadius,
-    uiScale, setUiScale,
-    shadowIntensity, setShadowIntensity,
-    sidebarDefaultCollapsed, setSidebarDefaultCollapsed,
-  }), [sidebarLayout, setSidebarLayout, borderRadius, setBorderRadius, uiScale, setUiScale, shadowIntensity, setShadowIntensity, sidebarDefaultCollapsed, setSidebarDefaultCollapsed]);
-  const actionsContext = useMemo(() => ({ getThemeConfig, applyThemeConfig }), [getThemeConfig, applyThemeConfig]);
+  const miscContext = useMemo(
+    () => ({
+      sidebarLayout,
+      setSidebarLayout,
+      borderRadius,
+      setBorderRadius,
+      uiScale,
+      setUiScale,
+      shadowIntensity,
+      setShadowIntensity,
+      sidebarDefaultCollapsed,
+      setSidebarDefaultCollapsed,
+    }),
+    [
+      sidebarLayout,
+      setSidebarLayout,
+      borderRadius,
+      setBorderRadius,
+      uiScale,
+      setUiScale,
+      shadowIntensity,
+      setShadowIntensity,
+      sidebarDefaultCollapsed,
+      setSidebarDefaultCollapsed,
+    ],
+  );
+  const actionsContext = useMemo(
+    () => ({ getThemeConfig, applyThemeConfig, reloadTheme, resetThemeToDefaults }),
+    [getThemeConfig, applyThemeConfig, reloadTheme, resetThemeToDefaults],
+  );
 
   return (
     <ThemeModeContext.Provider value={modeContext}>
@@ -798,12 +1113,17 @@ export function useTheme() {
   return {
     mode: modeContext.mode,
     style: styleContext.style,
+    isGlass: styleContext.style !== 'solid',
+    isLuminous: styleContext.style === 'luminous',
+    isLiquid: styleContext.style === 'liquid',
     color: colorContext.color,
     backgroundImage: backgroundContext.backgroundImage,
     blurIntensity: backgroundContext.blurIntensity,
+    backgroundBlur: backgroundContext.backgroundBlur,
     cardOpacity: backgroundContext.cardOpacity,
     iconColor: iconColorContext.iconColor,
     themePreset: colorContext.themePreset,
+    primary: colorContext.primary,
     language: languageContext.language,
     sidebarLayout: miscContext.sidebarLayout,
     borderRadius: miscContext.borderRadius,
@@ -815,6 +1135,7 @@ export function useTheme() {
     setColor: colorContext.setColor,
     setBackgroundImage: backgroundContext.setBackgroundImage,
     setBlurIntensity: backgroundContext.setBlurIntensity,
+    setBackgroundBlur: backgroundContext.setBackgroundBlur,
     setCardOpacity: backgroundContext.setCardOpacity,
     setIconColor: iconColorContext.setIconColor,
     setThemePreset: colorContext.setThemePreset,
@@ -826,6 +1147,8 @@ export function useTheme() {
     setSidebarDefaultCollapsed: miscContext.setSidebarDefaultCollapsed,
     getThemeConfig: actionsContext.getThemeConfig,
     applyThemeConfig: actionsContext.applyThemeConfig,
+    reloadTheme: actionsContext.reloadTheme,
+    resetThemeToDefaults: actionsContext.resetThemeToDefaults,
   };
 }
 

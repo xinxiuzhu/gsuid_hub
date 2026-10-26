@@ -2,11 +2,12 @@
  * /ai-runtime — Agent 套件槽 / Hook / 关系温度 / 认知索引
  *
  * 后端：agent_kits_api.py
- * 四个接口全是 GET。密封槽空占用必须红字。
+ * 套件、单人关系、花名册都是 GET。花名册只对管理员开放。密封槽空占用必须红字。
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
+  Activity,
   AlertTriangle,
   Boxes,
   Globe,
@@ -18,21 +19,17 @@ import {
   ScanSearch,
   Search,
   Unplug,
+  Users,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { useLanguage } from '@/contexts/LanguageContext';
 import { PinnedPage } from '@/components/layout/PinnedPage';
-import { TabButtonGroup } from '@/components/ui/TabButtonGroup';
+import { TabButtonGroup, tabToolbarControlClass } from '@/components/ui/TabButtonGroup';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { GlassAlert } from '@/components/ui/glass-alert';
 import { CognitionAttachments } from '@/components/cognition/CognitionAttachments';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -65,8 +62,12 @@ import {
   type AgentKitSlot,
   type CognitionNode,
   type CognitionRebuildMountData,
+  type RelationshipListData,
+  type RelationshipListItem,
   type RelationshipViewData,
 } from '@/lib/api';
+import { GroupProfilePanel } from '@/pages/GroupProfilePage';
+import { AIOpsPanel } from '@/pages/AIOpsPage';
 import {
   isCognitionBackendMissing,
   isWorldHub,
@@ -74,16 +75,18 @@ import {
   pluginFromWorldRef,
 } from '@/lib/cognition';
 
-type TabId = 'slots' | 'hooks' | 'relationship' | 'cognition';
+type TabId = 'relationship' | 'slots' | 'hooks' | 'cognition' | 'group' | 'ops';
 
-const TAB_IDS: TabId[] = ['slots', 'hooks', 'relationship', 'cognition'];
+const TAB_IDS: TabId[] = ['relationship', 'slots', 'hooks', 'cognition', 'group', 'ops'];
 
 function isTabId(value: string | null): value is TabId {
   return value !== null && (TAB_IDS as string[]).includes(value);
 }
 
 function isBackendMissing(err: unknown): boolean {
-  return isCognitionBackendMissing(err) || /404/.test(err instanceof Error ? err.message : String(err));
+  return (
+    isCognitionBackendMissing(err) || /404/.test(err instanceof Error ? err.message : String(err))
+  );
 }
 
 function formatUnix(ts: number | undefined, empty: string): string {
@@ -94,13 +97,31 @@ function formatUnix(ts: number | undefined, empty: string): string {
   return date.toLocaleString();
 }
 
-function zoneBadgeVariant(
-  zone: string,
-): 'destructive' | 'secondary' | 'outline' | 'default' {
+function zoneBadgeVariant(zone: string): 'destructive' | 'secondary' | 'outline' | 'default' {
   if (zone === 'hostile' || zone === 'cold') return 'destructive';
   if (zone === 'distant') return 'secondary';
   if (zone === 'acquaintance') return 'outline';
   return 'default';
+}
+
+const ROSTER_PAGE_SIZE = 100;
+
+interface RosterQuery {
+  keyword: string;
+  botId: string;
+  offset: number;
+  reload: number;
+}
+
+function isAdminForbidden(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.includes('需要管理员') || /HTTP Error:\s*403/i.test(msg);
+}
+
+function formatDelta(delta: number | undefined, empty: string): string {
+  if (delta === undefined) return empty;
+  if (delta > 0) return `+${delta}`;
+  return String(delta);
 }
 
 function handleHref(node: CognitionNode): string | null {
@@ -111,7 +132,14 @@ export default function AIRuntimePage() {
   const { t } = useLanguage();
   const [searchParams, setSearchParams] = useSearchParams();
   const tabFromUrl = searchParams.get('tab');
-  const tab: TabId = isTabId(tabFromUrl) ? tabFromUrl : 'slots';
+  const tab: TabId = isTabId(tabFromUrl) ? tabFromUrl : 'relationship';
+  const refreshRef = useRef<(() => void) | null>(null);
+  const [panelLoading, setPanelLoading] = useState(false);
+  const bindRefresh = useCallback((fn: (() => void) | null, loading: boolean) => {
+    refreshRef.current = fn;
+    setPanelLoading(loading);
+  }, []);
+  const showRefresh = tab === 'slots' || tab === 'hooks' || tab === 'group';
 
   const setTab = (next: TabId) => {
     const nextParams = new URLSearchParams(searchParams);
@@ -121,18 +149,24 @@ export default function AIRuntimePage() {
 
   const tabs = useMemo(
     () => [
-      { value: 'slots', label: t('aiRuntime.tabs.slots'), icon: <Puzzle className="w-4 h-4" /> },
-      { value: 'hooks', label: t('aiRuntime.tabs.hooks'), icon: <Unplug className="w-4 h-4" /> },
       {
         value: 'relationship',
         label: t('aiRuntime.tabs.relationship'),
         icon: <Heart className="w-4 h-4" />,
       },
+      { value: 'slots', label: t('aiRuntime.tabs.slots'), icon: <Puzzle className="w-4 h-4" /> },
+      { value: 'hooks', label: t('aiRuntime.tabs.hooks'), icon: <Unplug className="w-4 h-4" /> },
       {
         value: 'cognition',
         label: t('aiRuntime.tabs.cognition'),
         icon: <ScanSearch className="w-4 h-4" />,
       },
+      {
+        value: 'group',
+        label: t('aiRuntime.tabs.group'),
+        icon: <Users className="w-4 h-4" />,
+      },
+      { value: 'ops', label: t('aiRuntime.tabs.ops'), icon: <Activity className="w-4 h-4" /> },
     ],
     [t],
   );
@@ -149,6 +183,17 @@ export default function AIRuntimePage() {
             </h1>
             <p className="text-muted-foreground mt-1">{t('aiRuntime.description')}</p>
           </div>
+          {showRefresh && (
+            <Button
+              variant="outline"
+              className={cn(tabToolbarControlClass, 'shrink-0 self-start sm:self-auto')}
+              disabled={panelLoading}
+              onClick={() => refreshRef.current?.()}
+            >
+              <RefreshCw className={cn('w-4 h-4', panelLoading && 'animate-spin')} />
+              {t('common.refresh')}
+            </Button>
+          )}
         </div>
       }
       toolbar={
@@ -160,10 +205,12 @@ export default function AIRuntimePage() {
         />
       }
     >
-      {tab === 'slots' && <SlotsPanel />}
-      {tab === 'hooks' && <HooksPanel />}
+      {tab === 'slots' && <SlotsPanel bindRefresh={bindRefresh} />}
+      {tab === 'hooks' && <HooksPanel bindRefresh={bindRefresh} />}
       {tab === 'relationship' && <RelationshipPanel />}
       {tab === 'cognition' && <CognitionPanel />}
+      {tab === 'group' && <GroupProfilePanel bindRefresh={bindRefresh} />}
+      {tab === 'ops' && <AIOpsPanel />}
     </PinnedPage>
   );
 }
@@ -172,14 +219,18 @@ function MissingBackendCard() {
   const { t } = useLanguage();
   return (
     <Card className="glass-card">
-      <CardContent className="p-6 text-sm text-muted-foreground">
+      <CardContent className="!p-6 text-sm text-muted-foreground">
         {t('aiRuntime.backendTooOld')}
       </CardContent>
     </Card>
   );
 }
 
-function SlotsPanel() {
+function SlotsPanel({
+  bindRefresh,
+}: {
+  bindRefresh: (fn: (() => void) | null, loading: boolean) => void;
+}) {
   const { t } = useLanguage();
   const [loading, setLoading] = useState(true);
   const [missing, setMissing] = useState(false);
@@ -208,6 +259,13 @@ function SlotsPanel() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    bindRefresh(() => {
+      void load();
+    }, loading);
+    return () => bindRefresh(null, false);
+  }, [bindRefresh, load, loading]);
+
   const sealedEmpty = slots.filter((s) => s.sealed && s.occupants.length === 0);
   const unhealthy = slots.filter((s) => !s.healthy);
 
@@ -215,35 +273,26 @@ function SlotsPanel() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
-          <Badge variant="secondary" className="max-w-full whitespace-normal">
-            {t('aiRuntime.slots.count', { count: slots.length })}
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <Badge variant="secondary" className="max-w-full whitespace-normal">
+          {t('aiRuntime.slots.count', { count: slots.length })}
+        </Badge>
+        {sealedEmpty.length > 0 && (
+          <Badge variant="destructive" className="max-w-full whitespace-normal">
+            {t('aiRuntime.slots.sealedEmptyCount', { count: sealedEmpty.length })}
           </Badge>
-          {sealedEmpty.length > 0 && (
-            <Badge variant="destructive" className="max-w-full whitespace-normal">
-              {t('aiRuntime.slots.sealedEmptyCount', { count: sealedEmpty.length })}
-            </Badge>
-          )}
-          {unhealthy.length > 0 && (
-            <Badge variant="outline" className="max-w-full whitespace-normal">
-              {t('aiRuntime.slots.unhealthyCount', { count: unhealthy.length })}
-            </Badge>
-          )}
-        </div>
-        <Button className="h-9 shrink-0 self-start sm:self-auto" variant="outline" onClick={() => void load()} disabled={loading}>
-          <RefreshCw className={cn('w-4 h-4', loading && 'animate-spin')} />
-          {t('common.refresh')}
-        </Button>
+        )}
+        {unhealthy.length > 0 && (
+          <Badge variant="outline" className="max-w-full whitespace-normal">
+            {t('aiRuntime.slots.unhealthyCount', { count: unhealthy.length })}
+          </Badge>
+        )}
       </div>
 
       {sealedEmpty.length > 0 && (
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center rounded-lg border border-destructive/40 bg-destructive/5 p-3">
-          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 text-sm text-destructive">
-            <AlertTriangle className="w-4 h-4 shrink-0" />
-            <span className="font-medium">{t('aiRuntime.slots.sealedEmptyHint')}</span>
-          </div>
-        </div>
+        <GlassAlert tone="danger" icon={AlertTriangle}>
+          <span className="font-medium">{t('aiRuntime.slots.sealedEmptyHint')}</span>
+        </GlassAlert>
       )}
 
       {loading ? (
@@ -254,7 +303,7 @@ function SlotsPanel() {
         </div>
       ) : slots.length === 0 ? (
         <Card className="glass-card">
-          <CardContent className="p-6 text-sm text-muted-foreground">
+          <CardContent className="!p-6 text-sm text-muted-foreground">
             {t('aiRuntime.slots.empty')}
           </CardContent>
         </Card>
@@ -265,20 +314,14 @@ function SlotsPanel() {
             return (
               <Card
                 key={slot.name}
-                className={cn(
-                  'glass-card',
-                  sealedEmptySlot && 'border-destructive/50',
-                )}
+                className={cn('glass-card', sealedEmptySlot && 'border-destructive/50')}
               >
                 <CardHeader className="pb-2">
                   <CardTitle className="flex items-center justify-between gap-2 text-base">
                     <span className="font-mono text-sm truncate">{slot.name}</span>
                     <div className="flex shrink-0 flex-wrap justify-end gap-1">
                       {slot.sealed && (
-                        <Badge
-                          variant="destructive"
-                          className="max-w-full whitespace-normal"
-                        >
+                        <Badge variant="destructive" className="max-w-full whitespace-normal">
                           {t('aiRuntime.slots.sealed')}
                         </Badge>
                       )}
@@ -335,7 +378,11 @@ function SlotsPanel() {
   );
 }
 
-function HooksPanel() {
+function HooksPanel({
+  bindRefresh,
+}: {
+  bindRefresh: (fn: (() => void) | null, loading: boolean) => void;
+}) {
   const { t } = useLanguage();
   const [loading, setLoading] = useState(true);
   const [missing, setMissing] = useState(false);
@@ -368,6 +415,13 @@ function HooksPanel() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    bindRefresh(() => {
+      void load();
+    }, loading);
+    return () => bindRefresh(null, false);
+  }, [bindRefresh, load, loading]);
+
   if (missing) return <MissingBackendCard />;
 
   const wiredEmpty = points.filter((p) => p.wired && p.owners.length === 0);
@@ -375,28 +429,22 @@ function HooksPanel() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
-          <Badge
-            variant={enabled ? 'default' : 'destructive'}
-            className="max-w-full whitespace-normal"
-          >
-            {enabled ? t('aiRuntime.hooks.enabled') : t('aiRuntime.hooks.disabled')}
-          </Badge>
-          <Badge variant="secondary" className="max-w-full whitespace-normal">
-            {t('aiRuntime.hooks.total', { count: total })}
-          </Badge>
-          <Badge variant="outline" className="max-w-full whitespace-normal">
-            {t('aiRuntime.hooks.wiredEmpty', { count: wiredEmpty.length })}
-          </Badge>
-          <Badge variant="outline" className="max-w-full whitespace-normal">
-            {t('aiRuntime.hooks.unwiredCount', { count: unwired.length })}
-          </Badge>
-        </div>
-        <Button className="h-9 shrink-0 self-start sm:self-auto" variant="outline" onClick={() => void load()} disabled={loading}>
-          <RefreshCw className={cn('w-4 h-4', loading && 'animate-spin')} />
-          {t('common.refresh')}
-        </Button>
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <Badge
+          variant={enabled ? 'default' : 'destructive'}
+          className="max-w-full whitespace-normal"
+        >
+          {enabled ? t('aiRuntime.hooks.enabled') : t('aiRuntime.hooks.disabled')}
+        </Badge>
+        <Badge variant="secondary" className="max-w-full whitespace-normal">
+          {t('aiRuntime.hooks.total', { count: total })}
+        </Badge>
+        <Badge variant="outline" className="max-w-full whitespace-normal">
+          {t('aiRuntime.hooks.wiredEmpty', { count: wiredEmpty.length })}
+        </Badge>
+        <Badge variant="outline" className="max-w-full whitespace-normal">
+          {t('aiRuntime.hooks.unwiredCount', { count: unwired.length })}
+        </Badge>
       </div>
 
       <p className="text-xs text-muted-foreground">{t('aiRuntime.hooks.hint')}</p>
@@ -469,6 +517,65 @@ function RelationshipPanel() {
   const [loading, setLoading] = useState(false);
   const [missing, setMissing] = useState(false);
   const [view, setView] = useState<RelationshipViewData | null>(null);
+  const [draftKeyword, setDraftKeyword] = useState('');
+  const [draftBot, setDraftBot] = useState('');
+  const [rosterQuery, setRosterQuery] = useState<RosterQuery>({
+    keyword: '',
+    botId: '',
+    offset: 0,
+    reload: 0,
+  });
+  const [roster, setRoster] = useState<RelationshipListData | null>(null);
+  const [rosterLoading, setRosterLoading] = useState(false);
+  const [rosterMissing, setRosterMissing] = useState(false);
+  const [rosterForbidden, setRosterForbidden] = useState(false);
+  const detailRef = useRef<HTMLDivElement | null>(null);
+  const pendingScroll = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      setRosterLoading(true);
+      try {
+        const data = await relationshipApi.list({
+          bot_id: rosterQuery.botId || undefined,
+          keyword: rosterQuery.keyword || undefined,
+          offset: rosterQuery.offset,
+          limit: ROSTER_PAGE_SIZE,
+        });
+        if (cancelled) return;
+        setRoster(data);
+        setRosterForbidden(false);
+        setRosterMissing(false);
+      } catch (e) {
+        if (cancelled) return;
+        if (isAdminForbidden(e)) {
+          setRosterForbidden(true);
+          setRosterMissing(false);
+          setRoster(null);
+        } else if (isBackendMissing(e)) {
+          console.warn('[AIRuntimePage] /api/relationship/list 不可用：请升级 gsuid_core。', e);
+          setRosterMissing(true);
+          setRosterForbidden(false);
+          setRoster(null);
+        } else {
+          toast.error(getApiErrorMessage(e, t('aiRuntime.loadFailed')));
+        }
+      } finally {
+        if (!cancelled) setRosterLoading(false);
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [rosterQuery, t]);
+
+  useEffect(() => {
+    if (!pendingScroll.current || !view) return;
+    pendingScroll.current = false;
+    detailRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [view]);
 
   const lookup = async () => {
     const uid = userId.trim();
@@ -496,6 +603,26 @@ function RelationshipPanel() {
       setLoading(false);
     }
   };
+
+  const openRow = (item: RelationshipListItem) => {
+    setUserId(item.user_id);
+    setBotId(item.bot_id);
+    setMissing(false);
+    setView(item);
+    pendingScroll.current = true;
+  };
+
+  const applyRosterFilter = () => {
+    setRosterQuery((prev) => ({
+      keyword: draftKeyword.trim(),
+      botId: draftBot.trim(),
+      offset: 0,
+      reload: prev.reload + 1,
+    }));
+  };
+
+  const pageCount = Math.max(1, Math.ceil((roster?.total ?? 0) / ROSTER_PAGE_SIZE));
+  const pageCurrent = Math.floor(rosterQuery.offset / ROSTER_PAGE_SIZE) + 1;
 
   if (missing) return <MissingBackendCard />;
 
@@ -538,78 +665,316 @@ function RelationshipPanel() {
             </div>
           </div>
           <Button className="h-9" onClick={() => void lookup()} disabled={loading}>
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+            {loading ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Search className="w-4 h-4" />
+            )}
             {t('aiRuntime.relationship.lookup')}
           </Button>
         </CardContent>
       </Card>
 
-      {view && !view.scored && (
-        <Card className="glass-card">
-          <CardContent className="p-6 text-sm text-muted-foreground">
-            {t('aiRuntime.relationship.unscored', { user: view.user_id })}
-          </CardContent>
-        </Card>
-      )}
+      <div ref={detailRef} className="space-y-4">
+        {view && !view.scored && (
+          <Card className="glass-card">
+            <CardContent className="!p-6 text-sm text-muted-foreground">
+              {t('aiRuntime.relationship.unscored', { user: view.user_id })}
+            </CardContent>
+          </Card>
+        )}
 
-      {view && view.scored && (
-        <Card className="glass-card">
-          <CardHeader>
-            <CardTitle className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <span className="font-mono text-base">{view.user_id}</span>
-              <Badge
-                variant={zoneBadgeVariant(view.zone)}
-                className="max-w-full whitespace-normal shrink-0"
-              >
-                {view.zone_label} · {view.zone}
-              </Badge>
-            </CardTitle>
-            <CardDescription>{view.line}</CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 text-sm">
-            <Field label={t('aiRuntime.relationship.score')} value={String(view.score ?? '—')} hint={t('aiRuntime.relationship.scoreHint')} />
-            <Field label={t('aiRuntime.relationship.lastReason')} value={view.last_reason || t('aiRuntime.relationship.none')} />
-            <Field
-              label={t('aiRuntime.relationship.lastDelta')}
-              value={view.last_delta !== undefined ? String(view.last_delta) : '—'}
-            />
-            <Field
-              label={t('aiRuntime.relationship.lastEval')}
-              value={formatUnix(view.last_eval_at, t('aiRuntime.relationship.none'))}
-            />
-            <Field
-              label={t('aiRuntime.relationship.daily')}
-              value={`${t('aiRuntime.relationship.gain')} ${view.daily_gain ?? 0} / ${t('aiRuntime.relationship.loss')} ${view.daily_loss ?? 0}`}
-            />
-            <Field label={t('aiRuntime.relationship.dailyYmd')} value={view.daily_ymd || t('aiRuntime.relationship.none')} />
-            <Field
-              label={t('aiRuntime.relationship.lastPositive')}
-              value={formatUnix(view.last_positive_interact_at, t('aiRuntime.relationship.none'))}
-            />
-            <Field
-              label={t('aiRuntime.relationship.interactions')}
-              value={String(view.interaction_count ?? 0)}
-            />
-            <Field
-              label={t('aiRuntime.relationship.botId')}
-              value={view.bot_id || t('aiRuntime.relationship.none')}
-            />
-          </CardContent>
-        </Card>
-      )}
+        {view && view.scored && (
+          <Card className="glass-card">
+            <CardHeader>
+              <CardTitle className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <span className="font-mono text-base">{view.user_id}</span>
+                <Badge
+                  variant={zoneBadgeVariant(view.zone)}
+                  className="max-w-full whitespace-normal shrink-0"
+                >
+                  {view.zone_label} · {view.zone}
+                </Badge>
+              </CardTitle>
+              <CardDescription>{view.line}</CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 text-sm">
+              <Field
+                label={t('aiRuntime.relationship.score')}
+                value={String(view.score ?? '—')}
+                hint={t('aiRuntime.relationship.scoreHint')}
+              />
+              <Field
+                label={t('aiRuntime.relationship.lastReason')}
+                value={view.last_reason || t('aiRuntime.relationship.none')}
+              />
+              <Field
+                label={t('aiRuntime.relationship.lastDelta')}
+                value={view.last_delta !== undefined ? String(view.last_delta) : '—'}
+              />
+              <Field
+                label={t('aiRuntime.relationship.lastEval')}
+                value={formatUnix(view.last_eval_at, t('aiRuntime.relationship.none'))}
+              />
+              <Field
+                label={t('aiRuntime.relationship.daily')}
+                value={`${t('aiRuntime.relationship.gain')} ${view.daily_gain ?? 0} / ${t('aiRuntime.relationship.loss')} ${view.daily_loss ?? 0}`}
+              />
+              <Field
+                label={t('aiRuntime.relationship.dailyYmd')}
+                value={view.daily_ymd || t('aiRuntime.relationship.none')}
+              />
+              <Field
+                label={t('aiRuntime.relationship.lastPositive')}
+                value={formatUnix(view.last_positive_interact_at, t('aiRuntime.relationship.none'))}
+              />
+              <Field
+                label={t('aiRuntime.relationship.interactions')}
+                value={String(view.interaction_count ?? 0)}
+              />
+              <Field
+                label={t('aiRuntime.relationship.botId')}
+                value={view.bot_id || t('aiRuntime.relationship.none')}
+              />
+            </CardContent>
+          </Card>
+        )}
+      </div>
+
+      <Card className="glass-card">
+        <CardHeader>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <CardTitle className="flex items-center gap-2">
+                <Users className="w-5 h-5" />
+                {t('aiRuntime.relationship.rosterTitle')}
+              </CardTitle>
+              <CardDescription>{t('aiRuntime.relationship.rosterDesc')}</CardDescription>
+            </div>
+            <Button
+              variant="outline"
+              className="shrink-0 self-start"
+              onClick={() => setRosterQuery((prev) => ({ ...prev, reload: prev.reload + 1 }))}
+              disabled={rosterLoading || rosterForbidden || rosterMissing}
+            >
+              <RefreshCw className={cn('w-4 h-4', rosterLoading && 'animate-spin')} />
+              {t('common.refresh')}
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {rosterForbidden ? (
+            <p className="text-sm text-muted-foreground">
+              {t('aiRuntime.relationship.rosterForbidden')}
+            </p>
+          ) : rosterMissing ? (
+            <p className="text-sm text-muted-foreground">
+              {t('aiRuntime.relationship.rosterMissing')}
+            </p>
+          ) : (
+            <>
+              <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+                <div className="space-y-1">
+                  <Label htmlFor="rel-roster-kw">{t('aiRuntime.relationship.rosterKeyword')}</Label>
+                  <Input
+                    id="rel-roster-kw"
+                    className="h-9"
+                    value={draftKeyword}
+                    placeholder={t('aiRuntime.relationship.rosterKeywordPlaceholder')}
+                    onChange={(e) => setDraftKeyword(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') applyRosterFilter();
+                    }}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="rel-roster-bot">{t('aiRuntime.relationship.botId')}</Label>
+                  <Input
+                    id="rel-roster-bot"
+                    className="h-9 font-mono"
+                    value={draftBot}
+                    placeholder={t('aiRuntime.relationship.rosterBotPlaceholder')}
+                    onChange={(e) => setDraftBot(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') applyRosterFilter();
+                    }}
+                  />
+                </div>
+                <Button className="h-9" onClick={applyRosterFilter} disabled={rosterLoading}>
+                  <Search className="w-4 h-4" />
+                  {t('aiRuntime.relationship.rosterSearch')}
+                </Button>
+              </div>
+
+              {roster && (
+                <p className="text-sm text-muted-foreground">
+                  {t('aiRuntime.relationship.rosterCount', { count: roster.total })}
+                </p>
+              )}
+
+              {rosterLoading && !roster ? (
+                <Skeleton className="h-40 w-full" />
+              ) : roster && roster.items.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  {t('aiRuntime.relationship.rosterEmpty')}
+                </p>
+              ) : roster ? (
+                <div className={cn('overflow-x-auto', rosterLoading && 'opacity-60')}>
+                  <Table className="w-max min-w-full whitespace-nowrap">
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="whitespace-nowrap">
+                          {t('aiRuntime.relationship.colUser')}
+                        </TableHead>
+                        <TableHead className="whitespace-nowrap">
+                          {t('aiRuntime.relationship.botId')}
+                        </TableHead>
+                        <TableHead className="whitespace-nowrap">
+                          {t('aiRuntime.relationship.score')}
+                        </TableHead>
+                        <TableHead className="whitespace-nowrap">
+                          {t('aiRuntime.relationship.colZone')}
+                        </TableHead>
+                        <TableHead className="whitespace-nowrap">
+                          {t('aiRuntime.relationship.colLine')}
+                        </TableHead>
+                        <TableHead className="whitespace-nowrap">
+                          {t('aiRuntime.relationship.lastReason')}
+                        </TableHead>
+                        <TableHead className="whitespace-nowrap">
+                          {t('aiRuntime.relationship.lastDelta')}
+                        </TableHead>
+                        <TableHead className="whitespace-nowrap">
+                          {t('aiRuntime.relationship.lastEval')}
+                        </TableHead>
+                        <TableHead className="whitespace-nowrap">
+                          {t('aiRuntime.relationship.daily')}
+                        </TableHead>
+                        <TableHead className="whitespace-nowrap">
+                          {t('aiRuntime.relationship.interactions')}
+                        </TableHead>
+                        <TableHead className="sr-only">{t('common.actions')}</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {roster.items.map((item) => (
+                        <TableRow
+                          key={`${item.bot_id}:${item.user_id}:${item.id}`}
+                          className={cn(
+                            view?.user_id === item.user_id &&
+                              view.bot_id === item.bot_id &&
+                              'bg-muted/40',
+                          )}
+                        >
+                          <TableCell>
+                            <div className="flex flex-nowrap items-center gap-2">
+                              <span className="whitespace-nowrap font-medium">
+                                {item.user_name || item.user_id}
+                              </span>
+                              {item.is_master && (
+                                <Badge variant="default" className="whitespace-nowrap">
+                                  {t('aiRuntime.relationship.master')}
+                                </Badge>
+                              )}
+                            </div>
+                            {item.user_name && item.user_name !== item.user_id && (
+                              <div className="font-mono text-[11px] text-muted-foreground">
+                                {item.user_id}
+                              </div>
+                            )}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap font-mono text-xs">
+                            {item.bot_id}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap font-medium">
+                            {item.score}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap">
+                            <Badge
+                              variant={zoneBadgeVariant(item.zone)}
+                              className="whitespace-nowrap"
+                            >
+                              {item.zone_label} · {item.zone}
+                            </Badge>
+                          </TableCell>
+                          <TableCell
+                            className="max-w-[16rem] truncate whitespace-nowrap text-xs"
+                            title={item.line}
+                          >
+                            {item.line}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap font-mono text-xs">
+                            {item.last_reason || t('aiRuntime.relationship.none')}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap">
+                            {formatDelta(item.last_delta, t('aiRuntime.relationship.none'))}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap text-xs">
+                            {formatUnix(item.last_eval_at, t('aiRuntime.relationship.none'))}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap text-xs">
+                            {t('aiRuntime.relationship.gain')} {item.daily_gain ?? 0} /{' '}
+                            {t('aiRuntime.relationship.loss')} {item.daily_loss ?? 0}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap">
+                            {item.interaction_count ?? 0}
+                          </TableCell>
+                          <TableCell>
+                            <Button variant="outline" className="h-8" onClick={() => openRow(item)}>
+                              {t('aiRuntime.relationship.viewRow')}
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              ) : null}
+
+              {roster && roster.total > ROSTER_PAGE_SIZE && (
+                <div className="flex items-center justify-end gap-2">
+                  <Button
+                    variant="outline"
+                    className="h-9"
+                    disabled={rosterQuery.offset === 0 || rosterLoading}
+                    onClick={() =>
+                      setRosterQuery((prev) => ({
+                        ...prev,
+                        offset: Math.max(0, prev.offset - ROSTER_PAGE_SIZE),
+                      }))
+                    }
+                  >
+                    {t('common.previousPage')}
+                  </Button>
+                  <span className="text-sm text-muted-foreground">
+                    {t('common.pageInfo', { current: pageCurrent, total: pageCount })}
+                  </span>
+                  <Button
+                    variant="outline"
+                    className="h-9"
+                    disabled={
+                      rosterQuery.offset + ROSTER_PAGE_SIZE >= roster.total || rosterLoading
+                    }
+                    onClick={() =>
+                      setRosterQuery((prev) => ({
+                        ...prev,
+                        offset: prev.offset + ROSTER_PAGE_SIZE,
+                      }))
+                    }
+                  >
+                    {t('common.nextPage')}
+                  </Button>
+                </div>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
 
-function Field({
-  label,
-  value,
-  hint,
-}: {
-  label: string;
-  value: string;
-  hint?: string;
-}) {
+function Field({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
     <div className="space-y-1">
       <p className="text-muted-foreground">{label}</p>
@@ -741,7 +1106,11 @@ function CognitionPanel() {
           <p className="text-xs text-muted-foreground">{t('aiRuntime.cognition.worldHint')}</p>
           <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
             <Button className="h-9" onClick={() => void search()} disabled={loading || rebuilding}>
-              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+              {loading ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Search className="w-4 h-4" />
+              )}
               {t('common.search')}
             </Button>
             <Button
@@ -750,7 +1119,11 @@ function CognitionPanel() {
               onClick={() => setRebuildOpen(true)}
               disabled={loading || rebuilding}
             >
-              {rebuilding ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+              {rebuilding ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4" />
+              )}
               {t('aiRuntime.cognition.rebuild')}
             </Button>
           </div>
@@ -763,16 +1136,28 @@ function CognitionPanel() {
           onValueChange={(v) => setKindFilter(v as typeof kindFilter)}
           className="w-full max-w-full"
           options={[
-            { value: 'all', label: t('aiRuntime.cognition.filterAll'), icon: <Layers className="w-4 h-4" /> },
-            { value: 'world', label: t('aiRuntime.cognition.filterWorld'), icon: <Globe className="w-4 h-4" /> },
-            { value: 'env', label: t('aiRuntime.cognition.filterEnv'), icon: <Boxes className="w-4 h-4" /> },
+            {
+              value: 'all',
+              label: t('aiRuntime.cognition.filterAll'),
+              icon: <Layers className="w-4 h-4" />,
+            },
+            {
+              value: 'world',
+              label: t('aiRuntime.cognition.filterWorld'),
+              icon: <Globe className="w-4 h-4" />,
+            },
+            {
+              value: 'env',
+              label: t('aiRuntime.cognition.filterEnv'),
+              icon: <Boxes className="w-4 h-4" />,
+            },
           ]}
         />
       )}
 
       {nodes && visibleNodes.length === 0 && (
         <Card className="glass-card">
-          <CardContent className="p-6 text-sm text-muted-foreground">
+          <CardContent className="!p-6 text-sm text-muted-foreground">
             {t('aiRuntime.cognition.empty')}
           </CardContent>
         </Card>
@@ -823,7 +1208,9 @@ function CognitionPanel() {
                     {node.as_of && <span>as_of={node.as_of}</span>}
                     {node.source && <span>source={node.source}</span>}
                     <span>decay={node.decay}</span>
-                    {node.handle && <span className="font-mono break-all">handle={node.handle}</span>}
+                    {node.handle && (
+                      <span className="font-mono break-all">handle={node.handle}</span>
+                    )}
                     {node.canon && (
                       <span className="font-mono break-all">
                         {t('aiRuntime.cognition.canon')}= {node.canon}

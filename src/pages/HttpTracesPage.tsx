@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/select';
 import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
+import { tabToolbarControlClass } from '@/components/ui/TabButtonGroup';
 import {
   RefreshCw,
   Calendar,
@@ -40,7 +41,7 @@ import { toast } from 'sonner';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { ConsolePanel, type LogEntry } from '@/components/ConsolePanel';
-import { PinnedPage } from '@/components/layout/PinnedPage';
+import { headerActionRowClass, PinnedPage } from '@/components/layout/PinnedPage';
 
 const METHOD_ALL = '__all__';
 const STATUS_ALL = '__all__';
@@ -116,7 +117,7 @@ function statusCodeClass(code: number | null): string {
 export default function HttpTracesPage() {
   const { t } = useLanguage();
   const { style } = useTheme();
-  const isGlass = style === 'glassmorphism';
+  const isGlass = style !== 'solid';
   const [traces, setTraces] = useState<HttpTraceItem[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [page, setPage] = useState(1);
@@ -330,19 +331,22 @@ export default function HttpTracesPage() {
       bodyClassName="space-y-4"
       header={
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div className="min-w-0 overflow-x-auto">
-            <h1 className="whitespace-nowrap text-3xl font-bold flex items-center gap-3">
+          <div className="min-w-0 sm:overflow-x-auto">
+            <h1 className="sm:whitespace-nowrap text-3xl font-bold flex items-center gap-3">
               <Globe className="w-8 h-8 shrink-0" />
               {t('httpTraces.title')}
             </h1>
-            <p className="whitespace-nowrap text-muted-foreground mt-1">
+            <p className="sm:whitespace-nowrap text-muted-foreground mt-1">
               {t('httpTraces.description')}
             </p>
           </div>
-          <div className="flex flex-wrap justify-end gap-2 self-end sm:self-auto items-center">
+          <div className={headerActionRowClass}>
             <Popover>
               <PopoverTrigger asChild>
-                <Button variant="outline" className={cn('justify-start text-left font-normal')}>
+                <Button
+                  variant="outline"
+                  className={cn(tabToolbarControlClass, 'justify-start text-left font-normal')}
+                >
                   <Calendar className="mr-2 h-4 w-4" />
                   {format(selectedDate, 'yyyy-MM-dd')}
                 </Button>
@@ -403,12 +407,12 @@ export default function HttpTracesPage() {
               variant="outline"
               onClick={() => fetchList(false)}
               disabled={isLoading}
-              className="whitespace-nowrap"
+              className={cn(tabToolbarControlClass, 'whitespace-nowrap')}
             >
               <RefreshCw className={cn('w-4 h-4 mr-2', isLoading && 'animate-spin')} />
               {t('logs.refresh')}
             </Button>
-            <div className="flex items-center gap-2 h-9 px-2">
+            <div className={cn(tabToolbarControlClass, 'flex items-center gap-2 px-2')}>
               <Switch
                 id="http-trace-auto-refresh"
                 checked={autoRefresh}
@@ -424,7 +428,7 @@ export default function HttpTracesPage() {
       toolbar={
         <div className="flex flex-wrap gap-2 items-center">
           <Select value={method} onValueChange={setMethod}>
-            <SelectTrigger className="h-9 w-[8.5rem]">
+            <SelectTrigger className={cn(tabToolbarControlClass, 'w-[8.5rem]')}>
               <SelectValue placeholder={t('httpTraces.filterMethod')} />
             </SelectTrigger>
             <SelectContent>
@@ -437,13 +441,13 @@ export default function HttpTracesPage() {
             </SelectContent>
           </Select>
           <Input
-            className="h-9 w-[14rem]"
+            className={cn(tabToolbarControlClass, 'w-[14rem]')}
             placeholder={t('httpTraces.filterPath')}
             value={pathPrefix}
             onChange={(e) => setPathPrefix(e.target.value)}
           />
           <Select value={statusClass} onValueChange={setStatusClass}>
-            <SelectTrigger className="h-9 w-[7.5rem]">
+            <SelectTrigger className={cn(tabToolbarControlClass, 'w-[7.5rem]')}>
               <SelectValue placeholder={t('httpTraces.filterStatusClass')} />
             </SelectTrigger>
             <SelectContent>
@@ -454,7 +458,7 @@ export default function HttpTracesPage() {
               <SelectItem value="5xx">{t('httpTraces.status5xx')}</SelectItem>
             </SelectContent>
           </Select>
-          <div className="flex items-center gap-2 h-9 px-1">
+          <div className={cn(tabToolbarControlClass, 'flex items-center gap-2 px-1')}>
             <Switch
               id="http-trace-only-errors"
               checked={onlyErrors}
@@ -465,7 +469,7 @@ export default function HttpTracesPage() {
             </Label>
           </div>
           <Input
-            className="h-9 w-[10rem] hidden xl:flex"
+            className={cn(tabToolbarControlClass, 'w-[10rem] hidden xl:flex')}
             placeholder={t('httpTraces.filterUser')}
             value={userId}
             onChange={(e) => setUserId(e.target.value)}

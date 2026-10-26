@@ -63,6 +63,8 @@ export interface TabButtonOption {
   value: string;
   label: string;
   icon?: React.ReactNode;
+  /** 文案右侧数量徽标。选中分段文字会被主题强制成浅色，徽标底要能衬住。 */
+  badge?: React.ReactNode;
   disabled?: boolean;
   /**
    * 可选：将该项升级为「主按钮 + 箭头下拉」。
@@ -87,11 +89,13 @@ interface TabButtonGroupProps {
   buttonClassName?: string;      // 作用在每个分段（含拆分外层）
   disabled?: boolean;            // 整组禁用
   collapseOnMobile?: boolean;    // <768px 收成「当前项 + ▾」下拉（/plugin-store）
+  singleRowOnMobile?: boolean;   // <768px 保持同行等分、超长文案省略（/plugins 分区切换）
+  size?: 'default' | 'sm' | 'line'; // sm：外壳 h-9；line：外壳 h-10。页面上方操作区用 default
 }
 
-// 同行对齐常量（导出）
-export const tabToolbarControlClass = 'h-11';
-export const tabToolbarIconButtonClass = 'h-11 w-11';
+// 页面上方操作区对齐常量（导出）——对齐默认分段的外壳，不是内钮
+export const tabToolbarControlClass = 'h-[calc(3rem+2px)]';
+export const tabToolbarIconButtonClass = 'h-[calc(3rem+2px)] w-[calc(3rem+2px)]';
 export const tabToolbarGroupWrapClass =
   'flex shrink-0 items-center [&_.shadow-safe]:!my-0 [&_.shadow-safe]:!py-0';
 ```
@@ -100,7 +104,7 @@ export const tabToolbarGroupWrapClass =
 
 | 形态 | 条件 | 外观 | 点击行为 |
 |------|------|------|----------|
-| **普通分段** | 无 `dropdown` 或 `items` 为空 | 图标 + 文案 | `onValueChange(option.value)` |
+| **普通分段** | 无 `dropdown` 或 `items` 为空 | 图标 + 文案 + 可选 `badge` | `onValueChange(option.value)` |
 | **拆分按钮** | 有 `dropdown.items` | 主区（图标+文案）\| ▾ | 见下表 |
 
 **拆分按钮点击语义（必须遵守，禁止再整钮触发菜单）：**
@@ -108,14 +112,14 @@ export const tabToolbarGroupWrapClass =
 | 用户操作 | 主 Tab | 二级筛选 |
 |----------|--------|----------|
 | **点击主区**（文字/左侧图标） | 选中该 `option.value` | 重置为 `allValue`（默认首项，通常 `__all__`） |
-| **点击右侧 ▾** | 打开菜单时切到该主 Tab（**保留**当前二级值） | 不变，直到用户点菜单项 |
+| **点击右侧 ▾** | 不切换主 Tab，只展开菜单 | 不变，直到用户点菜单项 |
 | **点菜单某子项** | 选中该主 Tab | `dropdown.onValueChange(item.value)` |
 | 当前子项 | — | 右侧 ✓ 标记（`DropdownMenuItem` + `Check`，非 RadioItem） |
 
 实现要点（源码契约）：
 
 - 主区与 ▾ 是**两个独立 button**，中间竖线分隔；外层容器统一 active 底色（`bg-primary`），**不吃 padding**（`buttonClassName` 的 `px-*` / `sm:px-*` 会被剥掉）。
-- 菜单用 `DropdownMenuItem`（非 `RadioItem`），左侧固定 **20×20 图标槽**，避免插件 PNG 被挤没。
+- 桌面端 ▾ 菜单用 `SearchableMenu`（打开即可打字筛选），左侧固定 **20×20 图标槽**，避免插件 PNG 被挤没。窄屏收起态仍是 `DropdownMenu`。
 - 子项 `icon` 推荐 `PluginIcon`（`h-4 w-4`）或 lucide；无图标时槽位仍占位，避免文字错位。
 - 「全部」哨兵用 **`__all__`**（与 Radix Select 空值约定一致，见 [§05 §5.5](./05-components-and-form-controls.md)），**禁止** `value=""`。
 
@@ -209,7 +213,7 @@ profiles.filter((p) => {
 
 ### 6.1.5 与 Input / Button 同行
 
-保持 **默认 group 高度**，同行控件 `h-11`：
+页面上方操作区和分组并排时，对齐外壳高度 `h-[calc(3rem+2px)]`（`tabToolbarControlClass`），不要只对齐内钮 `h-10`：
 
 ```tsx
 <div className="flex flex-wrap items-center gap-2">
@@ -226,18 +230,26 @@ profiles.filter((p) => {
 
 ### 6.1.6 注意事项与反模式
 
-1. **不要加 `w-full`**——默认 `inline-flex` 自适应（确需占满才 `className="w-full"`）。
+1. 桌面默认 `inline-flex` 自适应。窄屏（默认 &lt;768px）分段按文案长短撑满所在行，放不下再换行；分组要到 `lg`/`xl` 才和别的控件并排时传 `fillUntil`。确需在桌面也铺满才 `className="w-full"`。
 2. 按钮过多自动 `flex-wrap`。
 3. 主 Tab 的 `icon` 经 `asHoverIcon` 包装，外层固定 `w-[22px] h-[22px]`；图标本身 `w-4 h-4`。  
    **下拉子项的 icon 不走 asHoverIcon**，直接渲染（`PluginIcon` 的 `<img>` 必须能显示）。
-4. 外壳已带 `glass-card`，**不要再传主题分支 class**。
+4. 外壳用 `glass-card-flat`（跟主题的底色和描边，**不投影**，与普通按钮一致）。不要改回 `glass-card`，也不要再传主题分支 class。
 5. **禁止压矮**：不要 `h-8`/`h-9` 外壳或 `buttonClassName="h-8 py-0"`。详见 [§05 §5.4](./05-components-and-form-controls.md)。
 6. 与同行 `items-center` 时用 `tabToolbarGroupWrapClass` 包一层，压掉 `shadow-safe` 竖直 bleed。
 7. **禁止**为「带筛选的 Tab」再手搓一层 `Select` + 外挂 Button；应给对应 `TabButtonOption` 加 `dropdown`。
 8. **禁止**把整个拆分按钮都做成 `DropdownMenuTrigger`——用户期望点主区 = 全部，只有 ▾ 才展开。
 9. 二级 state 由**调用方**持有；列表刷新后若当前插件名消失，应自行回退 `__all__`（参考页已有 `useEffect`）。
 10. 分段过多、窄屏会撑破边距时，加 `collapseOnMobile`：&lt;768px 收成「当前项 + ▾」DropdownMenu（图标槽 + 文案 + ✓），桌面仍是分段。参考 `/plugin-store`。
+10b. **窄屏形态二选一，按「用户是否需要一眼看到全部分区」决定**：
+    - `collapseOnMobile` = 分段多、当前项之外的选项用不上（分类筛选类，如 `/plugin-store`）；
+    - `singleRowOnMobile` = 分区是这页的主导航，缺一个就找不到入口（如 `/plugins` 卡片头的 参数 / Plugin / SV）。此时 <768px 用 **grid 等分**（`grid-cols-N`）保持一行，隐藏图标、字号降到 `text-xs`、文案超长省略号。
+    两者互斥。`singleRowOnMobile` 必须配 `className="w-full sm:w-max"`。
+    **坑**：这里不能用 `flex-1` 等分——拆分按钮里 `whitespace-nowrap` 文案是 min-content 撑点，flex 下第一段会被顶到内容宽（实测 82/98/98），grid `minmax(0,1fr)` 才是真等分（93/93/93）。
 11. **拆分按钮不要靠 `buttonClassName` 传 `px-*`**。外层需要 `p-0`，内层主区 / ▾ 自带 padding。`twMerge` 无法用无前缀 `p-0` 覆盖 `sm:px-4`，会在图标前、箭头后各多出一截留空（`/ai-knowledge` 插件知识曾中招）。组件已剥掉拆分外层的 padding 类。
+12. **外壳宽度要跟着调用方的宽度类换挡**：`className="w-full sm:w-max"` 的本意是「窄屏铺满、桌面自适应」，组件会把宽度类（含 `sm:` 等响应式前缀）**同时套到外壳上**，外壳在 sm+ 变回 `max-content`。
+    **坑**：外壳若只认「有没有 `w-full`」就会永久通栏，在 `flex-wrap` 容器里占满整行，把同行兄弟挤到下一行——`/plugins` 卡片头的「插件自带页面」按钮曾因此掉到第二行（明明右边还有大片空白）。
+    宽度解析的纯逻辑在 `src/components/ui/tabGroupWidth.ts`（带单测），改宽度行为先看它。
 
 ### 6.1.7 全站使用面（按页面）
 
@@ -246,10 +258,10 @@ profiles.filter((p) => {
 | `/ai-capability-agents` | 来源 builtin / **plugin（下拉按插件）** / user | ✅ plugin 项 |
 | `/ai-knowledge` | 文本/图片知识；来源 **plugin（下拉按插件）** / manual | ✅ plugin 项 |
 | `/ai-tools` `/ai-meme` `/ai-budget` `/ai-approvals` | 主 Tab / 筛选 | 否 |
-| `/ai-statistics` `/ai-memory` `/ai-ops` `/ai-debug` | 多 Tab | 否 |
+| `/ai-statistics` `/ai-memory` `/ai-runtime` | 多 Tab（`/ai-runtime` 的运维页签内还有一层二级 TabButtonGroup） | 否 |
 | `/ai-kanban` `/batch-push` `/backup` `/database` `/git-update` 等 | 插件选择 / 类型筛选 | 否（`/git-update` 插件 Tab 用 `PluginIcon` 作 **主 icon**） |
 | `/plugin-store` | 全部/已装/更新/娱乐/工具 | `collapseOnMobile` |
-| `/plugins` | 本地插件选择 / 配置分组 | `collapseOnMobile` |
+| `/plugins` | 本地插件选择 / 配置分组 | 卡片头分区用 `singleRowOnMobile`（顶部分类组仍用 `collapseOnMobile`） |
 | `/themes` `/framework-config` 等 | 二级切换 | 否 |
 
 新增「主分类 + 再按实体细分」的筛选时，**优先复制 `/ai-capability-agents` 的 dropdown 写法**。
@@ -314,7 +326,7 @@ import { TagsInput } from '@/components/config/TagsInput';
 </div>
 ```
 
-特性：已添加标签以 chip 展示可点击删除；「更多」按钮打开 Popover 搜索已添加标签；搜索框回车添加新标签；提供 `options` 时 Popover 显示可选列表；支持复制标签文本。
+特性：已添加标签以 chip 展示可点击删除；「更多」按钮打开 Popover 搜索已添加标签；搜索框回车添加新标签；提供 `options` 时 Popover 显示可选列表，点选后列表保持打开以便连续添加；chip、「更多」和 +N 徽标用 `rounded-lg`（`var(--radius)`）跟随主题圆角；支持复制标签文本。
 
 ## 6.4 ChipGroup（MultiSelectChipGroup）—— 多选/单选 Chip
 
@@ -413,25 +425,23 @@ interface ChipGroupProps {
 | `configId` | `string` | 用于 updateConfigValue |
 | `onChange` | `(configId, fieldKey, value) => void` | 值变更回调 |
 | `excludeKeys?` | `string[]` | 排除的字段（已手动渲染的） |
-| `layout?` | `string[][]` | 自定义布局，同数组内字段并排 |
+
+字段名或标题含 `key` / `密钥` 的独占一行。分隔线和重复组也独占一行。其余字段按后端顺序排进三列（窄屏一列、`sm` 两列）。不要再传字段名单来排版。
 
 ### 用法
 
 ```tsx
 import { DynamicConfigPanel } from '@/components/config';
 
-// 自动渲染所有字段
 <DynamicConfigPanel config={cfg.config} configId={cfg.id} onChange={updateConfigValue} />
 
-// 自定义布局 + 排除已手动渲染的字段
 <DynamicConfigPanel
   config={aiConfig.config} configId={aiConfig.id} onChange={updateConfigValue}
   excludeKeys={['enable', 'enable_rerank', 'enable_memory', 'websearch_provider']}
-  layout={[['white_list', 'black_list']]}
 />
 ```
 
-自动特性：按 `title` 显示标签、按 `desc` 生成 Tooltip 帮助图标、按 key 匹配图标（api_key→Key、max→SlidersHorizontal、host→Globe）、未在 `layout` 指定的字段自动追加末尾。
+自动特性：按 `title` 显示标签、按 `desc` 生成 Tooltip 帮助图标、按 key 匹配图标（api_key→Key、max→SlidersHorizontal、host→Globe）。
 注意：ToggleRow/ChipGroup/Badge 提示等特殊 UI 字段应 `excludeKeys` 排除后手动渲染；type 映射逻辑与 `PluginsPage.tsx` 的 `convertConfigToFields` 一致。
 
 ## 6.6 ConfigField —— 通用配置字段
@@ -518,3 +528,24 @@ import { PluginIcon } from '@/components/ui/plugin-icon';
 - `summary` 渲染在收起态触发器**下方**，不要挪回标题与触发器之间：并排栅格里（能力档位 | 启用工具）多夹一行会把同行控件挤低。PopoverContent 走 portal 不占布局，收起/展开它都在原位。
 - 表单控件高度统一 `h-10`（Button / TagsInput / Input 默认即 h-10；**仓库 `SelectTrigger` 默认 `h-7`，并排时必须显式加 `h-10`**，否则与同行控件四档高度参差）。浮层内部搜索 / 筛选行用组件内常量 `CONTROL_H = h-9`。
 - 说明文字走 `help` prop（`LabelWithHelp`），不要在正文里堆段落。
+
+## 6.12 SearchableMenu —— 可搜索下拉
+
+位置：`src/components/ui/searchable-menu.tsx`。插件选择、工具页插件筛选、`TabButtonGroup` 的 ▾ 二级菜单共用这一份。
+
+- 打开后搜索框自动聚焦，按 `label` 筛选。
+- `appearance="outline"`：页头线框按钮，**不要**加 `role="combobox"`（全局输入框样式会改掉底色和边框）。
+- `appearance="field"`：与工具栏 `Select` 同高同色（`/ai-tools` 插件筛选）。
+- `width="trigger"` 时菜单与按钮同宽；`width="content"` 时至少 16rem（分段按钮的 ▾ 很窄，不能跟箭头等宽）。
+- 面板（`.searchable-menu-panel`）和页头描边按钮同一层玻璃：填充用 `--card / --card-opacity`，描边和高光跟毛玻璃 / 光感 / 液态各自的按钮走，模糊用 `--overlay-blur`。不要再在透明度上加一截。
+
+## 6.13 GlassAlert —— 主题玻璃提醒条 ★★
+
+位置：`src/components/ui/glass-alert.tsx`。所有页面级 / 卡片级 / 弹层内的**横幅提醒**统一用它，不要手搓 `border-amber-500/30 bg-amber-500/10` 这类平涂色块。
+
+- `tone`：`primary` / `info` / `success` / `warning` / `danger` / `accent` / `neutral`。色调通过 CSS 变量画进 `glass-card` 的 `::before`，边框由 `.glass-card.glass-alert-tint` 保留语义色，毛玻璃 / 光感 / 液态 / 纯色下都是同一套结构。
+- `icon` 默认 `AlertCircle`，可换成 `AlertTriangle` / `ShieldAlert` 等；`className` 可调 `p-3` / `p-4` / `mb-*`。
+- 纯文字提示用 `tone="neutral"`；加载失败等错误横幅用 `tone="danger"`。
+- shadcn `Alert` 已内置 `glass-card glass-alert` 与 `variant="warning"`，历史 `Alert` 调用直接换 variant 即可。
+- 若提醒条作为 `AlertDialogDescription asChild` 的直接子节点也没问题：`GlassAlert` 已 `forwardRef` 并透传 props。
+- 新增语义色时在 `src/index.css` 的 `.glass-alert-tint-*` 里同时定义 `--alert-tint` 与 `--alert-border`，否则边框会退回通用玻璃描边。

@@ -82,33 +82,27 @@ export function ConfigForm({
   };
 
   return (
-    <Card className={cn("glass-card", className)}>
+    <Card className={cn('glass-card', className)}>
       {(title || description || warningMessage) && (
         <CardHeader>
           {warningMessage && (
-            <Alert variant="destructive" className="mb-4 border-orange-500/50 bg-orange-500/10">
-              <AlertTriangle className="h-4 w-4 text-orange-500" />
-              <AlertDescription className="text-orange-600 dark:text-orange-400">
-                {warningMessage}
-              </AlertDescription>
+            <Alert variant="warning" className="mb-4">
+              <AlertTriangle className="h-4 w-4 text-amber-500" />
+              <AlertDescription>{warningMessage}</AlertDescription>
             </Alert>
           )}
           {title && <CardTitle>{title}</CardTitle>}
           {description && <CardDescription>{description}</CardDescription>}
         </CardHeader>
       )}
-      
+
       <CardContent className="space-y-6">
-        <div className={cn("grid gap-6", gridCols[columns])}>
+        <div className={cn('grid gap-6', gridCols[columns])}>
           {Object.entries(config).map(([key, field]) => {
             const isDivider = field.type === 'divider';
             return (
               <div key={key} className={isDivider ? 'col-span-full' : undefined}>
-                <ConfigField
-                  fieldKey={key}
-                  field={field}
-                  onChange={handleChange}
-                />
+                <ConfigField fieldKey={key} field={field} onChange={handleChange} />
               </div>
             );
           })}
@@ -116,10 +110,10 @@ export function ConfigForm({
 
         {showActions && (
           <div className="flex items-center justify-center pt-4 border-t border-border">
-            <Button 
-              onClick={handleSave} 
+            <Button
+              onClick={handleSave}
               disabled={!hasChanges || isSaving}
-              className="gap-2"
+              className="button-solid gap-2"
             >
               <CheckCircle className="w-4 h-4" />
               确认修改
@@ -148,16 +142,12 @@ export function ConfigGrid({ config, onChange, columns = 3, className }: ConfigG
   };
 
   return (
-    <div className={cn("grid gap-6", gridCols[columns], className)}>
+    <div className={cn('grid gap-6', gridCols[columns], className)}>
       {Object.entries(config).map(([key, field]) => {
         const isDivider = field.type === 'divider';
         return (
           <div key={key} className={isDivider ? 'col-span-full' : undefined}>
-            <ConfigField
-              fieldKey={key}
-              field={field}
-              onChange={onChange}
-            />
+            <ConfigField fieldKey={key} field={field} onChange={onChange} />
           </div>
         );
       })}

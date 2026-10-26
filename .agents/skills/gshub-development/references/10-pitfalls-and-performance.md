@@ -22,10 +22,12 @@ toast.error((mode === 'create' ? t('…createFailed') : t('…updateFailed')) + 
 
 ### P-3 一行筛选/表单控件高度不统一 ★★
 
-`Input`(h-10) + `SelectTrigger`(h-9) + `Button`(h-10) 并排不显式统一高度 → 高低不齐。
+`Input`(h-10) + `SelectTrigger`(h-7) + `Button`(h-10) 并排，又和 `TabButtonGroup` 外壳（内钮 h-10 + `p-1` + 边框）放在同一操作区 → 高低不齐。
 
-- **无 TabButtonGroup**：统一 `h-9`。
-- **有 TabButtonGroup**：保持默认 group 高度，同行用 `tabToolbarControlClass`（`h-11`）；**禁止**把 group 压成 `h-8`/`h-9` 矮版。
+- **页面上方操作区**（标题栏按钮、分段、搜索、下拉、筛选）统一外壳高度 `tabToolbarControlClass`（`h-[calc(3rem+2px)]`）。有没有分段都用这一档。
+- **禁止**只对齐内钮 `h-10`，也禁止把 group 压成 `h-8` 矮版。
+- 表格行内、分页、弹窗底栏、卡片内次要按钮保持紧凑。
+- 小节说明用 `LabelWithHelp` 放在标题右侧，不要写在标题下面。
 
 详见 [§05 §5.4](./05-components-and-form-controls.md)、[§06 §6.1](./06-reusable-component-catalog.md)。
 
@@ -633,6 +635,45 @@ const cs = (el: Element | null) =>
 **顺带**：`TagInput` / `TagsInput` 这类自绘容器（纯 `div`）不受上面那条 `!important` 影响，
 虚线 + 灰底可以直接用工具类；只有真正的 `input` / `[role=combobox]` 才要动 CSS。
 
+### P-37 Chrome `input[type=email]` + Twemoji COLR：打字卡死整页，密码框没事 ★★★
+
+**症状**：登录页邮箱框每敲一个字，整页卡住几百毫秒到数秒；密码框同样受控、同样 `glass-input`，打字却顺。
+
+**根因**（Chromium 已知问题，不是 React 重渲染）：
+
+1. 全局字体栈是 `'MiSans VF', 'Twemoji Mozilla', sans-serif`。Twemoji 是约 500KB 的 COLR 彩色 emoji 字体。
+2. `src/fonts.css` 若**没有** `unicode-range`，Chrome 会把整份 COLR 当成每个 ASCII 字符的候选 face。
+3. `input[type=email]`（以及 `url` / `tel`）走 Blink 单独的排版路径，**每个按键**都对字体栈里每一张 face 做逐字回退。扫一遍 COLR + MiSans 的几十个 unicode-range 切片，主线程就堵死。
+4. 密码框走 `PasswordInputType` + `-webkit-text-security: disc`，不跑这套回退，所以没事。邮箱/密码两边的 `setState` 重渲染成本是一样的，卡的是浏览器排版。
+
+**修法**（三处一起，缺一仍可能复发）：
+
+- Twemoji `@font-face` 必须带 emoji `unicode-range`（`src/fonts.css`），ASCII 不再进入候选。
+- `@layer base` 里 `input, textarea, select { font-family: 'MiSans VF', sans-serif; }`，表单控件不跟 emoji 字体；放 base 层，页面上的 `font-mono` 仍能覆盖。
+- 登录邮箱用 `type="text"` + `inputMode="email"` + `autoComplete="username"`，躲开 Chrome 的 email 排版路径。移动端仍出邮箱键盘。
+
+**禁止**：再给邮箱框写 `type="email"`「图个语义」。后端会校验格式；前端 `type=email` 的即时校验换来的是 Chromium 卡死。
+
+### P-38 光感/液态玻璃：侧栏宽度动画把整页 backdrop 逐帧重采样 ★★
+
+**症状**：`data-style="luminous"` / `"liquid"` 下侧栏收起、展开明显掉帧；页面上卡片多时更严重。纯色和普通毛玻璃轻很多。
+
+**根因**：
+
+1. 侧栏动画改的是 `width`（主内容区跟着重排）。`backdrop-filter` 的区域每帧都变，浏览器必须重采样背后的像素。
+2. 光感/液态在 blur 上又叠了 `saturate` / `contrast` / `brightness`，走不了 Chrome 的 blur 快速路径。液态的 SVG `feDisplacementMap`（`url(#liquid-glass-lens-filter)`）更重：大面积表面禁止挂这个滤镜，曲面靠倒角和 `::after`。光是把置换滤镜从每张卡上摘掉就要掉一帧。
+3. 默认壁纸如果再铺一层整屏 `backdrop-filter`，会垫在每张卡下面，变成嵌套 backdrop，侧栏一动就整屏重算。
+4. `will-change: width` 和常驻 `translateX(0)` / `transform-gpu` 会把玻璃所在元素变成 backdrop 根，宽度动画时整层失效。`width` 本身也不能合成。
+
+**修法**：
+
+- **不要**在动画中途切换 `backdrop-filter`（例如临时改成 `blur(8px)` 再恢复）。参数一变，玻璃的亮度/模糊就会跳一下，看起来是闪烁，而且切换本身要重铺所有层。
+- 光感/液态里会跟着布局移动的表面（卡片、侧栏、分段条、输入框、带 `backdrop-blur` 的小块）**不要** `backdrop-filter`。磨砂放在壁纸的静态 `filter: blur()` 上，表面只用半透明底、倒角和高光。见 `index.css` 末尾那条覆盖。
+- 弹层不参与侧栏宽度动画，可以保留自己的模糊。表格固定列要盖住滑过的文字，也不要关掉。
+- 不要整屏 `backdrop-filter`。普通毛玻璃仍可以用那层叠加。
+- 侧栏宽度过渡不要加 `will-change`，图标模式不要写 `transform: translateX(0)`。
+- 液态菜单项不要 `transition: all`。
+
 ## B. 性能优化
 
 ### B.1 图片
@@ -655,6 +696,8 @@ const cs = (el: Element | null) =>
 
 ### B.5 毛玻璃
 - `backdrop-filter` GPU 密集，避免叠在长列表每一项；低端设备/设置中可提供关闭选项。
+- **一块玻璃只糊一次。** 卡片 / 弹层的磨砂在 `::before`。嵌在里面的输入框、按钮、内层卡片不要再各自 `backdrop-filter`（打开配置页、抽屉滑入时会逐层重采样）。内层保留半透明底、描边和高光。视口外的 `.glass-card-grid > .glass-card` 用 `content-visibility: auto`。抽屉打开期间不要挂常驻 `will-change: transform`。
+- 光感/液态的布局表面不要 `backdrop-filter`，也不要在侧栏动画里切换滤镜（会闪）。壁纸用静态 `filter: blur()`。见 P-38。
 
 ### B.6 生产包体积与静态资源（gzip / 缓存 / 懒加载）★★
 
@@ -681,7 +724,8 @@ const cs = (el: Element | null) =>
 - [ ] 卡片网格加 `glass-card-grid`；glass-card 宿主无 `overflow-hidden`（P-19）
 - [ ] 标题 `text-3xl font-bold` + 内联图标 `w-8 h-8`（无背景容器）；副标题 `text-muted-foreground mt-1`（无 `text-sm`）
 - [ ] 卡片/弹窗一律 `className="glass-card"`（**不**用 `isGlass &&`）（[§03](./03-theme-and-styling.md)）
-- [ ] 筛选行高度齐平：无 Tab → `h-9`；有 TabButtonGroup → 默认高度 + 同行 `h-11`（`tabToolbarControlClass`），禁止压矮 group（[§05](./05-components-and-form-controls.md)）
+- [ ] 页面上方操作区（按钮、分段、搜索、下拉）同一外壳高度 `tabToolbarControlClass`（[§05](./05-components-and-form-controls.md)）
+- [ ] 字段 / 小节说明在标题右侧 `LabelWithHelp`，不写在标题下面；页面 H1 副标题仍在标题下方
 - [ ] `Select` 的"全部"用 `__all__`，非空串
 - [ ] 字段说明用 Tooltip + `HelpCircle`，不用独立文字行
 - [ ] 输入+下拉用 `InputWithDropdown`、标签用 `TagsInput`、切换用 `TabButtonGroup`、后端字段用 `DynamicConfigPanel`（不手搓）（[§06](./06-reusable-component-catalog.md)）
@@ -699,4 +743,5 @@ const cs = (el: Element | null) =>
 - [ ] portal 到 body 的内滚列表（Popover 等）：`max-height` 用真实变量 `--radix-popper-available-height`，滚轮挂**冒泡期** `stopPropagation`（捕获期会连原生滚动一起杀掉，P-33）
 - [ ] 浮层里的懒加载/懒初始化不靠 effect 读 ref：Radix `Portal` 晚一 tick 挂载，observer 永远建不起来（P-35）
 - [ ] 「变灰/冻结」用 `opacity` + 虚线边框，不用 `text-muted-foreground`；`input` / `[role=combobox]` 的边框背景要去 `index.css` 改（P-36）
+- [ ] 邮箱输入用 `type="text"` + `inputMode="email"`，Twemoji `@font-face` 必须带 emoji `unicode-range`（P-37）
 - [ ] `npx tsc --noEmit -p tsconfig.app.json` 不新增报错

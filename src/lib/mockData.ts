@@ -1,6 +1,17 @@
 // Mock data for dashboard
 // #TODO: Replace all mock data generators with actual API calls
 
+/**
+ * 本地日期的 yyyy-MM-dd。不能用 `toISOString().split('T')[0]` —— 那是 UTC 日期，
+ * 东八区在本地 00:00~07:59 之间会拿到「昨天」，于是月度序列的最后一天不再等于今天，
+ * 日历角标和「最近有数据的一天」也会跟着错一天。
+ */
+const localYmd = (d: Date): string =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+/** 供 mockServer 复用（同理不能用 toISOString，那是 UTC 日期） */
+export const mockLocalYmd = localYmd;
+
 // Bot list for selection
 export const mockBotList = [
   { id: 'all', name: '汇总' },
@@ -12,14 +23,16 @@ export const mockBotList = [
 // #TODO: Fetch key metrics from backend API
 export const generateKeyMetrics = (botId: string = 'all') => ({
   dau: Math.floor(Math.random() * 5000) + 1000, // Daily Active Users
-  dag: Math.floor(Math.random() * 800) + 200,   // Daily Active Groups
+  dag: Math.floor(Math.random() * 800) + 200, // Daily Active Groups
   retention: (Math.random() * 30 + 60).toFixed(1) + '%', // User Retention
-  newUsers: Math.floor(Math.random() * 300) + 50,  // New Users
+  newUsers: Math.floor(Math.random() * 300) + 50, // New Users
   churnedUsers: Math.floor(Math.random() * 100) + 20, // Churned Users
   mau: Math.floor(Math.random() * 20000) + 5000, // Monthly Active Users
-  dauMauRatio: (Math.random() * 0.3 + 0.1).toFixed(2), // DAU/MAU
-  mag: Math.floor(Math.random() * 3000) + 500,   // Monthly Active Groups
-  dagMagRatio: (Math.random() * 0.4 + 0.2).toFixed(2), // DAG/MAG
+  // 这两个字段后端给的是「剥掉 % 的百分数」（见 dashboard_api.py 的 rstrip('%')），
+  // 不是 0~1 的分数。生成 0.23 会让前端的 asPercent 补成 0.23%，比真值小两个数量级。
+  dauMauRatio: (Math.random() * 20 + 5).toFixed(2), // DAU/MAU, %
+  mag: Math.floor(Math.random() * 3000) + 500, // Monthly Active Groups
+  dagMagRatio: (Math.random() * 50 + 10).toFixed(2), // DAG/MAG, %
 });
 
 // #TODO: Fetch monthly command data from backend API
@@ -30,7 +43,7 @@ export const generateMonthlyCommandData = (botId: string = 'all') => {
     const date = new Date(now);
     date.setDate(date.getDate() - i);
     data.push({
-      date: date.toISOString().split('T')[0],
+      date: localYmd(date),
       sentCommands: Math.floor(Math.random() * 2000) + 500,
       receivedCommands: Math.floor(Math.random() * 1800) + 400,
       commandCalls: Math.floor(Math.random() * 3000) + 800,
@@ -48,7 +61,7 @@ export const generateMonthlyUserGroupData = (botId: string = 'all') => {
     const date = new Date(now);
     date.setDate(date.getDate() - i);
     data.push({
-      date: date.toISOString().split('T')[0],
+      date: localYmd(date),
       users: Math.floor(Math.random() * 3000) + 500,
       groups: Math.floor(Math.random() * 600) + 100,
     });
@@ -59,11 +72,23 @@ export const generateMonthlyUserGroupData = (botId: string = 'all') => {
 // #TODO: Fetch daily command usage data from backend API
 export const generateDailyCommandUsage = (botId: string = 'all', date: string) => {
   const commands = [
-    '/start', '/help', '/settings', '/info', '/status',
-    '/search', '/generate', '/translate', '/weather', '/news',
-    '/remind', '/note', '/chat', '/image', '/voice'
+    '/start',
+    '/help',
+    '/settings',
+    '/info',
+    '/status',
+    '/search',
+    '/generate',
+    '/translate',
+    '/weather',
+    '/news',
+    '/remind',
+    '/note',
+    '/chat',
+    '/image',
+    '/voice',
   ];
-  return commands.map(cmd => ({
+  return commands.map((cmd) => ({
     command: cmd,
     count: Math.floor(Math.random() * 500) + 50,
   }));
@@ -71,7 +96,14 @@ export const generateDailyCommandUsage = (botId: string = 'all', date: string) =
 
 // Command types for stacked bar charts
 export const commandTypes = [
-  '全天候', '删除自选', '加入自选', '我的自选', 'mr', '添加自选', '信息', '其他命令'
+  '全天候',
+  '删除自选',
+  '加入自选',
+  '我的自选',
+  'mr',
+  '添加自选',
+  '信息',
+  '其他命令',
 ];
 
 /**
@@ -85,13 +117,21 @@ export { COMMAND_COLOR_OVERRIDES as commandColors, getCommandColor } from '@/lib
 // Returns stacked data format for different commands per group
 export const generateDailyGroupCommandTriggers = (botId: string = 'all', date: string) => {
   const groups = [
-    '群组 A', '群组 B', '群组 C', '群组 D', '群组 E',
-    '群组 F', '群组 G', '群组 H', '群组 I', '群组 J'
+    '群组 A',
+    '群组 B',
+    '群组 C',
+    '群组 D',
+    '群组 E',
+    '群组 F',
+    '群组 G',
+    '群组 H',
+    '群组 I',
+    '群组 J',
   ];
-  
-  return groups.map(group => {
+
+  return groups.map((group) => {
     const data: Record<string, string | number> = { group };
-    commandTypes.forEach(cmd => {
+    commandTypes.forEach((cmd) => {
       data[cmd] = Math.floor(Math.random() * 10);
     });
     return data;
@@ -102,13 +142,20 @@ export const generateDailyGroupCommandTriggers = (botId: string = 'all', date: s
 // Returns stacked data format for different commands per user
 export const generateDailyPersonalCommandTriggers = (botId: string = 'all', date: string) => {
   const users = [
-    '748203226', '1098345874', '444835641', '44638563', '1449448054',
-    '378805055', '61974774', '280747437', '3064615021'
+    '748203226',
+    '1098345874',
+    '444835641',
+    '44638563',
+    '1449448054',
+    '378805055',
+    '61974774',
+    '280747437',
+    '3064615021',
   ];
-  
-  return users.map(user => {
+
+  return users.map((user) => {
     const data: Record<string, string | number> = { user };
-    commandTypes.forEach(cmd => {
+    commandTypes.forEach((cmd) => {
       data[cmd] = Math.floor(Math.random() * 5);
     });
     return data;
@@ -123,7 +170,7 @@ export const generateDailyActiveUsers = () => {
     const date = new Date(now);
     date.setDate(date.getDate() - i);
     data.push({
-      date: date.toISOString().split('T')[0],
+      date: localYmd(date),
       users: Math.floor(Math.random() * 500) + 100,
       newUsers: Math.floor(Math.random() * 50) + 10,
       sessions: Math.floor(Math.random() * 800) + 200,
@@ -138,7 +185,7 @@ export const generateMonthlyHeatmap = () => {
   const year = now.getFullYear();
   const month = now.getMonth();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
-  
+
   for (let day = 1; day <= daysInMonth; day++) {
     data.push({
       day,
@@ -170,11 +217,46 @@ export const generateRecentActivity = () => [
 // Mock database data
 export const generateMockDatabaseData = () => ({
   users: [
-    { id: 1, name: '张三', email: 'zhangsan@example.com', role: 'admin', status: 'active', createdAt: '2024-01-15' },
-    { id: 2, name: '李四', email: 'lisi@example.com', role: 'user', status: 'active', createdAt: '2024-02-20' },
-    { id: 3, name: '王五', email: 'wangwu@example.com', role: 'user', status: 'inactive', createdAt: '2024-03-10' },
-    { id: 4, name: '赵六', email: 'zhaoliu@example.com', role: 'moderator', status: 'active', createdAt: '2024-04-05' },
-    { id: 5, name: '钱七', email: 'qianqi@example.com', role: 'user', status: 'active', createdAt: '2024-05-12' },
+    {
+      id: 1,
+      name: '张三',
+      email: 'zhangsan@example.com',
+      role: 'admin',
+      status: 'active',
+      createdAt: '2024-01-15',
+    },
+    {
+      id: 2,
+      name: '李四',
+      email: 'lisi@example.com',
+      role: 'user',
+      status: 'active',
+      createdAt: '2024-02-20',
+    },
+    {
+      id: 3,
+      name: '王五',
+      email: 'wangwu@example.com',
+      role: 'user',
+      status: 'inactive',
+      createdAt: '2024-03-10',
+    },
+    {
+      id: 4,
+      name: '赵六',
+      email: 'zhaoliu@example.com',
+      role: 'moderator',
+      status: 'active',
+      createdAt: '2024-04-05',
+    },
+    {
+      id: 5,
+      name: '钱七',
+      email: 'qianqi@example.com',
+      role: 'user',
+      status: 'active',
+      createdAt: '2024-05-12',
+    },
   ],
   products: [
     { id: 1, name: '商品A', price: 99.99, stock: 150, category: '电子产品', status: 'available' },
@@ -209,7 +291,12 @@ export const generatePluginConfigs = () => [
     description: '配置文件存储',
     enabled: true,
     config: {
-      provider: { type: 'select', label: '存储提供商', value: 'local', options: ['local', 's3', 'oss', 'cos'] },
+      provider: {
+        type: 'select',
+        label: '存储提供商',
+        value: 'local',
+        options: ['local', 's3', 'oss', 'cos'],
+      },
       max_file_size: { type: 'number', label: '最大文件大小 (MB)', value: 10 },
       allowed_types: { type: 'list', label: '允许的文件类型', value: ['jpg', 'png', 'pdf', 'doc'] },
       upload_path: { type: 'text', label: '上传路径', value: '/uploads' },
@@ -234,7 +321,12 @@ export const generatePluginConfigs = () => [
     enabled: true,
     config: {
       cron_expression: { type: 'text', label: 'Cron 表达式', value: '0 0 * * *' },
-      timezone: { type: 'select', label: '时区', value: 'Asia/Shanghai', options: ['Asia/Shanghai', 'UTC', 'America/New_York', 'Europe/London'] },
+      timezone: {
+        type: 'select',
+        label: '时区',
+        value: 'Asia/Shanghai',
+        options: ['Asia/Shanghai', 'UTC', 'America/New_York', 'Europe/London'],
+      },
       start_date: { type: 'date', label: '开始日期', value: '2024-01-01' },
       max_retries: { type: 'number', label: '最大重试', value: 5 },
     },
@@ -259,8 +351,18 @@ export const generateLogs = () => {
   const sources = ['api', 'auth', 'database', 'scheduler', 'email'];
   const messages = {
     info: ['Request completed successfully', 'User logged in', 'Cache refreshed', 'Task scheduled'],
-    warn: ['High memory usage detected', 'Rate limit approaching', 'Deprecated API called', 'Slow query detected'],
-    error: ['Database connection failed', 'Authentication error', 'File not found', 'Timeout exceeded'],
+    warn: [
+      'High memory usage detected',
+      'Rate limit approaching',
+      'Deprecated API called',
+      'Slow query detected',
+    ],
+    error: [
+      'Database connection failed',
+      'Authentication error',
+      'File not found',
+      'Timeout exceeded',
+    ],
     debug: ['Processing request', 'Query executed', 'Cache hit', 'Session validated'],
   };
 
@@ -280,7 +382,10 @@ export const generateLogs = () => {
       source,
       message,
       timestamp: time.toISOString(),
-      details: level === 'error' ? { stack: 'Error: ' + message + '\n    at Function.execute (/app/src/index.ts:42:15)' } : undefined,
+      details:
+        level === 'error'
+          ? { stack: 'Error: ' + message + '\n    at Function.execute (/app/src/index.ts:42:15)' }
+          : undefined,
     });
   }
 
@@ -309,9 +414,24 @@ export const generateFileTree = (): FileTreeNode[] => [
         path: 'data/config',
         type: 'folder',
         children: [
-          { id: 'data-config-settings', name: 'settings.json', path: 'data/config/settings.json', type: 'file' },
-          { id: 'data-config-users', name: 'users.json', path: 'data/config/users.json', type: 'file' },
-          { id: 'data-config-plugins', name: 'plugins.json', path: 'data/config/plugins.json', type: 'file' },
+          {
+            id: 'data-config-settings',
+            name: 'settings.json',
+            path: 'data/config/settings.json',
+            type: 'file',
+          },
+          {
+            id: 'data-config-users',
+            name: 'users.json',
+            path: 'data/config/users.json',
+            type: 'file',
+          },
+          {
+            id: 'data-config-plugins',
+            name: 'plugins.json',
+            path: 'data/config/plugins.json',
+            type: 'file',
+          },
         ],
       },
       {
@@ -322,7 +442,12 @@ export const generateFileTree = (): FileTreeNode[] => [
         children: [
           { id: 'data-logs-app', name: 'app.log', path: 'data/logs/app.log', type: 'file' },
           { id: 'data-logs-error', name: 'error.log', path: 'data/logs/error.log', type: 'file' },
-          { id: 'data-logs-access', name: 'access.log', path: 'data/logs/access.log', type: 'file' },
+          {
+            id: 'data-logs-access',
+            name: 'access.log',
+            path: 'data/logs/access.log',
+            type: 'file',
+          },
         ],
       },
       {
@@ -341,7 +466,13 @@ export const generateFileTree = (): FileTreeNode[] => [
         path: 'data/cache',
         type: 'folder',
         children: [
-          { id: 'data-cache-temp', name: 'temp', path: 'data/cache/temp', type: 'folder', children: [] },
+          {
+            id: 'data-cache-temp',
+            name: 'temp',
+            path: 'data/cache/temp',
+            type: 'folder',
+            children: [],
+          },
         ],
       },
     ],
@@ -358,8 +489,18 @@ export const generateFileTree = (): FileTreeNode[] => [
         path: 'plugins/email-service',
         type: 'folder',
         children: [
-          { id: 'plugins-email-config', name: 'config.json', path: 'plugins/email-service/config.json', type: 'file' },
-          { id: 'plugins-email-main', name: 'main.py', path: 'plugins/email-service/main.py', type: 'file' },
+          {
+            id: 'plugins-email-config',
+            name: 'config.json',
+            path: 'plugins/email-service/config.json',
+            type: 'file',
+          },
+          {
+            id: 'plugins-email-main',
+            name: 'main.py',
+            path: 'plugins/email-service/main.py',
+            type: 'file',
+          },
         ],
       },
       {
@@ -368,7 +509,12 @@ export const generateFileTree = (): FileTreeNode[] => [
         path: 'plugins/storage',
         type: 'folder',
         children: [
-          { id: 'plugins-storage-config', name: 'config.json', path: 'plugins/storage/config.json', type: 'file' },
+          {
+            id: 'plugins-storage-config',
+            name: 'config.json',
+            path: 'plugins/storage/config.json',
+            type: 'file',
+          },
         ],
       },
     ],
@@ -385,8 +531,18 @@ export const generateFileTree = (): FileTreeNode[] => [
         path: 'static/images',
         type: 'folder',
         children: [
-          { id: 'static-images-logo', name: 'logo.png', path: 'static/images/logo.png', type: 'file' },
-          { id: 'static-images-favicon', name: 'ICON.png', path: 'static/images/ICON.png', type: 'file' },
+          {
+            id: 'static-images-logo',
+            name: 'logo.png',
+            path: 'static/images/logo.png',
+            type: 'file',
+          },
+          {
+            id: 'static-images-favicon',
+            name: 'ICON.png',
+            path: 'static/images/ICON.png',
+            type: 'file',
+          },
         ],
       },
       {
@@ -415,12 +571,12 @@ export interface BackupFile {
 export const generateBackupList = (): BackupFile[] => {
   const backups: BackupFile[] = [];
   const now = new Date();
-  
+
   for (let i = 0; i < 10; i++) {
     const date = new Date(now);
     date.setDate(date.getDate() - i);
     date.setHours(2, 0, 0, 0);
-    
+
     backups.push({
       id: `backup-${i}`,
       filename: `backup_${date.toISOString().split('T')[0]}_02-00.zip`,
@@ -429,6 +585,6 @@ export const generateBackupList = (): BackupFile[] => {
       status: i === 0 && Math.random() > 0.8 ? 'in_progress' : 'completed',
     });
   }
-  
+
   return backups;
 };

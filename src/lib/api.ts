@@ -18,6 +18,98 @@ import { demoPlaceholderImage, demoPluginIcon, demoMemeImageUrl } from './demoMo
 // Can be customized by user in settings (e.g., 127.0.0.1:8765)
 let API_BASE = '';
 
+/** 去掉首尾空白和末尾斜杠，避免和 `/api/...` 拼成 `//api`。 */
+export const THEME_STORAGE_KEYS = [
+  'theme_mode',
+  'theme_style',
+  'theme_color',
+  'theme_bg',
+  'theme_blur',
+  'theme_background_blur',
+  'theme_card_opacity',
+  'theme_icon_color',
+  'theme_preset',
+  'theme_sidebar_layout',
+  'theme_border_radius',
+  'theme_ui_scale',
+  'theme_shadow_intensity',
+  'theme_sidebar_default_collapsed',
+] as const;
+
+/** 清除 sessionStorage 中缓存的主题配置，避免跨后端残留 */
+export function clearThemeSessionStorage(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    for (const key of THEME_STORAGE_KEYS) {
+      sessionStorage.removeItem(key);
+    }
+  } catch {
+    // ignore storage access errors
+  }
+}
+
+/** 校验是否为合法的裸 IPv4 地址（4 段 0-255 数字） */
+export function isIPv4Address(host: string): boolean {
+  const parts = host.split('.');
+  if (parts.length !== 4) return false;
+  return parts.every((p) => {
+    if (!/^\d+$/.test(p)) return false;
+    const n = Number(p);
+    return n >= 0 && n <= 255;
+  });
+}
+
+/** 校验是否为合法的 IPv6 地址 */
+export function isIPv6Address(host: string): boolean {
+  const clean = host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
+  return clean.includes(':') && /^[0-9a-fA-F:]+$/.test(clean);
+}
+
+/**
+ * 格式化并归一化用户输入的自定义 API Host：
+ * - 纯 IP（IPv4 / IPv6）且未携带端口时，默认补上 `:8765`
+ * - 已携带其他端口、或已是 8765 端口、或是常规域名/网页地址（非裸 IP），均不补端口
+ * - 去掉末尾斜杠
+ * - 若无协议，默认以 `http://` 补全；若是 `https://` 则保留
+ */
+export function normalizeCustomApiHost(host: string): string {
+  const raw = host.trim();
+  if (!raw) return '';
+
+  let protocol = 'http://';
+  let rest = raw;
+  const protocolMatch = raw.match(/^([a-z][a-z0-9+.-]*:\/\/)/i);
+  if (protocolMatch) {
+    protocol = protocolMatch[1];
+    rest = raw.slice(protocolMatch[0].length);
+  }
+
+  // 去掉 rest 末尾斜杠
+  rest = rest.replace(/\/+$/, '');
+  if (!rest) return '';
+
+  // 裸 IPv6 若无中括号包裹，补充中括号以便 URL 正确解析
+  if (!rest.startsWith('[') && isIPv6Address(rest)) {
+    rest = `[${rest}]`;
+  }
+
+  try {
+    const parsed = new URL(`${protocol}${rest}`);
+    const hostname = parsed.hostname;
+    const hasPort = Boolean(parsed.port);
+
+    // 纯 IP（IPv4 或 IPv6）且没有端口时，默认补上 8765 端口
+    const isBareIp = isIPv4Address(hostname) || isIPv6Address(hostname);
+    if (isBareIp && !hasPort) {
+      parsed.port = '8765';
+    }
+
+    return parsed.toString().replace(/\/+$/, '');
+  } catch {
+    return (protocolMatch ? raw : `${protocol}${raw}`).replace(/\/+$/, '');
+  }
+}
+
 // ===================
 // Auth encryption support
 // ===================
@@ -28,14 +120,46 @@ let authEncryptionSupported: boolean | null = null;
 
 // Initialize API_BASE from localStorage
 if (typeof window !== 'undefined') {
-  const stored = localStorage.getItem('custom_api_host');
+  let initial = '';
+  try {
+    const searchParams = new URLSearchParams(window.location.search);
+    const fromSearch = searchParams.get('api_host') || searchParams.get('host');
+    if (fromSearch) {
+      initial = fromSearch;
+    } else if (window.location.hash.includes('?')) {
+      const hashQuery = window.location.hash.slice(window.location.hash.indexOf('?'));
+      const hashParams = new URLSearchParams(hashQuery);
+      const fromHash = hashParams.get('api_host') || hashParams.get('host');
+      if (fromHash) initial = fromHash;
+    }
+  } catch {
+    // ignore URL parse errors
+  }
+  const stored = initial || localStorage.getItem('custom_api_host');
   if (stored) {
-    API_BASE = stored;
+    API_BASE = normalizeCustomApiHost(stored);
+    if (API_BASE !== stored) {
+      if (API_BASE) localStorage.setItem('custom_api_host', API_BASE);
+      else localStorage.removeItem('custom_api_host');
+    }
   }
 }
 
 export function getCustomApiHost(): string {
   return API_BASE;
+}
+
+/**
+ * 后端存的是 `/api/...` 这种站内路径。`<img>` 不走 fetch，自定义 Host 时要自己补上，
+ * 否则浏览器会向页面源（dev 下是 Vite）要这张图。
+ */
+export function resolveApiAssetUrl(url: string | null | undefined): string {
+  const value = (url ?? '').trim();
+  const host = getCustomApiHost();
+  if (!value || !host) return value;
+  if (/^(https?:|data:|blob:)/i.test(value)) return value;
+  if (!value.startsWith('/api/')) return value;
+  return `${host}${value}`;
 }
 
 // Get the login path based on the current base URL (supports both dev and production paths)
@@ -47,14 +171,18 @@ export function getLoginPath(): string {
 }
 
 export function setCustomApiHost(host: string): void {
-  API_BASE = host;
+  const normalized = normalizeCustomApiHost(host);
+  if (normalized !== API_BASE) {
+    clearThemeSessionStorage();
+  }
+  API_BASE = normalized;
   // Update the api instance's baseUrl
-  api.setBaseUrl(host);
+  api.setBaseUrl(normalized);
   // 切换后端地址时，把认证加密相关缓存清掉，避免复用旧公钥
   clearAuthPubkeyCache();
   authEncryptionSupported = null;
-  if (host) {
-    localStorage.setItem('custom_api_host', host);
+  if (normalized) {
+    localStorage.setItem('custom_api_host', normalized);
   } else {
     localStorage.removeItem('custom_api_host');
   }
@@ -1182,6 +1310,33 @@ export interface OpenAIConfigData {
    * secret；留空即无密钥摘要（标识空间小时可被枚举反查，只起混淆作用）。
    */
   end_user_id_salt?: string;
+  /**
+   * 视频输入格式。**仅 OpenAI 系列才有此字段**：
+   * `file`（兼容 LiteLLM / Gemini 中转）/
+   * `video_url`（适配 MiMo / 阿里百炼 / OpenRouter 等全模态模型，仅 chat_completions 生效）。
+   */
+  video_input_format?: string;
+  /**
+   * 视频采样帧率 (FPS)。**仅 OpenAI 系列才有此字段**：
+   * video_url 模式下的抽样帧率。大于 0 时写入同级 fps 字段（如 0.5 或 2.0），0 表示不发送。
+   */
+  video_fps?: number;
+  /**
+   * 视频块额外参数 (JSON 字符串)。**仅 OpenAI 系列才有此字段**：
+   * video_url 模式下合并进视频块的 JSON 对象。同级合并如 {"media_resolution":"default"}。
+   */
+  video_part_extra?: string;
+  /**
+   * 视频内联大小上限 (MB)。**仅 OpenAI 系列才有此字段**：
+   * video_url 模式下转为 DataURI 发送的视频原始大小上限 (MB)。超过时自动降级为抽帧或占位。默认 12。
+   */
+  video_inline_max_mb?: number;
+  /**
+   * 视频公网 URL 直通。**仅 OpenAI 系列才有此字段**：
+   * `off`（先下载转 DataURI，默认，避免临时链接过期导致会话卡死）/
+   * `on`（直接透传 URL）。
+   */
+  video_url_passthrough?: string;
 }
 
 export interface OpenAIConfigDetail {
@@ -1316,6 +1471,16 @@ export interface ProviderConfigOptions {
     send_back_thinking?: string[];
     /** 终端用户标识透传候选值（off / hashed / raw）。仅 OpenAI 系列会返回。 */
     forward_end_user_id?: string[];
+    /** 视频输入格式候选值（file / video_url）。仅 OpenAI 系列会返回。 */
+    video_input_format?: string[];
+    /** 视频采样帧率候选值（如 [0, 0.5, 1, 2, 4]）。 */
+    video_fps?: number[];
+    /** 视频块额外参数候选值。 */
+    video_part_extra?: string[];
+    /** 视频内联大小上限 (MB) 候选值（如 [6, 12, 20, 50, 100]）。 */
+    video_inline_max_mb?: number[];
+    /** 视频公网 URL 直通候选值（off / on）。仅 OpenAI 系列会返回。 */
+    video_url_passthrough?: string[];
   };
 }
 
@@ -1364,6 +1529,14 @@ export const providerConfigApi = {
       msg: string;
       data: { name: string; provider: string; config_name: string };
     }>(`/api/provider_config/config/${provider}/${configName}`, { config }),
+
+  // 服务端原样复制 JSON（密钥不经过打码后的读取接口）
+  copyConfig: (provider: string, configName: string, newName: string) =>
+    api.post<{
+      name: string;
+      provider: string;
+      config_name: string;
+    }>(`/api/provider_config/config/${provider}/${configName}/copy`, { new_name: newName }),
 
   // 创建默认配置
   createDefaultConfig: (provider: string, configName: string) =>
@@ -1714,6 +1887,18 @@ export const logsApi = {
     const path = `/api/logs/error-reports/${encodeURIComponent(reportId)}`;
     return api.get<ErrorReportDetail>(qs ? `${path}?${qs}` : path);
   },
+
+  getStreamUrl: (token: string, level = 'all', resumeFrom?: string | null) => {
+    const host = getCustomApiHost();
+    const query = new URLSearchParams();
+    query.set('token', token);
+    query.set('level', level);
+    if (resumeFrom) {
+      query.set('last_event_id', resumeFrom);
+    }
+    const path = `/api/logs/stream?${query.toString()}`;
+    return host ? `${host}${path}` : path;
+  },
 };
 
 // ===================
@@ -1953,6 +2138,14 @@ export const backupApi = {
 // Database APIs
 // ===================
 
+export interface CsvImportResult {
+  mode: 'merge' | 'replace';
+  inserted: number;
+  updated: number;
+  deleted: number;
+  rows: number;
+}
+
 export const databaseApi = {
   getTables: () => api.get<DatabaseTable[]>('/api/database/tables'),
 
@@ -2012,6 +2205,17 @@ export const databaseApi = {
     const qs = params.toString();
     const path = `/api/database/table/${tableName}/export.csv`;
     return api.downloadBlob(qs ? `${path}?${qs}` : path);
+  },
+
+  importCsv: (tableName: string, file: File, mode: 'merge' | 'replace') => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('mode', mode);
+    formData.append('confirm_table', tableName);
+    return api.postFormData<CsvImportResult>(
+      `/api/database/table/${encodeURIComponent(tableName)}/import.csv`,
+      formData,
+    );
   },
 
   createRecord: (tableName: string, data: Record<string, unknown>) =>
@@ -2242,11 +2446,13 @@ export const remoteCommandApi = {
 
 export interface ThemeConfig {
   mode: 'light' | 'dark';
-  style: 'solid' | 'glassmorphism';
+  style: 'solid' | 'glassmorphism' | 'luminous' | 'liquid';
   color: string;
   icon_color: 'white' | 'black' | 'colored';
   background_image: string | null;
   blur_intensity: number;
+  /** Wallpaper blur in px (0–40). 0 keeps the background sharp. Independent of blur_intensity. */
+  background_blur?: number;
   theme_preset: 'default' | 'shadcn' | 'custom';
   language: 'zh-CN' | 'en-US' | 'ja-JP';
   /** Card opacity percentage (0-100). Applies to both solid and glassmorphism styles. */
@@ -2346,6 +2552,8 @@ export interface PersonaListItem {
   has_avatar: boolean;
   has_image: boolean;
   has_audio: boolean;
+  /** 默认人格「早柚」。人格卡正文每次启动从程序写回。 */
+  builtin?: boolean;
 }
 
 export interface PersonaInfo {
@@ -2416,7 +2624,24 @@ export interface PersonaFrameworkConfig {
 
 // 角色配置相关类型
 export type PersonaScope = 'disabled' | 'global' | 'specific' | 'global_group' | 'global_private';
-export type AIMode = '提及应答' | '定时巡检' | '趣向捕捉(暂不可用)' | '困境救场(暂不可用)';
+export type AIMode = '提及应答' | '定时巡检' | '命令补充' | '自主行动';
+export type AutonomyCareZone = 'familiar' | 'close';
+
+export interface SpeechTierSpec {
+  floor: number;
+  bubbles: number;
+  soft: number;
+  segment_hint: string;
+}
+
+export interface SpeechShapeSpec {
+  chat_style_min: number;
+  chat_style_max: number;
+  soft_default: number;
+  len_min: number;
+  len_max: number;
+  tiers: SpeechTierSpec[];
+}
 
 export interface PersonaConfig {
   ai_mode: AIMode[];
@@ -2424,11 +2649,28 @@ export interface PersonaConfig {
   target_groups: string[];
   inspect_interval?: number; // 定时巡检间隔（分钟）�?, 10, 15, 30, 60
   keywords?: string[]; // 触发关键词列表（用于提及应答模式�?
+  aside_image_probability?: number;
+  aside_text_probability?: number;
+  aside_mixed_probability?: number;
+  aside_allow_tools?: boolean;
+  active_hours?: string[];
+  timezone?: string;
+  autonomy_interval_minutes?: number;
+  autonomy_care_min_zone?: AutonomyCareZone;
   /** 启用工具（按插件）：`*` 全开；`!插件名` 排除；只列具体名则仅这些进检索池 */
   enabled_tools?: string[];
   tool_names?: string[]; // 显式工具白名单（常驻直装，不经向量检索）
   /** `*` 全开；`!node_id` 排除。缺省按全开。 */
   capability_agents?: string[];
+  /** 该人格使用的系统提示词组。缺省为「默认」。 */
+  prompt_group?: string;
+  /** 打开后系统提示写入表情协议。缺省为开。 */
+  allow_meme_reply?: boolean;
+  /** 0 到 100。决定气泡条数，以及仍等于模板默认的字数。 */
+  chat_style?: number;
+  /** 等于模板默认时跟随说话强度。 */
+  speech_len_soft?: number;
+  speech_shape?: SpeechShapeSpec;
 }
 
 export interface PersonaConfigResponse {
@@ -2443,9 +2685,21 @@ export interface PersonaConfigUpdateRequest {
   target_groups?: string[];
   inspect_interval?: number;
   keywords?: string[];
+  aside_image_probability?: number;
+  aside_text_probability?: number;
+  aside_mixed_probability?: number;
+  aside_allow_tools?: boolean;
+  active_hours?: string[];
+  timezone?: string;
+  autonomy_interval_minutes?: number;
+  autonomy_care_min_zone?: AutonomyCareZone;
   enabled_tools?: string[];
   tool_names?: string[];
   capability_agents?: string[];
+  prompt_group?: string;
+  allow_meme_reply?: boolean;
+  chat_style?: number;
+  speech_len_soft?: number;
 }
 
 export interface PersonaConfigUpdateResponse {
@@ -2491,6 +2745,60 @@ export interface GlobalPersonaResponse {
   msg: string;
   data: string | null;
 }
+
+export interface PromptGroupSummary {
+  name: string;
+  builtin: boolean;
+  field_count: number;
+}
+
+export interface PromptField {
+  key: string;
+  section: string;
+  title: string;
+  description: string;
+  placeholders: string[];
+  text: string;
+  /** 从「以严格 JSON 格式输出」起的固定尾句。正文下面只读展示。 */
+  frozen_suffix?: string;
+}
+
+export interface PromptGroupDetail {
+  name: string;
+  builtin: boolean;
+  fields: PromptField[];
+}
+
+export interface PersonaPlaceholderPreview {
+  name: string;
+  prompt_group: string;
+  values: Record<string, string>;
+  soft_follows: boolean;
+}
+
+export interface PlaceholderPreviewData {
+  personas: PersonaPlaceholderPreview[];
+  shared: Record<string, string>;
+}
+
+export const promptGroupApi = {
+  list: () => api.get<PromptGroupSummary[]>('/api/prompt-groups'),
+  get: (name: string) =>
+    api.get<PromptGroupDetail>(`/api/prompt-groups/${encodeURIComponent(name)}`),
+  save: (name: string, prompts: Record<string, string>) =>
+    api.put<PromptGroupDetail>(`/api/prompt-groups/${encodeURIComponent(name)}`, { prompts }),
+  create: (name: string, copyFrom?: string) =>
+    api.post<PromptGroupDetail>('/api/prompt-groups', {
+      name,
+      ...(copyFrom ? { copy_from: copyFrom } : {}),
+    }),
+  copy: (name: string, newName: string) =>
+    api.post<PromptGroupDetail>(`/api/prompt-groups/${encodeURIComponent(name)}/copy`, {
+      name: newName,
+    }),
+  remove: (name: string) =>
+    api.delete<{ name?: string }>(`/api/prompt-groups/${encodeURIComponent(name)}`),
+};
 
 export const personaApi = {
   /** Heartbeat 巡检运行态（每 persona job 是否注册） */
@@ -2611,6 +2919,9 @@ export const personaApi = {
 
   // 获取所有角色配置
   getAllPersonaConfigs: () => api.get<Record<string, PersonaConfig>>('/api/persona/config/all'),
+
+  getPlaceholderPreview: () =>
+    api.get<PlaceholderPreviewData>('/api/persona/config/placeholder-preview'),
 
   // 工具装配目录：启用工具（按插件）/ 显式工具白名单 两个选择器的数据源
   getToolCatalog: () => api.get<PersonaToolCatalog>('/api/persona/tools/catalog'),
@@ -3281,7 +3592,17 @@ export interface SessionHistoryMessage {
   user_name?: string | null;
   user_avatar?: string | null;
   timestamp?: number;
-  metadata?: Record<string, unknown>;
+  images?: string[];
+  metadata?: {
+    msg_id?: string;
+    bot_id?: string;
+    user_type?: string;
+    image_id_list?: string[];
+    image_id?: string;
+    images?: string[];
+    image_urls?: string[];
+    [key: string]: unknown;
+  };
 }
 
 export interface SessionHistoryJSONResponse {
@@ -3379,6 +3700,10 @@ export const historyApi = {
 
   // 获取历史管理器统计信�?
   getStats: () => api.get<HistoryStats>('/api/history/stats'),
+
+  // 获取历史消息图片资源 URL
+  getResourceImageUrl: (resourceId: string) =>
+    `/api/history/resource/${encodeURIComponent(resourceId)}`,
 };
 
 // ===================
@@ -3944,10 +4269,19 @@ export interface MemePersona {
 }
 
 export interface MemeMatchFilter {
+  pack_id?: string;
   folder?: string;
   status?: string;
   q?: string;
   persona_hint?: string;
+}
+
+export interface MemePackSummary {
+  pack_id: string;
+  name: string;
+  member_count: number;
+  tagged_count: number;
+  bound_personas: string[];
 }
 
 export interface MemeListParams extends MemeMatchFilter {
@@ -4049,6 +4383,50 @@ export const memeApi = {
   // 获取所有出现过的 persona_hint 及数量（按数量降序）
   getPersonas: () => api.get<MemePersona[]>('/api/meme/personas'),
 
+  getPacks: () => api.get<MemePackSummary[]>('/api/meme/packs'),
+
+  listPackMembers: (packId: string, params: MemeListParams = {}) => {
+    const searchParams = new URLSearchParams();
+    if (params.status) searchParams.set('status', params.status);
+    if (params.sort) searchParams.set('sort', params.sort);
+    if (params.page) searchParams.set('page', String(params.page));
+    if (params.page_size) searchParams.set('page_size', String(params.page_size));
+    if (params.q) searchParams.set('q', params.q);
+    const query = searchParams.toString();
+    return api.get<MemeListResponse>(
+      `/api/meme/packs/${encodeURIComponent(packId)}/members${query ? `?${query}` : ''}`,
+    );
+  },
+
+  getPersonaPacks: (personaName: string) =>
+    api.get<{ pack_ids: string[] }>(`/api/persona/${encodeURIComponent(personaName)}/meme_packs`),
+
+  setPersonaPacks: (personaName: string, packIds: string[]) =>
+    api.put<{ pack_ids: string[] }>(`/api/persona/${encodeURIComponent(personaName)}/meme_packs`, {
+      pack_ids: packIds,
+    }),
+
+  exportPersonaBundle: (personaName: string) =>
+    api.postBlob(`/api/persona/${encodeURIComponent(personaName)}/bundle/export`, {}),
+
+  importPersonaBundle: async (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const token = getAuthToken();
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const response = await fetch(`${getCustomApiHost()}/api/persona/bundle/import`, {
+      method: 'POST',
+      headers,
+      body: formData,
+      credentials: 'include',
+    });
+    if (response.status === 401) handleUnauthorized();
+    const data: ApiResponse<{ persona_name: string }> = await response.json();
+    if (!response.ok || data.status !== 0) throw new Error(data.msg || 'Import failed');
+    return data.data;
+  },
+
   // 获取单条记录详情
   getDetail: (memeId: string) => api.get<MemeRecord>(`/api/meme/${memeId}`),
 
@@ -4057,6 +4435,12 @@ export const memeApi = {
     if (import.meta.env.VITE_DEMO) return demoMemeImageUrl(memeId);
     const base = getCustomApiHost();
     return `${base}/api/meme/image/${memeId}`;
+  },
+
+  getThumbUrl: (memeId: string) => {
+    if (import.meta.env.VITE_DEMO) return demoMemeImageUrl(memeId);
+    const base = getCustomApiHost();
+    return `${base}/api/meme/thumb/${encodeURIComponent(memeId)}`;
   },
 
   // 更新标签/描述/归属
@@ -4073,11 +4457,17 @@ export const memeApi = {
   delete: (memeId: string) => api.delete<null>(`/api/meme/${memeId}`),
 
   // 手动上传表情�?
-  upload: async (file: File, folder: string = 'common', autoTag: boolean = true) => {
+  upload: async (
+    file: File,
+    folder: string = 'common',
+    autoTag: boolean = true,
+    packId?: string,
+  ) => {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('folder', folder);
     formData.append('auto_tag', String(autoTag));
+    if (packId) formData.append('pack_id', packId);
 
     const token = getAuthToken();
     const headers: Record<string, string> = {};
@@ -4140,34 +4530,33 @@ export const memeApi = {
       `/api/meme/delete-operations/${encodeURIComponent(operationId)}/retry`,
     ),
 
-  // 批量导出�?.meme 格式
-  exportMemes: async (memeIds?: string[], folder?: string): Promise<Blob> => {
+  // 批量导出为 .meme 格式
+  exportMemes: async (memeIds?: string[], folder?: string, packId?: string): Promise<Blob> => {
     const body: Record<string, unknown> = {};
     if (memeIds && memeIds.length > 0) body.meme_ids = memeIds;
+    else if (packId) body.pack_id = packId;
     else if (folder) body.folder = folder;
     return api.postBlob('/api/meme/export', body);
   },
 
-  // 导入 .meme 格式文件
-  // - persona_hint: 指定导入后的人格分类（默认 `common`）。后端会保证
-  //   folder <-> persona_hint 双向一致，传 `common` 进通用 folder，
-  //   传 `<persona 名>` 进 `persona_<persona 名>` folder。
-  //   传空字符串 / undefined 则不传，沿用 metadata.json 中原有的值。
+  // 省略包字段时，文件进入后端缺省目录 common，并成为「通用表情包」的成员。
   importMemes: async (
     file: File,
     skipExisting: boolean = true,
     autoTag: boolean = false,
     personaHint?: string,
+    packId?: string,
+    createPack?: boolean,
   ) => {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('skip_existing', String(skipExisting));
     formData.append('auto_tag', String(autoTag));
-    // Only append when the caller explicitly chose a persona (incl. `common`).
-    // An empty string here would mean "no preference" - fall through to backend default.
     if (personaHint && personaHint.length > 0) {
       formData.append('persona_hint', personaHint);
     }
+    if (packId) formData.append('pack_id', packId);
+    if (createPack !== undefined) formData.append('create_pack', String(createPack));
 
     const token = getAuthToken();
     const headers: Record<string, string> = {};
@@ -4474,26 +4863,6 @@ export interface AgentDebugMemoryConflict {
   created_at: string | null;
 }
 
-export interface AgentDebugTaskListItem {
-  id: string;
-  ordinal: number;
-  node_kind: string;
-  root_task_id: string;
-  display_name: string;
-  goal: string;
-  status: string;
-  owner_user_id: string | null;
-  agent_profile: string;
-  updated_at: string | null;
-}
-
-export interface AgentDebugTaskDetail {
-  task: Record<string, unknown>;
-  root: Record<string, unknown> | null;
-  subtasks: Array<Record<string, unknown>>;
-  logs: Array<{ event_type: string; content: string; timestamp: string | null }>;
-}
-
 export const agentDebugApi = {
   getMemoryEdges: (params: { scope_key: string; include_invalid?: boolean; limit?: number }) => {
     const query = new URLSearchParams();
@@ -4517,30 +4886,6 @@ export const agentDebugApi = {
       `/api/agent_debug/memory/conflicts?${query.toString()}`,
     );
   },
-
-  // ── Orchestration Board ──
-  listTasks: (params: { status?: string; limit?: number } = {}) => {
-    const query = new URLSearchParams();
-    if (params.status) query.set('status', params.status);
-    if (params.limit !== undefined) query.set('limit', String(params.limit));
-    const qs = query.toString();
-    return api.get<AgentDebugTaskListItem[]>(`/api/agent_debug/tasks${qs ? `?${qs}` : ''}`);
-  },
-
-  getTask: (taskId: string) =>
-    api.get<AgentDebugTaskDetail>(`/api/agent_debug/tasks/${encodeURIComponent(taskId)}`),
-
-  abortTask: (taskId: string) =>
-    api.post<{ task_id: string }>(`/api/agent_debug/tasks/${encodeURIComponent(taskId)}/abort`),
-
-  // ── Persona Evolution Inspector ──
-  getSelfModel: (botId = 'default') =>
-    api.get<Record<string, unknown>>(
-      `/api/agent_debug/self_model?bot_id=${encodeURIComponent(botId)}`,
-    ),
-
-  setSelfModel: (data: { bot_id?: string; field: string; items: string[] }) =>
-    api.post<{ field: string; count: number }>(`/api/agent_debug/self_model`, data),
 };
 
 // ===================
@@ -4696,6 +5041,11 @@ export interface AIArtifactItem {
 export interface AIArtifactListResponse {
   count: number;
   items: AIArtifactItem[];
+  /** 过滤后的总条数。旧后端没有这个字段时，前端把本页当成全部。 */
+  total?: number;
+  limit?: number;
+  offset?: number;
+  has_more?: boolean;
 }
 
 export interface AIArtifactDetail extends AIArtifactItem {
@@ -4964,34 +5314,94 @@ export const aiToolOutputsApi = {
     api.downloadBlob(`/api/ai/tool-outputs/${encodeURIComponent(id)}/raw`),
 };
 
+export interface AutonomyStepView {
+  step_index: number;
+  tool_name: string;
+  args_summary: string;
+  output_text: string;
+  is_error: boolean;
+  resource_ids: string[];
+  duration_ms: number;
+}
+
+export interface AutonomyFactView {
+  verified_tools: string[];
+  factual_observations: string[];
+  generated_resources: string[];
+  has_substantive_outcome: boolean;
+}
+
+export interface AutonomyActivity {
+  id: number;
+  persona_name: string;
+  bot_id: string;
+  bot_self_id: string;
+  drive_kind: string;
+  target_user_id: string;
+  target_session_key: string;
+  plugins_used: string[];
+  steps: AutonomyStepView[];
+  fact_pack: AutonomyFactView;
+  summary: string;
+  open_trails: string[];
+  delivery_mode: string;
+  step_count: number;
+  duration_ms: number;
+  session_id: string;
+  created_at: number;
+}
+
+export interface AutonomyFeed {
+  items: AutonomyActivity[];
+  total: number;
+  latest: AutonomyActivity[];
+  personas: string[];
+}
+
+/** 产出物页「自主行动」页签。`persona_name` 为空时跨人格。 */
+export const autonomyApi = {
+  feed: (opts?: { personaName?: string; limit?: number; offset?: number }) => {
+    const query = new URLSearchParams();
+    if (opts?.personaName) query.set('persona_name', opts.personaName);
+    if (opts?.limit !== undefined) query.set('limit', String(opts.limit));
+    if (opts?.offset !== undefined) query.set('offset', String(opts.offset));
+    const qs = query.toString();
+    return api.get<AutonomyFeed>(`/api/autonomy/feed${qs ? `?${qs}` : ''}`);
+  },
+};
+
 /**
  * AI Artifacts 全局浏览（/ai-artifacts 页面专用）。
  * 后端 `artifacts_api.list_artifacts`：
- * - 不传 `root_task_id` / `task_id` 时按 `created_at desc` 全量浏览（最新 N 条）
- * - 支持 `?limit=` 与 `?include_expired=` 参数
+ * - 不传 `root_task_id` / `task_id` 时必须带 `scope=all`，否则后端返回 require_filter
+ * - `limit` / `offset` 分页；`total` 是过滤后的总条数，`count` 是本页条数
  *
- * `scope='all'` 用于显式告诉后端走「全局浏览」分支，否则后端会返回
- * status=1 的 require_filter 错误。传空 rootTaskId + scope='all' 即
- * 「按时间倒序拉最近 N 条」的语义，与后端契约对齐。
+ * `scope='all'` 用于显式告诉后端走「全局浏览」分支。传空 rootTaskId + scope='all'
+ * 即按 created_at 倒序分页。
  */
 export const aiArtifactsApi = {
   listByRoot: (
     rootTaskId: string,
-    opts?: { includeExpired?: boolean; limit?: number; scope?: string },
+    opts?: { includeExpired?: boolean; limit?: number; offset?: number; scope?: string },
   ) => {
     const query = new URLSearchParams();
     if (rootTaskId) query.set('root_task_id', rootTaskId);
     if (opts?.scope) query.set('scope', opts.scope);
     if (opts?.includeExpired) query.set('include_expired', 'true');
     if (opts?.limit !== undefined) query.set('limit', String(opts.limit));
+    if (opts?.offset !== undefined) query.set('offset', String(opts.offset));
     const qs = query.toString();
     return api.get<AIArtifactListResponse>(`/api/ai/artifacts${qs ? `?${qs}` : ''}`);
   },
-  listByTask: (taskId: string, opts?: { includeExpired?: boolean; limit?: number }) => {
+  listByTask: (
+    taskId: string,
+    opts?: { includeExpired?: boolean; limit?: number; offset?: number },
+  ) => {
     const query = new URLSearchParams();
     query.set('task_id', taskId);
     if (opts?.includeExpired) query.set('include_expired', 'true');
     if (opts?.limit !== undefined) query.set('limit', String(opts.limit));
+    if (opts?.offset !== undefined) query.set('offset', String(opts.offset));
     return api.get<AIArtifactListResponse>(`/api/ai/artifacts?${query.toString()}`);
   },
   getDetail: (resId: string) =>
@@ -5115,7 +5525,7 @@ export const brandSettingsApi = {
  * 记忆子系统 API（2026-07-20 补全，导出后多个页面共用）。
  *
  * 历史：原本这是 AIMemoryPage 内私有 const，现在提到 api.ts 让
- * /ai-debug / 记忆设置 Dialog 等都能复用。
+ * 记忆设置 Dialog 等都能复用。
  */
 export interface MemorySearchRequest {
   query: string;
@@ -5580,6 +5990,10 @@ export interface TokenRangeByModelItem extends TokenRangeBucket {
   model: string;
 }
 
+export interface TokenRangeByTypeItem extends TokenRangeBucket {
+  type: string;
+}
+
 /** User Turn / Agent Run 效率（省 Token 主指标） */
 export interface EfficiencyStatsData {
   date?: string;
@@ -5610,6 +6024,33 @@ export interface TokenRangeEfficiency {
   avg_agent_runs_per_user_turn: number;
 }
 
+/** 区间延迟。avg 由后端按样本数加权；samples 为 0 表示区间全是迁移前的历史行，
+ *  avg 是「各日均值的算术平均」的估算值。p95 是区间内各日 P95 的最大值。 */
+export interface TokenRangeLatency {
+  avg: number;
+  p95: number;
+  samples: number;
+}
+
+/** 一次失败请求。没有堆栈，只有类型和上游消息。 */
+export interface AIErrorEvent {
+  date: string;
+  time: string;
+  error_type: string;
+  message: string;
+}
+
+/** 区间错误计数，字段与 /summary 的 errors 一致 */
+export interface TokenRangeErrors {
+  timeout: number;
+  rate_limit: number;
+  network_error: number;
+  usage_limit: number;
+  agent_error: number;
+  api_529_error: number;
+  total: number;
+}
+
 export interface TokenRangeData {
   start_date: string;
   end_date: string;
@@ -5617,7 +6058,11 @@ export interface TokenRangeData {
   total: TokenRangeBucket;
   daily: TokenRangeDailyItem[];
   by_model: TokenRangeByModelItem[];
+  /** 按 chat_type 跨天聚合。与 by_model 同口径同区间，前端两张构成卡共用这一份。 */
+  by_type: TokenRangeByTypeItem[];
   efficiency?: TokenRangeEfficiency;
+  latency?: TokenRangeLatency;
+  errors?: TokenRangeErrors;
 }
 
 export interface MemoryStatsData {
@@ -5711,6 +6156,13 @@ export const aiStatisticsApi = {
     if (date) query.set('date', date);
     const queryStr = query.toString();
     return api.get<ErrorStatsData>(`/api/ai/statistics/errors${queryStr ? `?${queryStr}` : ''}`);
+  },
+
+  getErrorEvents: (startDate: string, endDate: string) => {
+    const query = new URLSearchParams();
+    query.set('start_date', startDate);
+    query.set('end_date', endDate);
+    return api.get<AIErrorEvent[]>(`/api/ai/statistics/error-events?${query.toString()}`);
   },
 
   getHeartbeat: (date?: string) => {
@@ -6415,6 +6867,22 @@ export interface RelationshipViewData {
   interaction_count?: number;
 }
 
+export interface RelationshipListItem extends RelationshipViewData {
+  id: number;
+  user_name: string;
+  bot_id: string;
+  is_master: boolean;
+  score: number;
+  scored: true;
+}
+
+export interface RelationshipListData {
+  items: RelationshipListItem[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
 export interface CognitionAttachment {
   id: number | null;
   node_id: number;
@@ -6505,6 +6973,16 @@ export const relationshipApi = {
     query.set('user_id', params.user_id);
     if (params.bot_id) query.set('bot_id', params.bot_id);
     return getConsolePayload<RelationshipViewData>(`/api/relationship/view?${query.toString()}`);
+  },
+
+  list: (params: { bot_id?: string; keyword?: string; offset?: number; limit?: number } = {}) => {
+    const query = new URLSearchParams();
+    if (params.bot_id) query.set('bot_id', params.bot_id);
+    if (params.keyword) query.set('keyword', params.keyword);
+    if (params.offset !== undefined) query.set('offset', String(params.offset));
+    if (params.limit !== undefined) query.set('limit', String(params.limit));
+    const qs = query.toString();
+    return getConsolePayload<RelationshipListData>(`/api/relationship/list${qs ? `?${qs}` : ''}`);
   },
 };
 

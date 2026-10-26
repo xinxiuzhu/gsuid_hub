@@ -11,7 +11,9 @@ export function worldGraphId(node: Pick<CognitionNode, 'id' | 'ref'>): string {
   return node.id != null ? `cog:${node.id}` : `world:${node.ref}`;
 }
 
-export function articleGraphId(att: Pick<CognitionAttachment, 'node_id' | 'ref' | 'id' | 'title'>): string {
+export function articleGraphId(
+  att: Pick<CognitionAttachment, 'node_id' | 'ref' | 'id' | 'title'>,
+): string {
   return `att:${att.node_id}:${att.ref || att.id || att.title}`;
 }
 
@@ -29,20 +31,13 @@ export function pluginFromWorldRef(ref: string): string {
 }
 
 export function cognitionHandleHref(handle: string, kind?: string): string | null {
-  if (handle.startsWith('to_') || handle.startsWith('sa_')) return '/ai-tool-outputs';
+  // 产出物与工具落盘合并在 /ai-artifacts，用 ?tab= 直接落到对应页签
+  if (handle.startsWith('to_') || handle.startsWith('sa_')) return '/ai-artifacts?tab=toolOutputs';
   if (handle.startsWith('res_') || kind === 'artifact') return '/ai-artifacts';
-  if (
-    handle.startsWith('kb_') ||
-    kind === 'knowledge'
-  ) {
+  if (handle.startsWith('kb_') || kind === 'knowledge') {
     return '/ai-knowledge';
   }
-  if (
-    kind === 'episode' ||
-    kind === 'preference' ||
-    kind === 'entity' ||
-    kind === 'self_note'
-  ) {
+  if (kind === 'episode' || kind === 'preference' || kind === 'entity' || kind === 'self_note') {
     return '/ai-memory';
   }
   return null;

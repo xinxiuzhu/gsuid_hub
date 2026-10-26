@@ -48,6 +48,11 @@ export interface InputWithDropdownProps {
    * 不传则按原值渲染，保持向后兼容。
    */
   formatLabel?: (rawValue: string) => string;
+  /**
+   * 可选：候选项和触发器的可视节点。搜索仍用 `formatLabel` 的纯文本。
+   * 用来在译文后面挂带颜色的原始参数，而不改回传值。
+   */
+  renderOption?: (rawValue: string) => React.ReactNode;
 }
 
 // ============================================================================
@@ -62,7 +67,9 @@ export function InputWithDropdown({
   inputPlaceholder = '输入或选择',
   disabled = false,
   className,
-  popoverWidth = 'w-[400px]',
+  // Radix 只重定位、不缩放宽度：固定 400px 在 375px 视口会被裁掉右侧。
+  // 窄屏改用视口宽，sm 起恢复 400px。
+  popoverWidth = 'w-[var(--radix-popover-trigger-width)] min-w-[200px] max-w-[calc(100vw-1.5rem)]',
   showCopyValueAction = true,
   copyValueLabel,
   copiedValueLabel,
@@ -70,6 +77,7 @@ export function InputWithDropdown({
   showClearValueAction = true,
   clearValueLabel,
   formatLabel,
+  renderOption,
 }: InputWithDropdownProps) {
   const { t } = useLanguage();
   // 搜索输入值（独立于选中值）
@@ -93,6 +101,10 @@ export function InputWithDropdown({
   const renderLabel = useCallback(
     (raw: string) => (formatLabel ? formatLabel(raw) : raw),
     [formatLabel],
+  );
+  const renderVisual = useCallback(
+    (raw: string) => (renderOption ? renderOption(raw) : renderLabel(raw)),
+    [renderLabel, renderOption],
   );
 
   // Popover 打开时重置搜索值
@@ -181,12 +193,15 @@ export function InputWithDropdown({
     setOpen(false);
   }, [onChange, searchValue]);
 
-  const handleInputKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      handleCommitInput();
-    }
-  }, [handleCommitInput]);
+  const handleInputKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        handleCommitInput();
+      }
+    },
+    [handleCommitInput],
+  );
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -195,14 +210,11 @@ export function InputWithDropdown({
           variant="outline"
           role="combobox"
           disabled={disabled}
-          className={cn(
-            'w-full justify-between text-left font-normal h-10 px-3',
-            className
-          )}
+          className={cn('w-full justify-between text-left font-normal h-10 px-3', className)}
         >
           <span className="truncate">
             {safeValue ? (
-              renderLabel(safeValue)
+              renderVisual(safeValue)
             ) : (
               <span className="text-muted-foreground">{placeholder}</span>
             )}
@@ -211,12 +223,19 @@ export function InputWithDropdown({
         </Button>
       </PopoverTrigger>
       <PopoverContent
-        className={cn(popoverWidth, 'p-0')}
+        className={cn('menu-panel overflow-hidden p-0 flex flex-col', popoverWidth)}
+        style={{
+          width: 'var(--radix-popover-trigger-width)',
+          maxHeight: 'var(--radix-popper-available-height)',
+        }}
+        side="bottom"
         align="start"
+        sideOffset={4}
+        collisionPadding={8}
         onOpenAutoFocus={handleOpenAutoFocus}
         onWheel={(e) => e.stopPropagation()}
       >
-        <div className="space-y-2 p-2">
+        <div className="space-y-2 p-2 shrink-0">
           {(showCopyValueAction || showClearValueAction) && (
             // 按钮组：复制（icon+文字，flex-1 占主）+ 清空（右侧 icon-only X）
             // 复制按钮全宽会让清空只能放到下一行，破坏「同排视觉关联」，
@@ -231,9 +250,17 @@ export function InputWithDropdown({
                   disabled={!safeValue.trim()}
                   onClick={handleCopyValue}
                 >
-                  {isCopied ? <Check className="h-3.5 w-3.5 text-green-500" /> : <Copy className="h-3.5 w-3.5" />}
+                  {isCopied ? (
+                    <Check className="h-3.5 w-3.5 text-green-500" />
+                  ) : (
+                    <Copy className="h-3.5 w-3.5" />
+                  )}
                   <span className="truncate">
-                    {safeValue.trim() ? (isCopied ? resolvedCopiedValueLabel : resolvedCopyValueLabel) : resolvedCopyEmptyLabel}
+                    {safeValue.trim()
+                      ? isCopied
+                        ? resolvedCopiedValueLabel
+                        : resolvedCopyValueLabel
+                      : resolvedCopyEmptyLabel}
                   </span>
                 </Button>
               )}
@@ -263,29 +290,32 @@ export function InputWithDropdown({
           />
         </div>
         {filteredOptions.length > 0 && (
-          <div
-            className="max-h-[360px] overflow-y-auto border-t"
-            onWheel={(e) => e.stopPropagation()}
-          >
-            {filteredOptions.map((option) => (
-              <div
-                key={option}
-                className={cn(
-                  'px-3 py-2 text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground',
-                  safeValue === option && 'bg-accent'
-                )}
-                onClick={() => {
-                  onChange(option);
-                  setOpen(false);
-                }}
-              >
-                {renderLabel(option)}
-              </div>
-            ))}
+          <div className="border-t p-1 flex-1 min-h-0 flex flex-col overflow-hidden">
+            <div
+              className="menu-option-list max-h-[300px] flex-1 min-h-0 overflow-y-auto"
+              onWheel={(e) => e.stopPropagation()}
+            >
+              {filteredOptions.map((option) => {
+                const selected = safeValue === option;
+                return (
+                  <div
+                    key={option}
+                    data-active={selected ? 'true' : undefined}
+                    className="menu-option cursor-pointer px-3 py-2 text-sm"
+                    onClick={() => {
+                      onChange(option);
+                      setOpen(false);
+                    }}
+                  >
+                    {renderVisual(option)}
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
         {searchValue.trim() && filteredOptions.length === 0 && (
-          <div className="px-3 py-2 text-sm text-muted-foreground border-t">
+          <div className="px-3 py-2 text-sm text-muted-foreground border-t shrink-0">
             无匹配选项，按 Enter 使用当前输入
           </div>
         )}

@@ -10,6 +10,15 @@
   "checkConfig": "检查配置",
   "manageConfig": "管理配置",
   "manageConfigDesc": "管理用于高级 / 低级任务的 AI 模型配置文件",
+  "copyConfig": "复制配置",
+  "copyConfigDesc": "复制「{name}」。密钥和参数会一起带过去，保存前可以改名称。",
+  "copyConfigName": "新名称",
+  "copyConfigSuccess": "已复制为 {name}",
+  "copyConfigFailed": "复制配置失败",
+  "copyConfigNameRequired": "请填写新名称",
+  "copyConfigSameName": "新名称不能与原配置相同",
+  "copyConfigNamePlus": "名称不能包含 +",
+  "copyConfigSuffix": " 副本",
   "aiHistory": "AI历史调用",
   "taskConfig": {
     "title": "任务配置",
@@ -106,7 +115,9 @@
       "low": "低",
       "medium": "中",
       "high": "高",
-      "xhigh": "极高"
+      "xhigh": "极高",
+      "adaptive": "自适应",
+      "max": "极限"
     },
     "maxConcurrency": "最大并发数",
     "maxTokens": "最大输出 Token",
@@ -153,6 +164,41 @@
     "endUserIdSalt": "摘要盐值",
     "endUserIdSaltPlaceholder": "留空即无密钥摘要",
     "endUserIdSaltHint": "留空时摘要不带密钥：标识空间小（纯数字账号）时可被枚举反查，只起混淆作用。改动盐值会让此前的摘要全部失去对应关系，上游按调用方的历史聚合会断裂。",
+    "sectionBasic": "基础与连接",
+    "sectionBasicDesc": "服务商类型、名称、基础端点与凭据",
+    "sectionCapabilities": "模型与推理",
+    "sectionCapabilitiesDesc": "模型能力、思考等级、并发控制",
+    "sectionNetwork": "协议与高级网络",
+    "sectionNetworkDesc": "请求方式、用量统计、标识透传与远端搜索",
+    "sectionVideo": "全模态视频输入",
+    "sectionVideoDesc": "OpenAI 兼容接口的视频块格式与采样参数配置",
+    "sectionVideoAlert": "适配小米 MiMo、阿里百炼 DashScope 兼容模式、OpenRouter 等全模态模型。仅在 chat_completions 请求方式下生效。",
+    "videoInputFormat": "视频输入格式",
+    "videoInputFormatOptions": {
+      "file": "file（兼容 LiteLLM / Gemini 等中转网关）",
+      "video_url": "video_url（适配 MiMo / 阿里百炼 / OpenRouter 等全模态模型）"
+    },
+    "videoInputFormatDescription": {
+      "file": "OpenAI 兼容接口视频输入格式：使用 file 方式，适用于 LiteLLM / Gemini 中转（type=file）。",
+      "video_url": "生成 type=video_url 块，适用于小米 MiMo、阿里百炼 DashScope 兼容模式、OpenRouter 等原生全模态模型（仅 chat_completions 生效）。"
+    },
+    "videoFps": "视频采样帧率 (FPS)",
+    "videoFpsDescription": "video_url 模式下的抽样帧率。大于 0 时发送 fps 参数（如 0.5 或 2.0），0 表示不限制/不发送。",
+    "videoInlineMaxMb": "视频内联大小上限 (MB)",
+    "videoInlineMaxMbDescription": "video_url 模式下转为 DataURI 发送的视频体积上限。超过时自动降级为抽帧或占位符，避免请求体过大导致超时或拒收。",
+    "videoUrlPassthrough": "视频公网 URL 直通",
+    "videoUrlPassthroughOptions": {
+      "off": "关闭（先下载转 DataURI，默认）",
+      "on": "开启（直接透传原始 URL）"
+    },
+    "videoUrlPassthroughDescription": {
+      "off": "默认推荐。先下载转为 DataURI，避免临时链接或第三方防盗链过期导致多轮对话卡死 400。",
+      "on": "直接将原始 http(s) 链接填入 video_url.url。适合视频链接稳定且模型服务方可直连公网的情况。"
+    },
+    "videoPartExtra": "视频块额外参数 (JSON)",
+    "videoPartExtraDescription": "video_url 模式下合并进视频块的 JSON 对象。同级合并如 {\"media_resolution\":\"default\"}；若含 video_url 键且为对象则合并至内部 video_url。",
+    "videoPartExtraPlaceholder": "例如: {\"media_resolution\": \"default\"}",
+    "videoFileModeHint": "当前为 file 模式（兼容 LiteLLM / Gemini 中转）。切换为 video_url 可进一步配置采样帧率、内联上限与额外参数。",
     "capabilityText": "文本对话",
     "capabilityImage": "图片理解",
     "capabilityAudio": "语音处理",
@@ -184,6 +230,7 @@
     "rerankServiceDisabled": "启用 Rerank 以提升 RAG 检索质量",
     "embeddingSaveWarningTitle": "修改向量数据库配置",
     "embeddingSaveWarningDesc": "修改嵌入模型服务 / Qdrant 部署方式将导致历史向量数据需要迁移重构，建议先备份 data/ai_core 文件夹，保存后需重启服务生效，迁移可能耗时较久。",
+    "webSearchFetch": "网络搜索 / 抓取",
     "webSearchService": "网络搜索服务",
     "webSearchServiceDesc": "配置网络搜索能力",
     "primaryProvider": "主用搜索源",
@@ -208,16 +255,23 @@
     "anysearchConfig": "AnySearch配置",
     "firecrawlConfig": "Firecrawl配置",
     "jinaConfig": "Jina 配置（s.jina.ai / r.jina.ai）",
+    "deepseekConfig": "DeepSeek 配置（搜索与抓取）",
     "miniMaxConfig": "MiniMax配置",
     "maxResults": "最大结果数",
     "searchDepth": "搜索深度",
-    "searchType": "搜索类型",
     "apiHost": "API 主机地址",
-    "resourceMode": "资源提供方式"
+    "resourceMode": "资源提供方式",
+    "renderImageSources": "出图配图来源",
+    "renderImageSourcesDesc": "render_agent 出图前按此顺序找配图，前一个来源凑够张数就停。留空则不找配图。插件图库用插件登记的图片；Tavily 用本页的 Tavily 密钥；Firecrawl 是官方图片搜索，没填密钥走免费档；360 是公开图片搜索，不需要密钥。",
+    "renderEmbedImages": "允许嵌入配图",
+    "renderEmbedImagesDesc": "开启后，出图前会按设定的来源搜图并嵌进长图；关闭后不再搜图，页头和对象改用内置图标。默认开启。",
+    "renderCardSection": "卡片出图配图",
+    "renderCardSectionDesc": "配置 AI 生成卡片长图时的配图搜索来源与嵌入行为。",
+    "renderEmbedImagesDisabledHint": "已停用配图嵌入。出图时将直接使用系统与插件图标，不进行网络搜图。"
   },
   "webFetch": {
     "title": "网页抓取服务",
-    "description": "配置 web_fetch_tool：主用 Jina / local，支持错误切换与自动分流。保存后即时生效，无需重启。",
+    "description": "配置 web_fetch_tool：主用 Jina / DeepSeek / local，支持错误切换与自动分流。保存后即时生效，无需重启。",
     "provider": "抓取提供方",
     "primaryProvider": "主用抓取源",
     "lbStrategy": "多源策略",
@@ -230,10 +284,13 @@
     "fallbackConfigSectionDesc": "备用抓取源的参数；主用失败时才会用到。",
     "providerLocal": "本机 (local)",
     "providerJina": "Jina (r.jina.ai)",
+    "providerDeepSeek": "DeepSeek (Fetch API)",
     "localHint": "本机用 aiohttp 直连目标站，可配代理 / UA / 超时。",
     "jinaHint": "经 r.jina.ai 读取；API Key 可选，填写可提高额度。默认主用。",
+    "deepseekHint": "经 DeepSeek 官方 Fetch 接口抓取并提取 Markdown，需配置 API Key。",
     "configNotLoaded": "尚未加载网页抓取服务配置，请确认后端已启动并注册 WebFetch 配置项",
-    "jinaConfigNotLoaded": "尚未加载 Jina 配置，请确认后端已注册「Jina搜索抓取配置」"
+    "jinaConfigNotLoaded": "尚未加载 Jina 配置，请确认后端已注册「Jina搜索抓取配置」",
+    "deepseekConfigNotLoaded": "尚未加载 DeepSeek 配置，请确认后端已注册「DeepSeek搜索抓取配置」"
   },
   "relationshipSettings": {
     "title": "关系温度",
@@ -353,6 +410,9 @@
     "noActiveConfigTitle": "配置未激活",
     "noConfigFileTitle": "暂无配置文件",
     "noConfigFileWarning": "请先点击右上角「新建配置」添加一个配置文件，然后再为高级任务和低级任务选择对应的配置"
+  },
+  "multimodal": {
+    "title": "多模态"
   },
   "imageUnderstand": {
     "title": "图片理解服务",

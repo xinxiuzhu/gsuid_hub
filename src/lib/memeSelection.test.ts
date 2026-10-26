@@ -39,13 +39,15 @@ describe('meme selection', () => {
   });
 
   it('supports exclusions in all-matching mode', () => {
-    let selection = selectAllMatching({ status: 'tagged' }, 'key', 10);
+    const filter = normalizeMemeFilter({ status: 'tagged', packId: '  pack-a  ' });
+    expect(isFullLibraryFilter(filter)).toBe(false);
+    let selection = selectAllMatching(filter, 'key', 10);
     selection = toggleMemeSelection(selection, 'a');
     expect(selectedMemeCount(selection)).toBe(9);
     expect(isMemeSelected(selection, 'a')).toBe(false);
     expect(memeSelectionToApi(selection)).toEqual({
       mode: 'filter',
-      filter: { status: 'tagged' },
+      filter: { status: 'tagged', pack_id: 'pack-a' },
       exclude_ids: ['a'],
     });
   });
@@ -104,12 +106,12 @@ describe('meme selection', () => {
   it('wires archive export and purge reset to the current selection model', () => {
     const source = readFileSync(new URL('../pages/AIMemePage.tsx', import.meta.url), 'utf8');
     const exportHandler = source.slice(
-      source.indexOf('const handleExportDotMeme ='),
-      source.indexOf('const handleImportDotMeme ='),
+      source.indexOf('const handleBatchExport ='),
+      source.indexOf('// Purge rejected'),
     );
     expect(exportHandler).toContain('memeSelectionToExport(selection, filterFolder)');
-    expect(exportHandler).toMatch(/if \(!request\)\s*\{[\s\S]*exportExplicitOnly[\s\S]*return;/);
-    expect(exportHandler).toContain('memeApi.exportMemes(request.ids, request.folder)');
+    expect(exportHandler).toMatch(/!request[\s\S]*exportExplicitOnly[\s\S]*return;/);
+    expect(exportHandler).toContain('memeApi.exportMemes(request.ids)');
     const purgeHandler = source.slice(
       source.indexOf('const handlePurgeAll ='),
       source.indexOf('const handleBatchRetagPending ='),

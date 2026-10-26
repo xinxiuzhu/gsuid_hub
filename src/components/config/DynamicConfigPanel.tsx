@@ -1,11 +1,6 @@
 import { Key, HelpCircle, SlidersHorizontal, Search, Globe, Cog } from 'lucide-react';
 import { Label } from '@/components/ui/label';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { ConfigField, ConfigValue, ConfigFieldType, ConfigFieldDefinition } from './ConfigField';
 import { RepeatGroupField, RepeatGroupItem } from './RepeatGroupField';
 import { PluginConfigItem } from '@/lib/api';
@@ -13,6 +8,12 @@ import { PluginConfigItem } from '@/lib/api';
 // ============================================================================
 // 类型映射：后端 type → ConfigField type
 // ============================================================================
+
+/** 字段名或标题里带 key / 密钥的，独占一行，不进三列。 */
+function isSecretKeyField(fieldKey: string, item: PluginConfigItem): boolean {
+  const title = item.title == null ? '' : String(item.title);
+  return /key/i.test(fieldKey) || /key/i.test(title) || title.includes('密钥');
+}
 
 // 归一化选项：所有元素转为字符串
 function normalizeOptions(options: unknown): string[] {
@@ -126,7 +127,10 @@ function coerceValue(fieldType: string, rawType: string, rawValue: unknown): Con
   return rawValue == null ? '' : String(rawValue);
 }
 
-export function pluginConfigItemToFieldDef(fieldKey: string, item: PluginConfigItem): ConfigFieldDefinition {
+export function pluginConfigItemToFieldDef(
+  fieldKey: string,
+  item: PluginConfigItem,
+): ConfigFieldDefinition {
   const fieldType = mapBackendTypeToFieldType(item);
   const rawType = (item.type || '').toLowerCase();
 
@@ -169,8 +173,6 @@ interface DynamicConfigPanelProps {
   onChange: (configId: string, fieldKey: string, value: ConfigValue) => void;
   /** 可选：需要排除的字段 key 列表 */
   excludeKeys?: string[];
-  /** 可选：自定义字段布局，指定哪些字段放在同一行（二维数组） */
-  layout?: string[][];
 }
 
 export function DynamicConfigPanel({
@@ -178,20 +180,8 @@ export function DynamicConfigPanel({
   configId,
   onChange,
   excludeKeys = [],
-  layout,
 }: DynamicConfigPanelProps) {
-  // 获取所有需要渲染的字段
-  const allFields = Object.entries(config).filter(
-    ([key]) => !excludeKeys.includes(key)
-  );
-
-  // 如果没有指定 layout，按默认方式渲染（每个字段独占一行）
-  const layoutGroups: string[][] = layout || allFields.map(([key]) => [key]);
-
-  // 收集已布局的字段 key
-  const layoutedKeys = new Set(layoutGroups.flat());
-  // 未在 layout 中指定的字段，追加到末尾
-  const remainingFields = allFields.filter(([key]) => !layoutedKeys.has(key));
+  const allFields = Object.entries(config).filter(([key]) => !excludeKeys.includes(key));
 
   const renderField = (fieldKey: string, item: PluginConfigItem) => {
     const fieldType = mapBackendTypeToFieldType(item);
@@ -202,10 +192,7 @@ export function DynamicConfigPanel({
 
     // divider 类型直接渲染，不需要 Label
     if (fieldType === 'divider') {
-      const dividerValue =
-        typeof item.value === 'string' && item.value
-          ? item.value
-          : null;
+      const dividerValue = typeof item.value === 'string' && item.value ? item.value : null;
       return (
         <ConfigField
           key={fieldKey}
@@ -295,31 +282,31 @@ export function DynamicConfigPanel({
     );
   };
 
-  return (
-    <div className="space-y-4">
-      {layoutGroups.map((group, groupIndex) => {
-        const fields = group
-          .map((key) => {
-            const item = config[key];
-            return item ? { key, item } : null;
-          })
-          .filter(Boolean) as { key: string; item: PluginConfigItem }[];
+  const blocks: React.ReactNode[] = [];
+  let rowBuffer: { key: string; item: PluginConfigItem }[] = [];
+  const flushRow = () => {
+    if (rowBuffer.length === 0) return;
+    const rowKey = rowBuffer.map((field) => field.key).join('-');
+    blocks.push(
+      <div key={`row-${rowKey}`} className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {rowBuffer.map(({ key, item }) => renderField(key, item))}
+      </div>,
+    );
+    rowBuffer = [];
+  };
 
-        if (fields.length === 0) return null;
+  for (const [key, item] of allFields) {
+    const fieldType = mapBackendTypeToFieldType(item);
+    const solo =
+      isSecretKeyField(key, item) || fieldType === 'divider' || fieldType === 'repeatgroup';
+    if (solo) {
+      flushRow();
+      blocks.push(renderField(key, item));
+      continue;
+    }
+    rowBuffer.push({ key, item });
+  }
+  flushRow();
 
-        if (fields.length === 1) {
-          return renderField(fields[0].key, fields[0].item);
-        }
-
-        return (
-          <div key={groupIndex} className="grid grid-cols-2 gap-4">
-            {fields.map(({ key, item }) => renderField(key, item))}
-          </div>
-        );
-      })}
-
-      {/* 渲染未在 layout 中指定的剩余字段 */}
-      {remainingFields.map(([key, item]) => renderField(key, item))}
-    </div>
-  );
+  return <div className="space-y-4">{blocks}</div>;
 }

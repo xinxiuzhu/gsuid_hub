@@ -1,10 +1,5 @@
 import { AlertTriangle } from 'lucide-react';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import {
   asHoverIcon,
@@ -52,7 +47,7 @@ export function SidebarItem({
       className={cn(
         hoverIconGroupClass,
         'w-full flex items-center rounded-lg text-sm transition-all duration-200 text-left',
-        collapsed ? 'justify-center px-0 py-2' : 'gap-2.5 px-2.5 py-2',
+        collapsed ? 'justify-center px-0 py-3.5 sm:py-2' : 'gap-2.5 px-2.5 py-2',
         isActive
           ? 'bg-primary/10 text-primary shadow-sm'
           : disabled
@@ -73,9 +68,7 @@ export function SidebarItem({
       </div>
       {!collapsed && (
         <>
-          <span className={cn('font-medium', isActive && 'text-primary')}>
-            {title}
-          </span>
+          <span className={cn('font-medium', isActive && 'text-primary')}>{title}</span>
           {alert && (
             <span className="shrink-0 ml-auto text-red-500" data-alert-icon>
               <SidebarHoverIcon icon={AlertTriangle} className="w-3.5 h-3.5" />

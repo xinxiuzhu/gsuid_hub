@@ -13,6 +13,7 @@ export type MemeSelectionState =
 export type PageSelectionState = boolean | 'indeterminate';
 
 export interface MemeFilterInput {
+  packId?: string;
   folder?: string;
   status?: string;
   q?: string;
@@ -25,10 +26,12 @@ export function emptyMemeSelection(): MemeSelectionState {
 
 export function normalizeMemeFilter(input: MemeFilterInput): MemeMatchFilter {
   const filter: MemeMatchFilter = {};
+  const packId = input.packId?.trim();
   const folder = input.folder?.trim();
   const status = input.status?.trim();
   const q = input.q?.trim();
   const personaHint = input.personaHint?.trim();
+  if (packId) filter.pack_id = packId;
   if (folder) filter.folder = folder;
   if (status) filter.status = status;
   if (q) filter.q = q;
@@ -38,6 +41,7 @@ export function normalizeMemeFilter(input: MemeFilterInput): MemeMatchFilter {
 
 export function memeFilterKey(filter: MemeMatchFilter, sort: string): string {
   return JSON.stringify({
+    pack_id: filter.pack_id ?? '',
     folder: filter.folder ?? '',
     status: filter.status ?? '',
     q: filter.q ?? '',
@@ -47,7 +51,7 @@ export function memeFilterKey(filter: MemeMatchFilter, sort: string): string {
 }
 
 export function isFullLibraryFilter(filter: MemeMatchFilter): boolean {
-  return !filter.folder && !filter.status && !filter.q && !filter.persona_hint;
+  return !filter.pack_id && !filter.folder && !filter.status && !filter.q && !filter.persona_hint;
 }
 
 export function canSelectAllMatching(filter: MemeMatchFilter): boolean {

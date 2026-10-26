@@ -17,11 +17,7 @@ export interface ServiceSwitchSectionProps {
  *
  * 内部已废弃独立页面（已合并至 `AIConfigPage` 顶部），但保留组件便于复用。
  */
-export function ServiceSwitchSection({
-  isAIEnabled,
-  t,
-  onChange,
-}: ServiceSwitchSectionProps) {
+export function ServiceSwitchSection({ isAIEnabled, t, onChange }: ServiceSwitchSectionProps) {
   return (
     <div className="space-y-5">
       <div>
@@ -36,7 +32,7 @@ export function ServiceSwitchSection({
         </p>
       </div>
 
-      <div className="flex items-center gap-5 p-5 rounded-2xl border border-border/30 bg-card/30">
+      <div className="flex items-center gap-5 p-5 rounded-2xl glass-card transition-all">
         <div
           className={cn(
             'flex items-center justify-center flex-shrink-0 transition-all duration-500',
@@ -47,15 +43,12 @@ export function ServiceSwitchSection({
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-3">
-            <span className="text-base font-semibold">
-              {t('aiConfig.serviceSwitch.title')}
-            </span>
+            <span className="text-base font-semibold">{t('aiConfig.serviceSwitch.title')}</span>
             <Badge
               variant={isAIEnabled ? 'default' : 'secondary'}
               className={cn(
                 'text-xs font-medium',
-                isAIEnabled &&
-                  'bg-primary/15 text-primary hover:bg-primary/20 border-primary/20',
+                isAIEnabled && 'bg-primary/15 text-primary hover:bg-primary/20 border-primary/20',
               )}
             >
               {isAIEnabled ? t('common.enabled') : t('common.disabled')}
@@ -67,11 +60,7 @@ export function ServiceSwitchSection({
               : t('aiConfig.serviceSwitch.disabledDesc')}
           </p>
         </div>
-        <Switch
-          checked={isAIEnabled}
-          onCheckedChange={onChange}
-          className="scale-110"
-        />
+        <Switch checked={isAIEnabled} onCheckedChange={onChange} className="scale-110" />
       </div>
     </div>
   );

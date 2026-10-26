@@ -13,11 +13,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import {
-  frameworkConfigApi,
-  type FrameworkConfigListItem,
-  type PluginConfigItem,
-} from '@/lib/api';
+import { frameworkConfigApi, type FrameworkConfigListItem, type PluginConfigItem } from '@/lib/api';
 import { useLanguage } from '@/contexts/LanguageContext';
 import type { LocalFrameworkConfig } from '../types';
 import type { ConfigValue } from '@/components/config';
@@ -50,9 +46,12 @@ export interface UseFrameworkConfigReturn {
    * 原子地同步 configs 与 originalConfig（保存时剥离冲突字段后使用，
    * 避免 updateConfigValue + markSaved 双 setState 不一致）。
    */
-  applyConfigsAndMarkSaved: (
-    nextConfigs: Record<string, LocalFrameworkConfig>,
-  ) => void;
+  applyConfigsAndMarkSaved: (nextConfigs: Record<string, LocalFrameworkConfig>) => void;
+  /**
+   * 字段已由即时接口落库。同时写入编辑态和快照，避免保存按钮误亮，
+   * 也避免下次保存把旧值写回去。
+   */
+  syncPersistedField: (configId: string, fieldKey: string, value: ConfigValue) => void;
   /** 手动设置 isSaving（保存流使用） */
   setIsSaving: (saving: boolean) => void;
 }
@@ -65,9 +64,7 @@ export function useFrameworkConfig(): UseFrameworkConfigReturn {
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [originalConfig, setOriginalConfig] = useState<
-    Record<string, LocalFrameworkConfig>
-  >({});
+  const [originalConfig, setOriginalConfig] = useState<Record<string, LocalFrameworkConfig>>({});
   const [hasInitialized, setHasInitialized] = useState(false);
 
   const fetchedConfigNamesRef = useRef<Set<string>>(new Set());
@@ -76,9 +73,7 @@ export function useFrameworkConfig(): UseFrameworkConfigReturn {
     try {
       setIsLoading(true);
       const data = await frameworkConfigApi.getFrameworkConfigList('GsCore AI');
-      const filteredData = data.filter(
-        (config) => !config.name.toLowerCase().includes('人设'),
-      );
+      const filteredData = data.filter((config) => !config.name.toLowerCase().includes('人设'));
       setConfigList(filteredData);
     } catch (error) {
       console.error('Failed to fetch AI config list:', error);
@@ -117,10 +112,7 @@ export function useFrameworkConfig(): UseFrameworkConfigReturn {
   useEffect(() => {
     if (configList.length === 0) return;
     configList.forEach((config) => {
-      if (
-        !configs[config.id] &&
-        !fetchedConfigNamesRef.current.has(config.full_name)
-      ) {
+      if (!configs[config.id] && !fetchedConfigNamesRef.current.has(config.full_name)) {
         fetchedConfigNamesRef.current.add(config.full_name);
         fetchConfigDetail(config.full_name);
       }
@@ -158,9 +150,29 @@ export function useFrameworkConfig(): UseFrameworkConfigReturn {
     [],
   );
 
-  const markSaved = useCallback(
-    (nextConfigs: Record<string, LocalFrameworkConfig>) => {
-      setOriginalConfig(JSON.parse(JSON.stringify(nextConfigs)));
+  const markSaved = useCallback((nextConfigs: Record<string, LocalFrameworkConfig>) => {
+    setOriginalConfig(JSON.parse(JSON.stringify(nextConfigs)));
+  }, []);
+
+  const syncPersistedField = useCallback(
+    (configId: string, fieldKey: string, value: ConfigValue) => {
+      const apply = (prev: Record<string, LocalFrameworkConfig>) => {
+        const current = prev[configId];
+        const field = current?.config?.[fieldKey];
+        if (!current || !field) return prev;
+        return {
+          ...prev,
+          [configId]: {
+            ...current,
+            config: {
+              ...current.config,
+              [fieldKey]: { ...field, value },
+            },
+          },
+        };
+      };
+      setConfigs(apply);
+      setOriginalConfig(apply);
     },
     [],
   );
@@ -196,6 +208,7 @@ export function useFrameworkConfig(): UseFrameworkConfigReturn {
     updateConfigValue,
     markSaved,
     applyConfigsAndMarkSaved,
+    syncPersistedField,
     setIsSaving,
   };
 }

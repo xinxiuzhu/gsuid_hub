@@ -9,7 +9,7 @@ import {
   Settings2,
   Shuffle,
 } from 'lucide-react';
-import { JinaAi } from '@thesvg/react';
+import { JinaAi, Deepseek } from '@thesvg/react';
 import { Badge } from '@/components/ui/badge';
 import { ChipGroup } from '@/components/ui/MultiSelectChipGroup';
 import { DynamicConfigPanel, type ConfigValue } from '@/components/config';
@@ -25,7 +25,7 @@ import {
 export interface WebFetchSectionProps {
   t: (key: string) => string;
 
-  /** 主用抓取提供方：Jina | local */
+  /** 主用抓取提供方：Jina | DeepSeek | local */
   webfetchProvider: string;
   webfetchProviderOptions?: string[];
 
@@ -39,6 +39,8 @@ export interface WebFetchSectionProps {
   webFetchConfig?: { id: string; config: Record<string, PluginConfigItem> };
   /** Jina Reader（r.jina.ai）配置，API Key 可选 */
   jinaConfig?: { id: string; config: Record<string, PluginConfigItem> };
+  /** DeepSeek Fetch API 配置，需 API Key */
+  deepseekConfig?: { id: string; config: Record<string, PluginConfigItem> };
 
   onChangeProvider: (provider: string) => void;
   onChangeLbStrategy: (strategy: string) => void;
@@ -49,6 +51,7 @@ export interface WebFetchSectionProps {
 function getFetchProviderIcon(provider: string) {
   const key = provider.trim().toLowerCase();
   if (key === 'jina') return <JinaAi width={14} height={14} variant="default" />;
+  if (key === 'deepseek') return <Deepseek width={14} height={14} variant="default" />;
   return <HardDrive className="w-3.5 h-3.5" />;
 }
 
@@ -59,35 +62,30 @@ const STRATEGY_ICONS: Record<string, ReactNode> = {
 };
 
 function ConfigBlock({
-  role,
+  blockRole,
   title,
   icon,
   roleLabel,
   children,
 }: {
-  role: 'primary' | 'fallback';
+  blockRole: 'primary' | 'fallback';
   title: string;
   icon?: ReactNode;
   roleLabel: string;
   children: ReactNode;
 }) {
-  const isPrimary = role === 'primary';
+  const isPrimary = blockRole === 'primary';
   return (
     <div
       className={cn(
-        'rounded-lg border p-4 space-y-3',
-        isPrimary
-          ? 'border-primary/30 bg-primary/5'
-          : 'border-dashed border-border/60 bg-muted/20',
+        'rounded-lg border p-4 space-y-3 glass-card transition-all',
+        isPrimary ? 'border-primary/40' : 'border-dashed border-border/60',
       )}
     >
       <div className="flex items-center gap-2 min-w-0">
         <Badge
           variant={isPrimary ? 'default' : 'outline'}
-          className={cn(
-            'shrink-0 text-[10px] h-5 px-1.5',
-            !isPrimary && 'text-muted-foreground',
-          )}
+          className={cn('shrink-0 text-[10px] h-5 px-1.5', !isPrimary && 'text-muted-foreground')}
         >
           {roleLabel}
         </Badge>
@@ -105,13 +103,14 @@ function ConfigBlock({
 export function WebFetchSection({
   t,
   webfetchProvider,
-  webfetchProviderOptions = ['Jina', 'local'],
+  webfetchProviderOptions = ['Jina', 'DeepSeek', 'local'],
   webfetchLbStrategy,
   webfetchLbStrategyOptions = ['none', 'error_switch', 'auto_balance'],
   webfetchFallbackOrder,
   webfetchFallbackOptions,
   webFetchConfig,
   jinaConfig,
+  deepseekConfig,
   onChangeProvider,
   onChangeLbStrategy,
   onChangeFallbackOrder,
@@ -120,6 +119,7 @@ export function WebFetchSection({
   const providerLabels: Record<string, string> = {
     local: t('aiConfig.webFetch.providerLocal'),
     Jina: t('aiConfig.webFetch.providerJina'),
+    DeepSeek: t('aiConfig.webFetch.providerDeepSeek'),
   };
 
   const strategyLabels: Record<string, string> = {
@@ -130,6 +130,7 @@ export function WebFetchSection({
 
   const primary = webfetchProvider || 'Jina';
   const isJina = primary.trim().toLowerCase() === 'jina';
+  const isDeepSeek = primary.trim().toLowerCase() === 'deepseek';
 
   // 展示全部候选（含主用）；主用禁用且不以「已选」展示
   const fallbackOpts =
@@ -141,10 +142,7 @@ export function WebFetchSection({
     webfetchLbStrategy === 'error_switch' || webfetchLbStrategy === 'auto_balance';
 
   /** 下方配置块 / Chip 已选展示：不含当前主用（大小写不敏感） */
-  const effectiveFallbacks = filterOutPrimaryProvider(
-    webfetchFallbackOrder,
-    primary,
-  );
+  const effectiveFallbacks = filterOutPrimaryProvider(webfetchFallbackOrder, primary);
 
   const fallbackChipValue = effectiveFallbacks;
 
@@ -152,6 +150,7 @@ export function WebFetchSection({
     if (providerLabels[p]) return providerLabels[p];
     const k = p.trim().toLowerCase();
     if (k === 'jina') return providerLabels.Jina || p;
+    if (k === 'deepseek') return providerLabels.DeepSeek || p;
     if (k === 'local') return providerLabels.local || p;
     return p;
   };
@@ -171,19 +170,29 @@ export function WebFetchSection({
           config={jinaConfig.config}
           configId={jinaConfig.id}
           onChange={onUpdateConfig}
-          layout={[
-            ['api_key'],
-            ['timeout', 'reader_base_url'],
-          ]}
+        />
+      );
+    }
+    if (key === 'deepseek') {
+      if (!deepseekConfig) {
+        return (
+          <p className="text-sm text-muted-foreground">
+            {t('aiConfig.webFetch.deepseekConfigNotLoaded')}
+          </p>
+        );
+      }
+      return (
+        <DynamicConfigPanel
+          config={deepseekConfig.config}
+          configId={deepseekConfig.id}
+          onChange={onUpdateConfig}
         />
       );
     }
     // local
     if (!webFetchConfig) {
       return (
-        <p className="text-sm text-muted-foreground">
-          {t('aiConfig.webFetch.configNotLoaded')}
-        </p>
+        <p className="text-sm text-muted-foreground">{t('aiConfig.webFetch.configNotLoaded')}</p>
       );
     }
     return (
@@ -191,12 +200,6 @@ export function WebFetchSection({
         config={webFetchConfig.config}
         configId={webFetchConfig.id}
         onChange={onUpdateConfig}
-        layout={[
-          ['proxy', 'trust_env'],
-          ['timeout', 'max_download_mb'],
-          ['user_agent'],
-          ['accept_language', 'max_content_length'],
-        ]}
       />
     );
   };
@@ -216,7 +219,9 @@ export function WebFetchSection({
           description={
             isJina
               ? t('aiConfig.webFetch.jinaHint')
-              : t('aiConfig.webFetch.localHint')
+              : isDeepSeek
+                ? t('aiConfig.webFetch.deepseekHint')
+                : t('aiConfig.webFetch.localHint')
           }
           className="text-xs font-medium text-muted-foreground"
         />
@@ -247,9 +252,7 @@ export function WebFetchSection({
             icon: STRATEGY_ICONS[s] ?? <GitBranch className="w-3.5 h-3.5" />,
           }))}
           value={[webfetchLbStrategy || 'error_switch']}
-          onValueChange={(newValue) =>
-            onChangeLbStrategy(newValue[0] || 'error_switch')
-          }
+          onValueChange={(newValue) => onChangeLbStrategy(newValue[0] || 'error_switch')}
           selectMode="single"
           showRadioIndicator
         />
@@ -269,9 +272,7 @@ export function WebFetchSection({
               const base = providerLabel(p);
               return {
                 value: p,
-                label: isPrimary
-                  ? `${base} (${t('aiConfig.serviceProvider.rolePrimary')})`
-                  : base,
+                label: isPrimary ? `${base} (${t('aiConfig.serviceProvider.rolePrimary')})` : base,
                 icon: getFetchProviderIcon(p),
                 disabled: isPrimary,
               };
@@ -279,9 +280,7 @@ export function WebFetchSection({
             value={fallbackChipValue}
             onValueChange={(visibleSelected) => {
               // 绝不把当前主用写入 fallback_order
-              onChangeFallbackOrder(
-                filterOutPrimaryProvider(visibleSelected, primary),
-              );
+              onChangeFallbackOrder(filterOutPrimaryProvider(visibleSelected, primary));
             }}
             selectMode="multiple"
             allowEmpty
@@ -299,7 +298,7 @@ export function WebFetchSection({
           className="text-xs font-medium text-muted-foreground"
         />
         <ConfigBlock
-          role="primary"
+          blockRole="primary"
           title={providerLabel(primary)}
           icon={getFetchProviderIcon(primary)}
           roleLabel={t('aiConfig.serviceProvider.rolePrimary')}
@@ -320,7 +319,7 @@ export function WebFetchSection({
           {effectiveFallbacks.map((p) => (
             <ConfigBlock
               key={p}
-              role="fallback"
+              blockRole="fallback"
               title={providerLabel(p)}
               icon={getFetchProviderIcon(p)}
               roleLabel={t('aiConfig.serviceProvider.roleFallback')}

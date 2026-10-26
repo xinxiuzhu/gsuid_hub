@@ -7,11 +7,11 @@ import { AppSidebar } from './AppSidebar';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBrand } from '@/contexts/BrandContext';
-import { cn } from '@/lib/utils';
 import { Menu } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
+import { resolveApiAssetUrl } from '@/lib/api';
 
 function LayoutHeader() {
   const { toggleSidebar } = useSidebar();
@@ -23,12 +23,19 @@ function LayoutHeader() {
   if (!isMobile) return null;
 
   return (
-    <div className="sticky top-0 z-10 w-full bg-background/80 backdrop-blur-sm border-b border-border/40 px-4 py-2 flex items-center justify-between">
-      <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={toggleSidebar} aria-label="打开菜单">
+    <div className="sticky top-0 z-10 w-full bg-background/80 backdrop-blur-sm border-b border-border/40 px-4 py-2 flex items-center justify-between gap-2">
+      <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={toggleSidebar}
+          aria-label="打开菜单"
+          className="shrink-0"
+        >
           <Menu className="h-5 w-5" />
         </Button>
-        <div className="flex items-center gap-1">
+        {/* 品牌区：min-w-0 + truncate，品牌名过长时收缩而不是把右侧头像挤出屏幕 */}
+        <div className="flex min-w-0 items-center gap-1">
           <div className="w-8 h-8 flex items-center justify-center shrink-0 overflow-hidden">
             <img
               src={brandIconUrl}
@@ -37,21 +44,24 @@ function LayoutHeader() {
               key={brandIconUrl}
             />
           </div>
-          <span className="font-semibold">{brandTitle}</span>
-          {/* rounded-md 挂 --radius，与侧栏版本号一致随主题圆角强度变化 */}
-          <Badge variant="default" className="rounded-md text-xs font-medium ml-1">
-            v{import.meta.env.PACKAGE_VERSION || '0.3.0'}
+          <span className="min-w-0 truncate font-semibold">{brandTitle}</span>
+          <Badge
+            variant="secondary"
+            className="text-xs font-mono font-medium ml-1 shrink-0 bg-muted/80 text-foreground border border-border/50"
+          >
+            v{import.meta.env.PACKAGE_VERSION || PACKAGE_VERSION || '0.4.2'}
           </Badge>
         </div>
       </div>
       <button
         onClick={() => navigate('/settings')}
-        className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity"
+        aria-label={user?.name || '设置'}
+        className="flex shrink-0 cursor-pointer items-center rounded-full transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <Avatar className="w-8 h-8">
           {user?.avatar ? (
             <img
-              src={user.avatar}
+              src={resolveApiAssetUrl(user.avatar)}
               alt={user.name}
               className="w-full h-full object-cover rounded-full"
             />
@@ -67,11 +77,17 @@ function LayoutHeader() {
 }
 
 function LayoutContent() {
-  const { style, backgroundImage, blurIntensity } = useTheme();
+  const { style, backgroundImage, blurIntensity, backgroundBlur } = useTheme();
 
   const isGradient = backgroundImage?.startsWith('linear-gradient');
   const isImage = backgroundImage && !isGradient;
   const isGlassmorphism = style === 'glassmorphism';
+  const isLuminous = style === 'luminous';
+  const isLiquid = style === 'liquid';
+  // 光感/液态默认壁纸用静态 filter 模糊，不再铺整屏 backdrop-filter。
+  // 整屏 backdrop 会垫在每张卡下面，侧栏一改宽度就整屏重采样。
+  const frostBlur =
+    (isLuminous || isLiquid) && !backgroundImage && blurIntensity > 0 ? blurIntensity : 0;
 
   // 合并背景层为单一元素，减少DOM层级和重绘
   const getBackgroundStyle = (): React.CSSProperties => {
@@ -79,10 +95,49 @@ function LayoutContent() {
       position: 'fixed',
       inset: 0,
       zIndex: -10,
-      // GPU加速优化
-      willChange: 'transform',
-      transform: 'translateZ(0)',
     };
+
+    if (isLiquid) {
+      if (isGradient) {
+        return { ...baseStyle, background: backgroundImage };
+      }
+      if (isImage) {
+        return {
+          ...baseStyle,
+          backgroundImage: `url("${resolveApiAssetUrl(backgroundImage)}")`,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          backgroundRepeat: 'no-repeat',
+          backgroundAttachment: 'fixed',
+        };
+      }
+      // 苹果液态玻璃默认背景：三原色散流体透镜光斑 (Cyan/Magenta/Amber) 与高通透底色
+      return {
+        ...baseStyle,
+        background: `radial-gradient(ellipse 65% 55% at 18% 12%, hsl(var(--primary) / 0.22) 0%, transparent 60%), radial-gradient(ellipse 55% 45% at 85% 20%, rgba(0, 210, 255, 0.16) 0%, transparent 55%), radial-gradient(ellipse 60% 50% at 78% 82%, rgba(255, 60, 160, 0.14) 0%, transparent 60%), radial-gradient(circle 35% at 30% 75%, rgba(255, 190, 70, 0.10) 0%, transparent 50%), hsl(var(--background))`,
+      };
+    }
+
+    if (isLuminous) {
+      if (isGradient) {
+        return { ...baseStyle, background: backgroundImage };
+      }
+      if (isImage) {
+        return {
+          ...baseStyle,
+          backgroundImage: `url("${resolveApiAssetUrl(backgroundImage)}")`,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          backgroundRepeat: 'no-repeat',
+          backgroundAttachment: 'fixed',
+        };
+      }
+      // 光感玻璃默认背景：有机流体折射光斑，提供丰富的光学折射源
+      return {
+        ...baseStyle,
+        background: `radial-gradient(ellipse at 12% 15%, hsl(var(--primary) / 0.16) 0%, transparent 55%), radial-gradient(ellipse at 88% 85%, hsl(var(--accent) / 0.14) 0%, transparent 50%), radial-gradient(circle at 50% 45%, hsl(var(--chart-2) / 0.08) 0%, transparent 65%), hsl(var(--background))`,
+      };
+    }
 
     if (isGlassmorphism) {
       if (isGradient) {
@@ -91,7 +146,7 @@ function LayoutContent() {
       if (isImage) {
         return {
           ...baseStyle,
-          backgroundImage: `url("${backgroundImage}")`,
+          backgroundImage: `url("${resolveApiAssetUrl(backgroundImage)}")`,
           backgroundSize: 'cover',
           backgroundPosition: 'center',
           backgroundRepeat: 'no-repeat',
@@ -109,7 +164,7 @@ function LayoutContent() {
     if (isImage) {
       return {
         ...baseStyle,
-        backgroundImage: `url("${backgroundImage}")`,
+        backgroundImage: `url("${resolveApiAssetUrl(backgroundImage)}")`,
         backgroundSize: 'cover',
         backgroundPosition: 'center',
         backgroundRepeat: 'no-repeat',
@@ -123,7 +178,7 @@ function LayoutContent() {
     };
   };
 
-  // 毛玻璃叠加层样式 - 仅在需要时渲染
+  // 仅普通毛玻璃保留整屏 backdrop。光感/液态的表面自己会糊，再垫一层会嵌套重采样。
   const overlayStyle = useMemo<React.CSSProperties | null>(() => {
     if (!isGlassmorphism || backgroundImage) return null;
     return {
@@ -133,16 +188,24 @@ function LayoutContent() {
       pointerEvents: 'none',
       backdropFilter: `blur(${blurIntensity}px)`,
       WebkitBackdropFilter: `blur(${blurIntensity}px)`,
-      // GPU加速
-      willChange: 'backdrop-filter',
-      transform: 'translateZ(0)',
     };
   }, [isGlassmorphism, backgroundImage, blurIntensity]);
 
   return (
     <>
-      {/* 合并后的单一背景层 - 使用GPU加速 */}
-      <div style={getBackgroundStyle()} aria-hidden="true" />
+      {/* 壁纸。光感/液态的模糊画在这层静态 filter 上，结果可被缓存。 */}
+      <div className="pointer-events-none fixed inset-0 z-[-10] overflow-hidden" aria-hidden="true">
+        <div
+          style={{
+            ...getBackgroundStyle(),
+            position: 'absolute',
+            zIndex: 0,
+            filter: `blur(calc(var(--background-blur, ${backgroundBlur}px) + ${frostBlur}px))`,
+            transform: 'scale(1.08)',
+            transition: 'filter 0.15s ease-out',
+          }}
+        />
+      </div>
 
       {/* 毛玻璃模式下的额外叠加层（仅毛玻璃模式且无背景图时需要） */}
       {overlayStyle && <div style={overlayStyle} aria-hidden="true" />}
@@ -154,13 +217,7 @@ function LayoutContent() {
         - SidebarProvider already provides the flex container
       */}
       <AppSidebar />
-      <SidebarInset
-        className={cn(
-          'flex flex-col overflow-hidden',
-          // 使用transform代替transition-all，减少重绘
-          'transform-gpu',
-        )}
-      >
+      <SidebarInset className="flex flex-col overflow-hidden">
         <LayoutHeader />
         {/*
           滚动容器与内边距拆开：

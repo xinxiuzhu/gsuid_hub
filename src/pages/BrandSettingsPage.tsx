@@ -15,32 +15,27 @@ import { toast } from 'sonner';
 
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useBrand } from '@/contexts/BrandContext';
 import { Button } from '@/components/ui/button';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
+import { tabToolbarControlClass } from '@/components/ui/TabButtonGroup';
+import { cn } from '@/lib/utils';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { PinnedPage } from '@/components/layout/PinnedPage';
-import {
-  brandApi,
-  getApiErrorMessage,
-  type BrandInfo,
-} from '@/lib/api';
+import { headerActionRowClass, PinnedPage } from '@/components/layout/PinnedPage';
+import { brandApi, getApiErrorMessage, getBrandIconUrl, type BrandInfo } from '@/lib/api';
+
+const PACKAGED_ICON = `${import.meta.env.BASE_URL}ICON.png`;
 
 export default function BrandSettingsPage() {
   const { t } = useLanguage();
   const { mode } = useTheme();
+  const { refresh: refreshGlobalBrand } = useBrand();
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const [info, setInfo] = useState<BrandInfo | null>(null);
   const [title, setTitle] = useState('');
   const [subtitle, setSubtitle] = useState('');
-  const [iconUrl, setIconUrl] = useState<string | null>(null);
   const [iconSource, setIconSource] = useState<'user' | 'default'>('default');
   const [iconVersion, setIconVersion] = useState(Date.now());
   const [loading, setLoading] = useState(true);
@@ -54,7 +49,7 @@ export default function BrandSettingsPage() {
       setTitle(data.data.title);
       setSubtitle(data.data.subtitle);
       setIconSource(data.data.icon_source);
-      if (data.data.icon_url) setIconUrl(data.data.icon_url);
+      setIconVersion(Date.now());
     } catch (e) {
       toast.error(getApiErrorMessage(e, t('brandSettings.savedFail')));
     } finally {
@@ -72,11 +67,10 @@ export default function BrandSettingsPage() {
     try {
       const updated = await brandApi.updateBrand({ title, subtitle });
       setInfo((prev) =>
-        prev
-          ? { ...prev, title: updated.title, subtitle: updated.subtitle }
-          : prev,
+        prev ? { ...prev, title: updated.title, subtitle: updated.subtitle } : prev,
       );
       toast.success(t('brandSettings.savedSuccess'));
+      refreshGlobalBrand();
     } catch (e) {
       toast.error(getApiErrorMessage(e, t('brandSettings.savedFail')));
     } finally {
@@ -89,10 +83,10 @@ export default function BrandSettingsPage() {
   const onUpload = async (file: File) => {
     try {
       const res = await brandApi.uploadIcon(file);
-      setIconUrl(res.icon_url);
       setIconSource(res.icon_source);
       setIconVersion(Date.now());
       toast.success(t('brandSettings.uploadSuccess'));
+      refreshGlobalBrand();
     } catch (e) {
       toast.error(getApiErrorMessage(e, t('brandSettings.uploadFail')));
     }
@@ -105,10 +99,13 @@ export default function BrandSettingsPage() {
       setIconSource('default');
       setIconVersion(Date.now());
       toast.success(t('brandSettings.deleted'));
+      refreshGlobalBrand();
     } catch (e) {
       toast.error(getApiErrorMessage(e, t('brandSettings.savedFail')));
     }
   };
+
+  const displayIconUrl = iconSource === 'user' ? getBrandIconUrl(iconVersion) : PACKAGED_ICON;
 
   return (
     <PinnedPage
@@ -120,21 +117,23 @@ export default function BrandSettingsPage() {
               <ImageIcon className="w-8 h-8 shrink-0" />
               {t('brandSettings.title')}
             </h1>
-            <p className="text-muted-foreground mt-1">
-              {t('brandSettings.description')}
-            </p>
+            <p className="text-muted-foreground mt-1">{t('brandSettings.description')}</p>
           </div>
-          <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+          <div className={headerActionRowClass}>
             <Button
               variant="outline"
-              className="h-9"
+              className={cn(tabToolbarControlClass, 'whitespace-nowrap')}
               onClick={onReset}
               disabled={loading || iconSource === 'default'}
             >
               <RotateCcw className="w-4 h-4" />
               {t('brandSettings.resetToDefault')}
             </Button>
-            <Button className="h-9" onClick={onSubmit} disabled={saving || loading}>
+            <Button
+              className={cn(tabToolbarControlClass, 'button-solid whitespace-nowrap')}
+              onClick={onSubmit}
+              disabled={saving || loading}
+            >
               <Save className="w-4 h-4" />
               {saving ? '…' : t('brandSettings.save')}
             </Button>
@@ -150,9 +149,7 @@ export default function BrandSettingsPage() {
               <ImageIcon className="w-5 h-5" />
               {t('brandSettings.sectionTitle')}
             </CardTitle>
-            <CardDescription>
-              {t('brandSettings.sectionDesc')}
-            </CardDescription>
+            <CardDescription>{t('brandSettings.sectionDesc')}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
             <div className="space-y-2">
@@ -168,9 +165,7 @@ export default function BrandSettingsPage() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="brand-subtitle">
-                {t('brandSettings.subtitleLabel')}
-              </Label>
+              <Label htmlFor="brand-subtitle">{t('brandSettings.subtitleLabel')}</Label>
               <Input
                 id="brand-subtitle"
                 className="h-9"
@@ -183,21 +178,16 @@ export default function BrandSettingsPage() {
 
             <div className="space-y-2">
               <Label>{t('brandSettings.iconLabel')}</Label>
-              <div className="flex items-center gap-4">
+              <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:gap-4">
                 <div className="w-20 h-20 rounded-2xl overflow-hidden border border-border/40 bg-muted flex items-center justify-center">
-                  {iconUrl ? (
-                    <img
-                      src={
-                        iconSource === 'user'
-                          ? `${iconUrl}${iconUrl.includes('?') ? '&' : '?'}t=${iconVersion}`
-                          : iconUrl
-                      }
-                      alt="brand"
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <ImageIcon className="w-8 h-8 text-muted-foreground" />
-                  )}
+                  <img
+                    src={displayIconUrl}
+                    alt="brand"
+                    className="w-full h-full object-cover"
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).src = PACKAGED_ICON;
+                    }}
+                  />
                 </div>
                 <div className="flex flex-col gap-1">
                   <p className="text-sm text-muted-foreground">
@@ -206,12 +196,7 @@ export default function BrandSettingsPage() {
                       : t('brandSettings.iconSourceDefault')}
                   </p>
                   <div className="flex gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-9"
-                      onClick={onPickFile}
-                    >
+                    <Button variant="outline" onClick={onPickFile}>
                       <Upload className="w-4 h-4" />
                       {t('brandSettings.uploadNew')}
                     </Button>
@@ -247,9 +232,7 @@ export default function BrandSettingsPage() {
         <Card className="glass-card">
           <CardHeader>
             <CardTitle>{t('brandSettings.previewTitle')}</CardTitle>
-            <CardDescription>
-              {t('brandSettings.previewSubtitle')}
-            </CardDescription>
+            <CardDescription>{t('brandSettings.previewSubtitle')}</CardDescription>
           </CardHeader>
           <CardContent>
             <div
@@ -257,19 +240,14 @@ export default function BrandSettingsPage() {
               data-style={mode === 'dark' ? 'glassmorphism' : 'glassmorphism'}
             >
               <div className="w-16 h-16 rounded-2xl overflow-hidden bg-muted flex items-center justify-center">
-                {iconUrl ? (
-                  <img
-                    src={
-                      iconSource === 'user'
-                        ? `${iconUrl}${iconUrl.includes('?') ? '&' : '?'}t=${iconVersion}`
-                        : iconUrl
-                    }
-                    alt="brand-preview"
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  <ImageIcon className="w-8 h-8 text-muted-foreground" />
-                )}
+                <img
+                  src={displayIconUrl}
+                  alt="brand-preview"
+                  className="w-full h-full object-cover"
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).src = PACKAGED_ICON;
+                  }}
+                />
               </div>
               <div className="space-y-1">
                 <p className="text-xl font-bold truncate max-w-[220px]">

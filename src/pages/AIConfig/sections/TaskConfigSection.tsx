@@ -1,21 +1,12 @@
-import {
-  AlertTriangle,
-  ListChecks,
-  Plus,
-  Settings,
-  Sparkles,
-  Zap,
-} from 'lucide-react';
+import { AlertTriangle, ListChecks, Plus, Settings, Sparkles, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Separator } from '@/components/ui/separator';
+import { GlassAlert } from '@/components/ui/glass-alert';
 import { ConfigSelectDropdown } from '@/components/config';
 import { HeadingWithHelp, LabelWithHelp } from '../shared';
-import { cn } from '@/lib/utils';
 import type { AllConfigItem } from '@/lib/api';
 
 export interface TaskConfigSectionProps {
   t: (key: string) => string;
-  isGlass: boolean;
   allConfigsList: AllConfigItem[];
   highLevelConfig: string;
   lowLevelConfig: string;
@@ -60,7 +51,6 @@ export interface TaskConfigSectionProps {
  */
 export function TaskConfigSection({
   t,
-  isGlass,
   allConfigsList,
   highLevelConfig,
   lowLevelConfig,
@@ -97,37 +87,21 @@ export function TaskConfigSection({
       </div>
 
       {allConfigsList.length === 0 ? (
-        <div
-          className={cn(
-            'rounded-xl p-4',
-            isGlass
-              ? 'border border-red-500/50 bg-red-500/10 dark:bg-red-950/50 dark:border-red-800/60'
-              : 'border border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950',
-          )}
-        >
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="w-5 h-5 text-red-500 dark:text-red-400 flex-shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <p className="text-sm font-medium text-red-600 dark:text-red-400">
-                {t('aiConfig.providerConfig.noConfigFileTitle')}
-              </p>
-              <p className="text-xs text-red-600/80 dark:text-red-400/80 mt-1">
-                {t('aiConfig.taskConfig.emptyHint')}
-              </p>
-              <Button
-                variant="outline"
-                size="sm"
-                className="mt-3 h-8 gap-1.5 text-xs"
-                onClick={onOpenManageDialog}
-              >
-                <Plus className="w-3.5 h-3.5" />
-                {t('aiConfig.openaiConfig.createNew')}
-              </Button>
-            </div>
-          </div>
-        </div>
+        <GlassAlert tone="danger" icon={AlertTriangle} className="p-4">
+          <p className="text-sm font-medium">{t('aiConfig.providerConfig.noConfigFileTitle')}</p>
+          <p className="mt-1 text-xs opacity-80">{t('aiConfig.taskConfig.emptyHint')}</p>
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-3 h-8 gap-1.5 text-xs"
+            onClick={onOpenManageDialog}
+          >
+            <Plus className="w-3.5 h-3.5" />
+            {t('aiConfig.openaiConfig.createNew')}
+          </Button>
+        </GlassAlert>
       ) : (
-        <div className="space-y-5">
+        <div className="grid items-start gap-6 lg:grid-cols-2">
           {/* 高级任务：主 + 备用 */}
           <div className="space-y-3">
             <LabelWithHelp
@@ -148,9 +122,7 @@ export function TaskConfigSection({
             )}
             <div className="pt-1 pl-1 space-y-2 border-l-2 border-primary/20 ml-1">
               <LabelWithHelp
-                icon={
-                  <Sparkles className="w-3.5 h-3.5 text-muted-foreground" />
-                }
+                icon={<Sparkles className="w-3.5 h-3.5 text-muted-foreground" />}
                 label={t('aiConfig.providerConfig.highLevelTask2nd')}
                 description={t('aiConfig.providerConfig.highLevelTask2ndDesc')}
                 className="text-xs font-medium text-muted-foreground"
@@ -168,7 +140,6 @@ export function TaskConfigSection({
               )}
             </div>
           </div>
-          <Separator className="bg-border/30" />
           {/* 低级任务：主 + 备用 */}
           <div className="space-y-3">
             <LabelWithHelp

@@ -10,7 +10,7 @@
 import { useTheme } from '@/contexts/ThemeContext';
 const {
   mode,        // 'light' | 'dark'
-  style,       // 'solid' | 'glassmorphism'
+  style,       // 'solid' | 'glassmorphism' | 'luminous' | 'liquid'
   color,       // 'red' | 'orchid' | 'blue' | 'green' | 'orange' | 'pink'
   iconColor,   // 'white' | 'black' | 'colored'
   themePreset, // 'default' | 'shadcn'
@@ -29,7 +29,7 @@ const {
 
 侧边栏布局 class：`floating-sidebar` / `glass-sidebar` / `line-sidebar`（`line` 无卡片/阴影，仅 `border-right`）。
 
-「杂项」各项均持久化到后端 `ThemeConfig`（`sidebar_layout` / `border_radius` / `ui_scale` / `shadow_intensity` / `sidebar_default_collapsed`），并镜像到 sessionStorage（`theme_sidebar_layout` 等）供首屏防闪。**新增杂项字段的完整同步清单**（缺一处都会出 bug）：
+「杂项」各项均持久化到后端 `ThemeConfig`（`sidebar_layout` / `border_radius` / `ui_scale` / `shadow_intensity` / `sidebar_default_collapsed`），并镜像到 sessionStorage（`theme_sidebar_layout` 等）供首屏防闪。背景页的 `background_blur`（0–40px，默认 0，session 键 `theme_background_blur`）同样走这套持久化，但只模糊壁纸，不改 `blur_intensity`（卡片毛玻璃）。**新增主题字段的完整同步清单**（缺一处都会出 bug）：
 
 1. 前端 `ThemeContext.tsx`：常量/state/早期 effect/applyTheme/saveToBackend/setter/getThemeConfig/applyThemeConfig/miscContext/useTheme 十处；
 2. `api.ts` 的 `ThemeConfig` 接口；
@@ -45,6 +45,7 @@ const {
 - 唯一真相源是 CSS 变量 `--radius`（主题杂项写入，单位 px；默认 24px）。
 - Tailwind `rounded-sm/md/lg/xl/2xl/3xl` 全部挂到 `--radius`（见 `tailwind.config.ts`）。
 - `rounded-full` 与显式 `rounded-[Npx]` 不随主题变。
+- `Badge` 默认 `rounded-md`（`calc(var(--radius) - 2px)`，与 Button 同档）。正圆序号等少数场景在调用处显式加 `rounded-full`。
 - 新组件优先用 `rounded-lg` / `rounded-md` 等语义 token，**禁止**再硬编码与主题无关的大圆角。
 - ⚠️ `.glass-card` / `.glass-card-flat` **类自身**声明了 `border-radius: var(--radius)`，且规则在 utilities 之后——要在表面类上用**更小**的自定义圆角必须加 important：`!rounded-[3px]`（例：RepeatGroupField）。
 
@@ -122,8 +123,55 @@ const isGlass = style === 'glassmorphism';
 | `ring-*` 依然可用 | 表面类阴影头部透传 `var(--tw-ring-offset-shadow)/var(--tw-ring-shadow)`——改这些 box-shadow 时**必须保留这两项**，否则全站选中态 ring 消失 |
 | 覆盖类默认圆角需 `!rounded-*` | 类自带 `border-radius: var(--radius)` 且声明在 utilities 之后 |
 | 定位/层级声明必须走 `:where(...)`（零特异性） | 表面类默认 `relative + z-index:0`；若写成普通类声明会压掉 Dialog/Sheet 的 `fixed`/`z-50` 工具类——弹层失去定位、沉到遮罩下面，症状是"点开只剩遮罩没内容" |
-| 弹层上的 glass-card 无描边 | `.glass-card[role="dialog"/"alertdialog"]` 已统一 `border: none`——半透明 1px 边框叠在深色遮罩上会混成黑色描边线，弹层靠阴影分层即可 |
+| 弹层上的 glass-card 无描边 | `.glass-card[role="dialog"/"alertdialog"]` 已统一 `border: none`——半透明 1px 边框叠在深色遮罩上会混成黑色描边线，弹层靠阴影分层即可。光感 / 液态后面的 `[role=dialog]` 规则会再补回高光描边 |
+| 玻璃弹层宿主必须透明 | `DialogContent` / `AlertDialogContent` 加 `glass-card`。光感 / 磨砂 / 液态下宿主 `background: transparent`，质感画在 `::before`。遮罩亮色 `white/80`、暗色 `black/80`（`[data-dialog-overlay]`）。亮色不要用深色压暗，半透明弹层会把暗色吃进去，正文发灰 |
 | `glass-card-flat`：无阴影无 blur | 供 overflow 容器内嵌 / 长列表项使用；`overflow-hidden` 安全；`hover:shadow-*` 可用（:hover 特异性更高） |
+
+### 3.4.2 浮层（下拉 / 列表 / Popover）不能用卡片的透明参数 ★★★
+
+浮层族：`[role="menu"]`（DropdownMenu）、`[role="listbox"]`（Select）、`.menu-panel`（PopoverContent）。三套玻璃各给一份 `--overlay-fill` / `--overlay-border` / `--overlay-filter`，在 `index.css`「浮层玻璃」段统一消费。图谱搜索条等 `.glass-float` 用略高的 `--popover` 填充。**SearchableMenu 的 `.searchable-menu-panel` 不走这档高填充**——它和页头描边按钮共用 `--card / --card-opacity` 以及该主题的描边、高光；模糊仍用 `--overlay-blur`。在卡片透明度上再加一截，菜单会变成实心白，和按钮对不上。
+
+**为什么不能复用 `.glass-card` 的数字**——两者取值逻辑相反：
+
+| | 背后是谁 | 透明度 |
+|---|---|---|
+| `.glass-card` | 自己的内容（内容长在卡片肚子里） | 可以很透（`card / 0.22~0.25`） |
+| 浮层 | **别人的内容**（整屏列表 / 时间戳 / ID 这类高对比小字） | 必须高（`0.74~0.82`） |
+
+透一点，背后的行就原样浮上来，和菜单项两行字叠在一起，谁都读不了。两个参数必须同时够，只调一个都还是「看得见字」：
+
+- 低模糊 + 低透明 = 背后的列表原样透出；
+- 高模糊 + 低透明 = 一片灰浆，菜单项自己也不干净。
+
+**模糊不许跟 `--card-opacity` 一起缩水。** `--liquid-blur = blur-intensity × card-opacity`，卡片透明度默认 25% → 液态浮层的模糊只剩 3px，等于没糊。浮层走 `--overlay-blur`（`max(20px, blur × 1.6)`）。
+
+**光感 / 液态的 backdrop-filter 性能开关里不要放 `[role=listbox]` / `[role=menu]`。** 那条规则是给「跟着侧栏宽度动画平移的布局表面」用的（每个 input / button / 卡片重采样像素会卡），而 Radix 浮层是 Portal 到 `body` 的 `position: fixed`，侧栏收缩时它不动。把这两项放进去会让所有下拉菜单失去模糊，只剩半透明底 —— 症状和「卡片参数用错」几乎一样，但改透明参数怎么调都没用。
+
+**改浮层后必须开真实页面看一眼**：这类问题在 demo 里尤其容易误判（demo 的初始 state 与后端配置不同，会走不同的 style 分支）。
+
+### 3.4.3 给 Button 套玻璃外壳：必须 `variant="ghost"`，不能 `"outline"` ★★★
+
+工具栏里想跟 `TabButtonGroup` 视觉一致的小控件（日历按钮、只读区间条、刷新图标钮），用外壳类 `glass-card-flat tab-segment-row`——`glass-card-flat` 给基础底色，`tab-segment-row` 在光感 / 液态下补顶刃高光与背后模糊。**参考 `AIStatisticsPage.tsx` 的 `rangeControlShellClass`**。
+
+但这类宿主如果是 `<Button>`，**只能用 `variant="ghost"`**：
+
+| variant | 带的头 | 后果 |
+|---|---|---|
+| `"outline"` | `bg-background` | 命中 `index.css` 里 `[data-style="liquid"] :is(button, a).bg-background:not(.tab-segment-row *)`（那条「页头描边按钮在液态下改成玻璃」的规则），它的 `!important` 描边/内高光跟 `.tab-segment-row` 撞车，**液态下把外壳整个压成透明** |
+| `"ghost"` | 无 `bg-background` | 不命中，按外壳自己走，三套主题一致 |
+
+**为什么难一眼归因**：光感主题的 `.tab-segment-row` 自带白描边，`outline` 的 `bg-background` 压不住它 → 光感正常；液态才翻车。只截一张液态图会以为是「液态主题不支持」，实际是宿主变体选错。规则里的 `:not(.tab-segment-row *)` 只排除**后代**、不排除元素自身，所以外壳自己带这个类也照样被接管。
+
+**验收必须三套主题都截**：这类主题分叉只有把 `data-style` 逐一设过去才看得见。demo 里改 `demoMock.ts` 的 `THEME_CONFIG.style` → Chrome 截图 → 记得还原。
+
+### 3.4.4 保存 / 确定用实心主色 ★★
+
+光感、磨砂、液态把 `button.bg-primary` 画成半透明卡片，看起来和线框一样。页头的新建、立即备份继续用这层磨砂。
+
+- 对话框、抽屉、确认框里的主按钮：`index.css` 在 `[role="dialog"]` 和 `[role="alertdialog"]` 上把主色画实。
+- 页面上的保存、确定、确认修改、确认变更、更新密码：给按钮加 `button-solid`，跳过磨砂。人格编辑页的保存已经是这个类。
+- `AlertDialogAction` 自带 `button-solid`。调用处写了 `bg-destructive` 或 `bg-red-500` 的危险确认仍是红色。
+- 取消、刷新、筛选保持 `variant="outline"`。不要把 `button-solid` 写进 `Button` 的 default variant，否则页头主按钮会变成实心。
 
 ## 3.5 布局背景与 gutter
 
@@ -140,6 +188,8 @@ const isGlass = style === 'glassmorphism';
 - 页面根 **禁止** 再写 `p-6`（见 [§04 页面排版](./04-page-layout-spec.md)）。
 
 `backdrop-filter` 是 GPU 密集操作，低端设备性能敏感，**避免在长列表的每一项上叠加毛玻璃**（见 [§10 性能](./10-pitfalls-and-performance.md)）。
+
+光感/液态的默认壁纸用静态 `filter: blur()`（`AppLayout` 的 `frostBlur`），**不要**再铺整屏 `backdrop-filter`，也不要在侧栏动画里把表面的 `backdrop-filter` 改来改去。见 [§10 P-38](./10-pitfalls-and-performance.md)。
 
 ## 3.6 响应式设计
 

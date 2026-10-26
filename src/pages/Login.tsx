@@ -9,18 +9,47 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog';
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Loader2, LogIn, Eye, EyeOff, UserPlus, Settings, ChevronDown, HelpCircle, WifiOff, RefreshCw } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
+  Loader2,
+  LogIn,
+  Eye,
+  EyeOff,
+  UserPlus,
+  Settings,
+  ChevronDown,
+  HelpCircle,
+  WifiOff,
+  RefreshCw,
+} from 'lucide-react';
 import { LanguageFlag } from '@/components/ui/language-flag';
 import { cn } from '@/lib/utils';
-import { getCustomApiHost, setCustomApiHost, authApi } from '@/lib/api';
+import {
+  getCustomApiHost,
+  setCustomApiHost,
+  normalizeCustomApiHost,
+  clearThemeSessionStorage,
+  resolveApiAssetUrl,
+  authApi,
+} from '@/lib/api';
 import { isBackendUnreachable } from '@/lib/backendReachability';
 
 /** 后端连通性：探测中 / 可达 / 不可达 */
 type BackendState = 'checking' | 'online' | 'offline';
-
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -47,9 +76,16 @@ export default function Login() {
   const [customHost, setCustomHost] = useState('');
 
   const { login, register } = useAuth();
-  const { style, backgroundImage, blurIntensity } = useTheme();
+  const {
+    style,
+    backgroundImage,
+    blurIntensity,
+    backgroundBlur,
+    reloadTheme,
+    resetThemeToDefaults,
+  } = useTheme();
   const { t, language, setLanguage, availableLanguages } = useLanguage();
-  const { iconUrl: brandIconUrl, title: brandTitle } = useBrand();
+  const { iconUrl: brandIconUrl, title: brandTitle, refresh: refreshBrand } = useBrand();
   const navigate = useNavigate();
 
   // 探测后端可达性 + 是否已存在管理员账号
@@ -64,6 +100,9 @@ export default function Login() {
         if (!alive) return;
         setHasAdmin(!!data.is_admin_exist);
         setBackendState('online');
+        // 后端连接成功：刷新主题与品牌信息
+        void reloadTheme();
+        void refreshBrand();
       } catch (error) {
         if (!alive) return;
         // 网络层失败 = 后端不可达；后端有应答但报错 = 视为可达，只是查不到
@@ -73,6 +112,8 @@ export default function Login() {
           console.error('Failed to check admin exists:', error);
           setBackendState('online');
           setHasAdmin(false);
+          void reloadTheme();
+          void refreshBrand();
         }
       } finally {
         if (alive) setIsCheckingAdmin(false);
@@ -83,7 +124,7 @@ export default function Login() {
     return () => {
       alive = false;
     };
-  }, [probeNonce]);
+  }, [probeNonce, reloadTheme, refreshBrand]);
 
   // Load saved custom host on mount
   useEffect(() => {
@@ -94,15 +135,17 @@ export default function Login() {
   // 后端不可达时自动重试探测：用户在设置里填好地址点「保存」即触发，
   // 也顺带覆盖「后端稍后才启动」的场景。
   const retryProbe = useCallback(() => setProbeNonce((n) => n + 1), []);
-  
+
   // Handle saving custom host
   const handleSaveHost = () => {
-    // Add http:// prefix if no protocol is specified
-    let host = customHost.trim();
-    if (host && !host.startsWith('http://') && !host.startsWith('https://')) {
-      host = 'http://' + host;
+    const host = normalizeCustomApiHost(customHost);
+    const hostChanged = host !== getCustomApiHost();
+    if (hostChanged) {
+      clearThemeSessionStorage();
+      resetThemeToDefaults();
     }
     setCustomApiHost(host);
+    setCustomHost(host);
     setShowSettings(false);
     setError('');
     // 地址变了，必须重新探测连通性与管理员状态
@@ -111,6 +154,8 @@ export default function Login() {
 
   // Handle clearing custom host
   const handleClearHost = () => {
+    clearThemeSessionStorage();
+    resetThemeToDefaults();
     setCustomApiHost('');
     setCustomHost('');
     setShowSettings(false);
@@ -121,10 +166,15 @@ export default function Login() {
   const isGradient = backgroundImage?.startsWith('linear-gradient');
   const isImage = backgroundImage && !isGradient;
   const isGlassmorphism = style === 'glassmorphism';
+  const isLuminous = style === 'luminous';
+  const isLiquid = style === 'liquid';
+  const isGlass = isGlassmorphism || isLuminous || isLiquid;
   const isSolid = style === 'solid';
-  const hasBackground = isGlassmorphism && backgroundImage;
+  const hasBackground = isGlass && backgroundImage;
   const hasDefaultGlass = isGlassmorphism && !backgroundImage;
-  const hasSolidBackground = isSolid && (backgroundImage || !isGlassmorphism);
+  const hasDefaultLuminous = isLuminous && !backgroundImage;
+  const hasDefaultLiquid = isLiquid && !backgroundImage;
+  const hasSolidBackground = isSolid && (backgroundImage || !isGlass);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -142,8 +192,14 @@ export default function Login() {
     } else {
       result = await login(email, password);
     }
-    
+
     if (result.success) {
+      try {
+        await reloadTheme();
+        await refreshBrand();
+      } catch (err) {
+        console.warn('Failed to refresh theme/brand after login:', err);
+      }
       navigate('/home');
     } else {
       // 提交时才发现连不上（例如后端刚好挂了），切到离线态展示连接提示
@@ -151,7 +207,9 @@ export default function Login() {
         setBackendState('offline');
         setError('');
       } else {
-        setError(result.error || (isRegisterMode ? t('login.registerFailed') : t('login.loginFailed')));
+        setError(
+          result.error || (isRegisterMode ? t('login.registerFailed') : t('login.loginFailed')),
+        );
       }
     }
 
@@ -159,69 +217,113 @@ export default function Login() {
   };
 
   const isOffline = backendState === 'offline';
+  const wallpaperBlurStyle: React.CSSProperties =
+    backgroundBlur > 0 ? { filter: `blur(${backgroundBlur}px)` } : {};
 
   return (
-    <div className={cn(
-      "min-h-screen flex items-center justify-center p-4",
-      isGlassmorphism ? "relative" : "bg-gradient-to-br from-background via-background to-muted/30"
-    )}>
+    <div
+      className={cn(
+        // my-auto（而非 items-center）+ overflow-y-auto：注册模式表单高于窄屏时
+        // 顶部（连同绝对定位在上方的语言工具条）仍然够得着，不会被裁掉
+        'min-h-screen flex justify-center overflow-y-auto p-4',
+        isGlass ? 'relative' : 'bg-gradient-to-br from-background via-background to-muted/30',
+      )}
+    >
       {/* Background Layer */}
       {hasBackground && (
-        <div className="fixed inset-0 z-0">
+        <div className="fixed inset-0 z-0 overflow-hidden">
           {isGradient ? (
-            <div 
-              className="w-full h-full"
-              style={{ background: backgroundImage }}
+            <div
+              className="h-full w-full"
+              style={{ background: backgroundImage, ...wallpaperBlurStyle }}
             />
           ) : (
-            <div 
-              className="w-full h-full bg-cover bg-center bg-no-repeat bg-fixed"
-              style={{ backgroundImage: `url("${backgroundImage}")` }}
+            <div
+              className="h-full w-full bg-cover bg-center bg-no-repeat bg-fixed"
+              style={{
+                backgroundImage: `url("${resolveApiAssetUrl(backgroundImage)}")`,
+                ...wallpaperBlurStyle,
+              }}
             />
           )}
-          <div 
+          <div
             className="absolute inset-0 bg-background/20"
-            style={{ 
+            style={{
               backdropFilter: `blur(${Math.max(2, blurIntensity / 4)}px)`,
-              WebkitBackdropFilter: `blur(${Math.max(2, blurIntensity / 4)}px)`
+              WebkitBackdropFilter: `blur(${Math.max(2, blurIntensity / 4)}px)`,
             }}
           />
         </div>
       )}
-      
+
       {/* Default Glassmorphism Background */}
       {hasDefaultGlass && (
         <div className="fixed inset-0 z-0">
           <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-background to-accent/10" />
           <div className="absolute top-0 left-1/4 w-96 h-96 bg-primary/20 rounded-full blur-3xl animate-pulse" />
-          <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-accent/20 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '1s' }} />
+          <div
+            className="absolute bottom-0 right-1/4 w-96 h-96 bg-accent/20 rounded-full blur-3xl animate-pulse"
+            style={{ animationDelay: '1s' }}
+          />
+        </div>
+      )}
+
+      {/* Default Luminous Glass Background */}
+      {hasDefaultLuminous && (
+        <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none">
+          <div className="absolute inset-0 bg-gradient-to-br from-primary/15 via-background to-accent/15" />
+          <div className="absolute -top-24 left-1/4 w-[480px] h-[480px] bg-gradient-to-tr from-primary/30 to-sky-400/20 rounded-full blur-3xl animate-pulse" />
+          <div
+            className="absolute -bottom-24 right-1/4 w-[500px] h-[500px] bg-gradient-to-bl from-accent/25 to-purple-500/20 rounded-full blur-3xl animate-pulse"
+            style={{ animationDelay: '2s' }}
+          />
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-primary/10 rounded-full blur-[120px]" />
+        </div>
+      )}
+
+      {/* Default Liquid Glass Background */}
+      {hasDefaultLiquid && (
+        <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none">
+          <div className="absolute inset-0 bg-gradient-to-br from-primary/15 via-background to-accent/15" />
+          <div className="absolute -top-32 left-1/5 w-[520px] h-[520px] bg-gradient-to-tr from-sky-400/25 via-primary/20 to-transparent rounded-full blur-[90px] animate-pulse" />
+          <div
+            className="absolute -bottom-28 right-1/5 w-[560px] h-[560px] bg-gradient-to-bl from-pink-500/20 via-purple-500/15 to-transparent rounded-full blur-[100px] animate-pulse"
+            style={{ animationDelay: '1.5s' }}
+          />
+          <div
+            className="absolute top-1/3 right-1/4 w-[380px] h-[380px] bg-gradient-to-br from-amber-400/15 to-teal-400/10 rounded-full blur-[80px] animate-pulse"
+            style={{ animationDelay: '3s' }}
+          />
         </div>
       )}
 
       {/* Solid Style Background */}
       {isSolid && (
-        <div className="fixed inset-0 z-0">
+        <div className="fixed inset-0 z-0 overflow-hidden">
           {backgroundImage ? (
             <div
-              className="w-full h-full bg-cover bg-center bg-no-repeat bg-fixed"
-              style={{ backgroundImage: `url("${backgroundImage}")` }}
+              className="h-full w-full bg-cover bg-center bg-no-repeat bg-fixed"
+              style={{
+                backgroundImage: `url("${resolveApiAssetUrl(backgroundImage)}")`,
+                ...wallpaperBlurStyle,
+              }}
             />
           ) : (
             <div className="w-full h-full bg-gradient-to-br from-background via-background to-secondary/30" />
           )}
         </div>
       )}
-      
+
       {/* 仅卡片参与垂直居中；工具栏绝对定位在卡片上方，避免把卡片挤离正中 */}
-      <div className="w-full max-w-md relative z-10">
+      <div className="my-auto w-full max-w-md relative z-10">
         {/* 与下方登录卡片共用 glass-card / bg-card 材质，形成呼应 */}
         <div
           className={cn(
-            "absolute bottom-full left-1/2 -translate-x-1/2 mb-3",
-            "inline-flex items-center h-9 rounded-full",
-            isGlassmorphism
-              ? "glass-card border-border/50 shadow-2xl"
-              : "bg-card border border-border/50 shadow-2xl"
+            'absolute bottom-full left-1/2 -translate-x-1/2 mb-3',
+            'inline-flex items-center h-9 rounded-full',
+            isGlass
+              ? 'glass-card border-border/50 shadow-2xl'
+              : 'bg-card border border-border/50 shadow-2xl',
           )}
         >
           <DropdownMenu>
@@ -245,10 +347,7 @@ export default function Login() {
                 <DropdownMenuItem
                   key={lang.code}
                   onClick={() => setLanguage(lang.code)}
-                  className={cn(
-                    "cursor-pointer gap-2",
-                    language === lang.code && "bg-accent"
-                  )}
+                  className={cn('cursor-pointer gap-2', language === lang.code && 'bg-accent')}
                 >
                   <LanguageFlag code={lang.flagCode} />
                   <span>{lang.name}</span>
@@ -269,240 +368,242 @@ export default function Login() {
           </button>
         </div>
 
-        <Card className={cn(
-          "w-full",
-          isGlassmorphism ? "glass-card border-border/50 shadow-2xl" : "border-border/50 shadow-2xl"
-        )}>
-        <CardHeader className="text-center space-y-2">
-          <img
-            src={brandIconUrl}
-            alt={brandTitle}
-            width={96}
-            height={96}
-            fetchPriority="high"
-            className="mx-auto w-24 h-24 object-contain mb-4"
-            key={brandIconUrl}
-          />
-          <CardTitle className="text-2xl font-bold">
-            {isRegisterMode ? t('login.registerTitle') : t('login.title')}
-          </CardTitle>
-          <CardDescription>
-            {isRegisterMode ? t('login.registerDescription') : t('login.loginDescription')}
-          </CardDescription>
-        </CardHeader>
-        
-        <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {/* 后端不可达：先讲清原因与修复路径，别让用户对着一个注定失败的表单反复试 */}
-            {isOffline && (
-              <Alert variant="destructive">
-                <WifiOff />
-                <AlertTitle>{t('login.offlineTitle')}</AlertTitle>
-                <AlertDescription>
-                  <p>{t('login.offlineDescription')}</p>
-                  <p className="mt-2 font-mono text-xs opacity-90">
-                    {getCustomApiHost() || window.location.origin}
-                  </p>
-                  <div className="mt-3 flex flex-wrap items-center gap-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={retryProbe}
-                      disabled={isCheckingAdmin}
-                    >
-                      <RefreshCw
-                        className={cn('mr-1.5 h-3.5 w-3.5', isCheckingAdmin && 'animate-spin')}
-                      />
-                      {isCheckingAdmin ? t('login.offlineChecking') : t('login.offlineRetry')}
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setShowSettings(true)}
-                    >
-                      <Settings className="mr-1.5 h-3.5 w-3.5" />
-                      {t('login.offlineChangeHost')}
-                    </Button>
-                  </div>
-                </AlertDescription>
-              </Alert>
-            )}
+        <Card
+          className={cn(
+            'w-full',
+            isGlass ? 'glass-card border-border/50 shadow-2xl' : 'border-border/50 shadow-2xl',
+          )}
+        >
+          <CardHeader className="text-center space-y-2">
+            <img
+              src={brandIconUrl}
+              alt={brandTitle}
+              width={96}
+              height={96}
+              fetchPriority="high"
+              className="mx-auto w-24 h-24 object-contain mb-4"
+              key={brandIconUrl}
+            />
+            <CardTitle className="text-2xl font-bold">
+              {isRegisterMode ? t('login.registerTitle') : t('login.title')}
+            </CardTitle>
+            <CardDescription>
+              {isRegisterMode ? t('login.registerDescription') : t('login.loginDescription')}
+            </CardDescription>
+          </CardHeader>
 
-            {error && !isOffline && (
-              <Alert variant="destructive">
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            )}
-            
-            {isRegisterMode && (
-              <div className="space-y-2">
-                <Label htmlFor="name">{t('login.name')}</Label>
-                <Input
-                  id="name"
-                  type="text"
-                  placeholder={t('login.namePlaceholder')}
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  required
-                  disabled={isOffline}
-                  className={isGlassmorphism ? "glass-input" : ""}
-                />
-              </div>
-            )}
-            
-            <div className="space-y-2">
-              <Label htmlFor="email">{t('login.email')}</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder={t('login.emailPlaceholder')}
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                disabled={isOffline}
-                className={isGlassmorphism ? "glass-input" : ""}
-              />
-            </div>
-            
-            <div className="space-y-2">
-              <Label htmlFor="password">{t('login.password')}</Label>
-              <div className="relative">
-                <Input
-                  id="password"
-                  type={showPassword ? 'text' : 'password'}
-                  placeholder={t('login.passwordPlaceholder')}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  disabled={isOffline}
-                  className={cn(
-                    isGlassmorphism ? "glass-input pr-10" : "pr-10",
-                    "w-full"
-                  )}
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
-                  onClick={() => setShowPassword(!showPassword)}
-                >
-                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </Button>
-              </div>
-            </div>
+          <CardContent>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              {/* 后端不可达：先讲清原因与修复路径，别让用户对着一个注定失败的表单反复试 */}
+              {isOffline && (
+                <Alert variant="destructive">
+                  <WifiOff />
+                  <AlertTitle>{t('login.offlineTitle')}</AlertTitle>
+                  <AlertDescription>
+                    <p>{t('login.offlineDescription')}</p>
+                    <p className="mt-2 font-mono text-xs opacity-90">
+                      {getCustomApiHost() || window.location.origin}
+                    </p>
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={retryProbe}
+                        disabled={isCheckingAdmin}
+                      >
+                        <RefreshCw
+                          className={cn('mr-1.5 h-3.5 w-3.5', isCheckingAdmin && 'animate-spin')}
+                        />
+                        {isCheckingAdmin ? t('login.offlineChecking') : t('login.offlineRetry')}
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setShowSettings(true)}
+                      >
+                        <Settings className="mr-1.5 h-3.5 w-3.5" />
+                        {t('login.offlineChangeHost')}
+                      </Button>
+                    </div>
+                  </AlertDescription>
+                </Alert>
+              )}
 
-            {isRegisterMode && (
-              <>
+              {error && !isOffline && (
+                <Alert variant="destructive">
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              )}
+
+              {isRegisterMode && (
                 <div className="space-y-2">
-                  <Label htmlFor="confirmPassword">{t('login.confirmPassword')}</Label>
+                  <Label htmlFor="name">{t('login.name')}</Label>
                   <Input
-                    id="confirmPassword"
-                    type={showPassword ? 'text' : 'password'}
-                    placeholder={t('login.confirmPasswordPlaceholder')}
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    required
-                    disabled={isOffline}
-                    className={isGlassmorphism ? "glass-input" : ""}
-                  />
-                </div>
-                
-                <div className="space-y-2">
-                  <div className="flex items-center gap-1">
-                    <Label htmlFor="registerCode">{t('login.registerCode')}</Label>
-                    <TooltipProvider delayDuration={100}>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <a
-                            href="https://docs.sayu-bot.com/Started/WebConsole.html"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
-                          >
-                            <HelpCircle className="h-4 w-4" />
-                          </a>
-                        </TooltipTrigger>
-                        <TooltipContent side="top" className="max-w-xs">
-                          <p>{t('login.registerCodeTooltip')}</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  </div>
-                  <Input
-                    id="registerCode"
+                    id="name"
                     type="text"
-                    placeholder={t('login.registerCodePlaceholder')}
-                    value={registerCode}
-                    onChange={(e) => setRegisterCode(e.target.value)}
+                    placeholder={t('login.namePlaceholder')}
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
                     required
                     disabled={isOffline}
-                    className={isGlassmorphism ? "glass-input" : ""}
+                    className={isGlass ? 'glass-input' : ''}
                   />
                 </div>
-                
-              </>
-            )}
-            
-            <Button type="submit" className="w-full" disabled={isLoading || isOffline}>
-              {isLoading ? (
+              )}
+
+              <div className="space-y-2">
+                <Label htmlFor="email">{t('login.email')}</Label>
+                {/* type=text：Chrome 的 type=email 会对 Twemoji COLR / 多切片 VF 做逐字回退，打字卡死整页（P-37） */}
+                <Input
+                  id="email"
+                  type="text"
+                  inputMode="email"
+                  autoComplete="username"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  placeholder={t('login.emailPlaceholder')}
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  disabled={isOffline}
+                  className={isGlass ? 'glass-input' : ''}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="password">{t('login.password')}</Label>
+                <div className="relative">
+                  <Input
+                    id="password"
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder={t('login.passwordPlaceholder')}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    disabled={isOffline}
+                    className={cn(isGlass ? 'glass-input pr-10' : 'pr-10', 'w-full')}
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
+                    onClick={() => setShowPassword(!showPassword)}
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </Button>
+                </div>
+              </div>
+
+              {isRegisterMode && (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  {isRegisterMode ? t('login.registering') : t('login.loggingIn')}
-                </>
-              ) : isOffline ? (
-                <>
-                  <WifiOff className="mr-2 h-4 w-4" />
-                  {t('login.offlineRetry')}
-                </>
-              ) : (
-                <>
-                  <LogIn className="mr-2 h-4 w-4" />
-                  {isRegisterMode ? t('login.registerButton') : t('login.loginButton')}
+                  <div className="space-y-2">
+                    <Label htmlFor="confirmPassword">{t('login.confirmPassword')}</Label>
+                    <Input
+                      id="confirmPassword"
+                      type={showPassword ? 'text' : 'password'}
+                      placeholder={t('login.confirmPasswordPlaceholder')}
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      required
+                      disabled={isOffline}
+                      className={isGlass ? 'glass-input' : ''}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-1">
+                      <Label htmlFor="registerCode">{t('login.registerCode')}</Label>
+                      <TooltipProvider delayDuration={100}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <a
+                              href="https://docs.sayu-bot.com/Started/WebConsole.html"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+                            >
+                              <HelpCircle className="h-4 w-4" />
+                            </a>
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="max-w-xs">
+                            <p>{t('login.registerCodeTooltip')}</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </div>
+                    <Input
+                      id="registerCode"
+                      type="text"
+                      placeholder={t('login.registerCodePlaceholder')}
+                      value={registerCode}
+                      onChange={(e) => setRegisterCode(e.target.value)}
+                      required
+                      disabled={isOffline}
+                      className={isGlass ? 'glass-input' : ''}
+                    />
+                  </div>
                 </>
               )}
-            </Button>
 
-            {/* Toggle Register/Login - 后端可达且确认没有管理员时才提供注册入口 */}
-            {!hasAdmin && !isCheckingAdmin && !isOffline && (
-              <Button
-                type="button"
-                variant="ghost"
-                className="w-full mt-2"
-                onClick={() => {
-                  setIsRegisterMode(!isRegisterMode);
-                  setError('');
-                  setConfirmPassword('');
-                }}
-              >
-                {isRegisterMode ? (
+              <Button type="submit" className="w-full" disabled={isLoading || isOffline}>
+                {isLoading ? (
                   <>
-                    <LogIn className="mr-2 h-4 w-4" />
-                    {t('login.alreadyHaveAccount')}
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    {isRegisterMode ? t('login.registering') : t('login.loggingIn')}
+                  </>
+                ) : isOffline ? (
+                  <>
+                    <WifiOff className="mr-2 h-4 w-4" />
+                    {t('login.offlineRetry')}
                   </>
                 ) : (
                   <>
-                    <UserPlus className="mr-2 h-4 w-4" />
-                    {t('login.noAccount')}
+                    <LogIn className="mr-2 h-4 w-4" />
+                    {isRegisterMode ? t('login.registerButton') : t('login.loginButton')}
                   </>
                 )}
               </Button>
-            )}
-          </form>
-        </CardContent>
-      </Card>
+
+              {/* Toggle Register/Login - 后端可达且确认没有管理员时才提供注册入口 */}
+              {!hasAdmin && !isCheckingAdmin && !isOffline && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="w-full mt-2"
+                  onClick={() => {
+                    setIsRegisterMode(!isRegisterMode);
+                    setError('');
+                    setConfirmPassword('');
+                  }}
+                >
+                  {isRegisterMode ? (
+                    <>
+                      <LogIn className="mr-2 h-4 w-4" />
+                      {t('login.alreadyHaveAccount')}
+                    </>
+                  ) : (
+                    <>
+                      <UserPlus className="mr-2 h-4 w-4" />
+                      {t('login.noAccount')}
+                    </>
+                  )}
+                </Button>
+              )}
+            </form>
+          </CardContent>
+        </Card>
       </div>
-      
+
       {/* Settings Dialog for Custom API Host */}
       <Dialog open={showSettings} onOpenChange={setShowSettings}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{t('login.settingsTitle')}</DialogTitle>
-            <DialogDescription>
-              {t('login.settingsDescription')}
-            </DialogDescription>
+            <DialogDescription>{t('login.settingsDescription')}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
@@ -516,10 +617,9 @@ export default function Login() {
             </div>
             {customHost && (
               <div className="text-sm text-muted-foreground">
-                {t('login.willUse')} <span className="font-mono text-foreground">
-                  {customHost.startsWith('http://') || customHost.startsWith('https://')
-                    ? customHost
-                    : `http://${customHost}`}
+                {t('login.willUse')}{' '}
+                <span className="font-mono text-foreground">
+                  {normalizeCustomApiHost(customHost)}
                 </span>
               </div>
             )}

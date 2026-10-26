@@ -12,14 +12,12 @@ import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import {
   aiWizardApi,
+  getCustomApiHost,
   type AIWizardChecklistItem,
   type AIWizardStatusResponse,
 } from '@/lib/api';
 
-export type WizardOverallStatus =
-  | 'overall_ok'
-  | 'overall_warning'
-  | 'overall_error';
+export type WizardOverallStatus = 'overall_ok' | 'overall_warning' | 'overall_error';
 
 export interface UseAIWizardReturn {
   /** 后端 AI 服务是否已就绪（/api/ai/wizard/status 存在） */
@@ -56,11 +54,8 @@ export function useAIWizard(): UseAIWizardReturn {
 
   const [isWizardDialogOpen, setIsWizardDialogOpen] = useState(false);
   const [isWizardLoading, setIsWizardLoading] = useState(false);
-  const [wizardChecklist, setWizardChecklist] = useState<AIWizardChecklistItem[]>(
-    [],
-  );
-  const [wizardOverallStatus, setWizardOverallStatus] =
-    useState<WizardOverallStatus>('overall_ok');
+  const [wizardChecklist, setWizardChecklist] = useState<AIWizardChecklistItem[]>([]);
+  const [wizardOverallStatus, setWizardOverallStatus] = useState<WizardOverallStatus>('overall_ok');
   const [wizardUsable, setWizardUsable] = useState(false);
   const [wizardSummary, setWizardSummary] = useState({
     total: 0,
@@ -68,15 +63,17 @@ export function useAIWizard(): UseAIWizardReturn {
     warning: 0,
     error: 0,
   });
-  const [wizardStatus, setWizardStatus] =
-    useState<AIWizardStatusResponse | null>(null);
+  const [wizardStatus, setWizardStatus] = useState<AIWizardStatusResponse | null>(null);
 
   // 启动时检测后端 AI 服务是否已就绪
   useEffect(() => {
     let cancelled = false;
     const checkBackendStatus = async () => {
       try {
-        const res = await fetch(`/api/ai/wizard/status?_t=${Date.now()}`, {
+        const host = getCustomApiHost();
+        const path = `/api/ai/wizard/status?_t=${Date.now()}`;
+        const url = host ? `${host}${path}` : path;
+        const res = await fetch(url, {
           credentials: 'include',
         });
         if (cancelled) return;

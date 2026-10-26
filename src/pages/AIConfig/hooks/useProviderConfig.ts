@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import {
+  getApiErrorMessage,
   providerConfigApi,
   type AllConfigsSummary,
   type AllConfigItem,
@@ -64,6 +65,16 @@ export interface UseProviderConfigReturn {
   newConfigForwardEndUserId: string;
   /** 仅 OpenAI 系列在 UI 暴露：`hashed` 模式的盐值 */
   newConfigEndUserIdSalt: string;
+  /** 仅 OpenAI 系列在 UI 暴露：视频输入格式 file/video_url */
+  newConfigVideoInputFormat: string;
+  /** 仅 OpenAI 系列在 UI 暴露：视频采样帧率 */
+  newConfigVideoFps: number;
+  /** 仅 OpenAI 系列在 UI 暴露：视频块额外参数 (JSON) */
+  newConfigVideoPartExtra: string;
+  /** 仅 OpenAI 系列在 UI 暴露：视频内联大小上限 (MB) */
+  newConfigVideoInlineMaxMb: number;
+  /** 仅 OpenAI 系列在 UI 暴露：视频公网 URL 直通 off/on */
+  newConfigVideoUrlPassthrough: string;
   newConfigFetchedModels: string[];
   isFetchingNewConfigModels: boolean;
 
@@ -95,6 +106,11 @@ export interface UseProviderConfigReturn {
   setNewConfigSendBackThinking: (v: string) => void;
   setNewConfigForwardEndUserId: (v: string) => void;
   setNewConfigEndUserIdSalt: (v: string) => void;
+  setNewConfigVideoInputFormat: (v: string) => void;
+  setNewConfigVideoFps: (v: number) => void;
+  setNewConfigVideoPartExtra: (v: string) => void;
+  setNewConfigVideoInlineMaxMb: (v: number) => void;
+  setNewConfigVideoUrlPassthrough: (v: string) => void;
   resetNewConfigForm: () => void;
   setIsCreateDialogOpen: (open: boolean) => void;
   setIsEditDialogOpen: (open: boolean) => void;
@@ -122,11 +138,12 @@ export interface UseProviderConfigReturn {
   ) => Promise<void>;
   fetchConfigDetailForEdit: (provider: string, configName: string) => Promise<void>;
   refreshAllConfigs: () => Promise<void>;
-  handleSetHighLevelConfig: (configFullName: string) => Promise<void>;
-  handleSetLowLevelConfig: (configFullName: string) => Promise<void>;
+  handleSetHighLevelConfig: (configFullName: string) => Promise<boolean>;
+  handleSetLowLevelConfig: (configFullName: string) => Promise<boolean>;
   handleCreateOpenaiConfig: () => Promise<void>;
   handleSaveOpenaiConfig: () => Promise<void>;
   handleDeleteConfig: () => Promise<void>;
+  handleCopyConfig: (provider: string, sourceName: string, newName: string) => Promise<boolean>;
 
   // --- 触发 dialog 打开 ---
   openEditDialog: (configName: string, provider: string) => void;
@@ -154,18 +171,15 @@ export function useProviderConfig(): UseProviderConfigReturn {
   const [allConfigs, setAllConfigs] = useState<AllConfigsSummary | null>(null);
   const [highLevelConfig, setHighLevelConfig] = useState<string>('');
   const [lowLevelConfig, setLowLevelConfig] = useState<string>('');
-  const [modelSupportMap, setModelSupportMap] = useState<Record<string, string[]>>(
-    {},
-  );
+  const [modelSupportMap, setModelSupportMap] = useState<Record<string, string[]>>({});
 
   // ---------- OpenAI edit state ----------
-  const [openaiConfigData, setOpenaiConfigData] = useState<OpenAIConfigData | null>(
-    null,
-  );
+  const [openaiConfigData, setOpenaiConfigData] = useState<OpenAIConfigData | null>(null);
   const [isLoadingOpenaiConfig, setIsLoadingOpenaiConfig] = useState(false);
   const [isSavingOpenaiConfig, setIsSavingOpenaiConfig] = useState(false);
-  const [providerConfigOptions, setProviderConfigOptions] =
-    useState<ProviderConfigOptions | null>(null);
+  const [providerConfigOptions, setProviderConfigOptions] = useState<ProviderConfigOptions | null>(
+    null,
+  );
 
   // ---------- New config form ----------
   const [newConfigProvider, setNewConfigProvider] = useState('openai');
@@ -173,9 +187,7 @@ export function useProviderConfig(): UseProviderConfigReturn {
   const [newConfigBaseUrl, setNewConfigBaseUrl] = useState('');
   const [newConfigModel, setNewConfigModel] = useState('');
   const [newConfigApiKeys, setNewConfigApiKeys] = useState<string[]>([]);
-  const [newConfigModelSupport, setNewConfigModelSupport] = useState<string[]>([
-    'text',
-  ]);
+  const [newConfigModelSupport, setNewConfigModelSupport] = useState<string[]>(['text']);
   const [newConfigModelEffort, setNewConfigModelEffort] = useState('enable');
   // 三个 provider 相关字段：缺省值与后端 options 中的常见代表值对齐
   const [newConfigMaxConcurrency, setNewConfigMaxConcurrency] = useState(2);
@@ -183,18 +195,19 @@ export function useProviderConfig(): UseProviderConfigReturn {
   const [newConfigMaxTokens, setNewConfigMaxTokens] = useState('8192');
   // 仅 OpenAI 系列
   const [newConfigUsageStatsMode, setNewConfigUsageStatsMode] = useState('auto');
-  const [newConfigRequestMethod, setNewConfigRequestMethod] = useState(
-    'chat_completions',
-  );
+  const [newConfigRequestMethod, setNewConfigRequestMethod] = useState('chat_completions');
   const [newConfigRemoteWebSearch, setNewConfigRemoteWebSearch] = useState('on');
   const [newConfigSendBackThinking, setNewConfigSendBackThinking] = useState('auto');
   // 默认 off：透传终端用户标识属于要显式打开的行为，不能默认外发
   const [newConfigForwardEndUserId, setNewConfigForwardEndUserId] = useState('off');
   const [newConfigEndUserIdSalt, setNewConfigEndUserIdSalt] = useState('');
+  const [newConfigVideoInputFormat, setNewConfigVideoInputFormat] = useState('video_url');
+  const [newConfigVideoFps, setNewConfigVideoFps] = useState(0);
+  const [newConfigVideoPartExtra, setNewConfigVideoPartExtra] = useState('');
+  const [newConfigVideoInlineMaxMb, setNewConfigVideoInlineMaxMb] = useState(12);
+  const [newConfigVideoUrlPassthrough, setNewConfigVideoUrlPassthrough] = useState('off');
   const [newConfigFetchedModels, setNewConfigFetchedModels] = useState<string[]>([]);
-  const [editConfigFetchedModels, setEditConfigFetchedModels] = useState<string[]>(
-    [],
-  );
+  const [editConfigFetchedModels, setEditConfigFetchedModels] = useState<string[]>([]);
   const [isFetchingNewConfigModels, setIsFetchingNewConfigModels] = useState(false);
   const [isFetchingEditConfigModels, setIsFetchingEditConfigModels] = useState(false);
 
@@ -215,21 +228,17 @@ export function useProviderConfig(): UseProviderConfigReturn {
   );
 
   const getFirstApiKey = useCallback(
-    (apiKeys: string[]) =>
-      apiKeys.find((key) => key.trim())?.trim() || '',
+    (apiKeys: string[]) => apiKeys.find((key) => key.trim())?.trim() || '',
     [],
   );
 
-  const normalizeConfigName = useCallback(
-    (name: string, configs: AllConfigItem[]): string => {
-      if (!name) return '';
-      if (name.includes('++')) return name;
-      const match = configs.find((c) => c.config_name === name);
-      if (match) return match.name;
-      return `openai++${name}`;
-    },
-    [],
-  );
+  const normalizeConfigName = useCallback((name: string, configs: AllConfigItem[]): string => {
+    if (!name) return '';
+    if (name.includes('++')) return name;
+    const match = configs.find((c) => c.config_name === name);
+    if (match) return match.name;
+    return `openai++${name}`;
+  }, []);
 
   // ============================================================================
   // Fetch helpers
@@ -239,10 +248,7 @@ export function useProviderConfig(): UseProviderConfigReturn {
       const response = await providerConfigApi.getConfigOptions(provider);
       setProviderConfigOptions(response);
     } catch (error) {
-      console.error(
-        `Failed to fetch provider config options for ${provider}:`,
-        error,
-      );
+      console.error(`Failed to fetch provider config options for ${provider}:`, error);
       setProviderConfigOptions(null);
     }
   }, []);
@@ -257,11 +263,7 @@ export function useProviderConfig(): UseProviderConfigReturn {
     ) => {
       const trimmedBaseUrl = baseUrl.trim();
       const apiKey = getFirstApiKey(apiKeys);
-      if (
-        !trimmedBaseUrl ||
-        !apiKey ||
-        baseUrlHasTrailingSlash(trimmedBaseUrl)
-      ) {
+      if (!trimmedBaseUrl || !apiKey || baseUrlHasTrailingSlash(trimmedBaseUrl)) {
         onSuccess([]);
         return;
       }
@@ -303,8 +305,7 @@ export function useProviderConfig(): UseProviderConfigReturn {
           model_name: (cfg.model_name?.data as string) || '',
           model_support: (cfg.model_support?.data as string[]) || ['text'],
           model_effort: (cfg.model_effort?.data as string) || 'enable',
-          max_concurrency:
-            (cfg.max_concurrency?.data as number | undefined) ?? 2,
+          max_concurrency: (cfg.max_concurrency?.data as number | undefined) ?? 2,
           // 以下三个都是「按 provider 可选」
           max_tokens: cfg.max_tokens?.data as string | undefined,
           usage_stats_mode: cfg.usage_stats_mode?.data as string | undefined,
@@ -313,6 +314,15 @@ export function useProviderConfig(): UseProviderConfigReturn {
           send_back_thinking: cfg.send_back_thinking?.data as string | undefined,
           forward_end_user_id: cfg.forward_end_user_id?.data as string | undefined,
           end_user_id_salt: cfg.end_user_id_salt?.data as string | undefined,
+          video_input_format: cfg.video_input_format?.data as string | undefined,
+          video_fps:
+            typeof cfg.video_fps?.data === 'number' ? (cfg.video_fps.data as number) : undefined,
+          video_part_extra: cfg.video_part_extra?.data as string | undefined,
+          video_inline_max_mb:
+            typeof cfg.video_inline_max_mb?.data === 'number'
+              ? (cfg.video_inline_max_mb.data as number)
+              : undefined,
+          video_url_passthrough: cfg.video_url_passthrough?.data as string | undefined,
         };
         setOpenaiConfigData(configData);
         setEditingConfigProvider(provider);
@@ -341,12 +351,8 @@ export function useProviderConfig(): UseProviderConfigReturn {
       const response = await providerConfigApi.getAllConfigs();
       setAllConfigs(response);
       const configList = response.configs || [];
-      setHighLevelConfig(
-        normalizeConfigName(response.high_level_config || '', configList),
-      );
-      setLowLevelConfig(
-        normalizeConfigName(response.low_level_config || '', configList),
-      );
+      setHighLevelConfig(normalizeConfigName(response.high_level_config || '', configList));
+      setLowLevelConfig(normalizeConfigName(response.low_level_config || '', configList));
     } catch (error) {
       console.error('Failed to fetch all configs:', error);
     }
@@ -373,8 +379,7 @@ export function useProviderConfig(): UseProviderConfigReturn {
       providerConfigApi
         .getConfigDetail(item.provider, item.config_name)
         .then((detail) => {
-          const support =
-            (detail.config?.model_support?.data as string[]) || ['text'];
+          const support = (detail.config?.model_support?.data as string[]) || ['text'];
           setModelSupportMap((prev) => ({ ...prev, [fullName]: support }));
         })
         .catch((error) => {
@@ -427,13 +432,13 @@ export function useProviderConfig(): UseProviderConfigReturn {
       try {
         await providerConfigApi.setHighLevelConfig(configFullName);
         setHighLevelConfig(configFullName);
-        toast.success(
-          t('aiConfig.providerConfig.setHighLevelSuccess', { name: configFullName }),
-        );
+        toast.success(t('aiConfig.providerConfig.setHighLevelSuccess', { name: configFullName }));
         await fetchAllConfigs();
+        return true;
       } catch (error) {
         console.error('Failed to set high level config:', error);
         toast.error(t('aiConfig.providerConfig.setFailed'));
+        return false;
       }
     },
     [t, fetchAllConfigs],
@@ -444,13 +449,13 @@ export function useProviderConfig(): UseProviderConfigReturn {
       try {
         await providerConfigApi.setLowLevelConfig(configFullName);
         setLowLevelConfig(configFullName);
-        toast.success(
-          t('aiConfig.providerConfig.setLowLevelSuccess', { name: configFullName }),
-        );
+        toast.success(t('aiConfig.providerConfig.setLowLevelSuccess', { name: configFullName }));
         await fetchAllConfigs();
+        return true;
       } catch (error) {
         console.error('Failed to set low level config:', error);
         toast.error(t('aiConfig.providerConfig.setFailed'));
+        return false;
       }
     },
     [t, fetchAllConfigs],
@@ -500,12 +505,26 @@ export function useProviderConfig(): UseProviderConfigReturn {
         configData.end_user_id_salt = {
           data: openaiConfigData.end_user_id_salt ?? '',
         };
+        configData.video_input_format = {
+          data: openaiConfigData.video_input_format || 'video_url',
+        };
+        configData.video_fps = {
+          data: typeof openaiConfigData.video_fps === 'number' ? openaiConfigData.video_fps : 0,
+        };
+        configData.video_part_extra = {
+          data: openaiConfigData.video_part_extra || '',
+        };
+        configData.video_inline_max_mb = {
+          data:
+            typeof openaiConfigData.video_inline_max_mb === 'number'
+              ? openaiConfigData.video_inline_max_mb
+              : 12,
+        };
+        configData.video_url_passthrough = {
+          data: openaiConfigData.video_url_passthrough || 'off',
+        };
       }
-      await providerConfigApi.saveConfig(
-        editingConfigProvider,
-        editingConfigName,
-        configData,
-      );
+      await providerConfigApi.saveConfig(editingConfigProvider, editingConfigName, configData);
       toast.success(t('aiConfig.openaiConfig.saveSuccess'));
       setIsEditDialogOpen(false);
       fetchAllConfigs();
@@ -533,6 +552,11 @@ export function useProviderConfig(): UseProviderConfigReturn {
     setNewConfigSendBackThinking('auto');
     setNewConfigForwardEndUserId('off');
     setNewConfigEndUserIdSalt('');
+    setNewConfigVideoInputFormat('video_url');
+    setNewConfigVideoFps(0);
+    setNewConfigVideoPartExtra('');
+    setNewConfigVideoInlineMaxMb(12);
+    setNewConfigVideoUrlPassthrough('off');
     setNewConfigFetchedModels([]);
   }, []);
 
@@ -549,10 +573,7 @@ export function useProviderConfig(): UseProviderConfigReturn {
       toast.error(t('aiConfig.openaiConfig.modelRequired'));
       return;
     }
-    if (
-      newConfigApiKeys.length === 0 ||
-      newConfigApiKeys.every((k) => !k.trim())
-    ) {
+    if (newConfigApiKeys.length === 0 || newConfigApiKeys.every((k) => !k.trim())) {
       toast.error(t('aiConfig.openaiConfig.apiKeyRequired'));
       return;
     }
@@ -579,6 +600,11 @@ export function useProviderConfig(): UseProviderConfigReturn {
         configData.send_back_thinking = { data: newConfigSendBackThinking };
         configData.forward_end_user_id = { data: newConfigForwardEndUserId };
         configData.end_user_id_salt = { data: newConfigEndUserIdSalt };
+        configData.video_input_format = { data: newConfigVideoInputFormat };
+        configData.video_fps = { data: newConfigVideoFps };
+        configData.video_part_extra = { data: newConfigVideoPartExtra };
+        configData.video_inline_max_mb = { data: newConfigVideoInlineMaxMb };
+        configData.video_url_passthrough = { data: newConfigVideoUrlPassthrough };
       }
       await providerConfigApi.saveConfig(newConfigProvider, configName, configData);
       toast.success(t('aiConfig.openaiConfig.createSuccess', { name: configName }));
@@ -604,6 +630,11 @@ export function useProviderConfig(): UseProviderConfigReturn {
     newConfigSendBackThinking,
     newConfigForwardEndUserId,
     newConfigEndUserIdSalt,
+    newConfigVideoInputFormat,
+    newConfigVideoFps,
+    newConfigVideoPartExtra,
+    newConfigVideoInlineMaxMb,
+    newConfigVideoUrlPassthrough,
     newConfigProvider,
     t,
     fetchAllConfigs,
@@ -638,9 +669,7 @@ export function useProviderConfig(): UseProviderConfigReturn {
       }
 
       await providerConfigApi.deleteConfig(editingConfigProvider, editingConfigName);
-      toast.success(
-        t('aiConfig.openaiConfig.deleteSuccess', { name: editingConfigName }),
-      );
+      toast.success(t('aiConfig.openaiConfig.deleteSuccess', { name: editingConfigName }));
       setIsDeleteDialogOpen(false);
       setEditingConfigName('');
       setHighLevelConfig((prev) => (prev === fullConfigName ? '' : prev));
@@ -664,6 +693,35 @@ export function useProviderConfig(): UseProviderConfigReturn {
     lowLevelConfig,
     allConfigs,
   ]);
+
+  const handleCopyConfig = useCallback(
+    async (sourceProvider: string, sourceName: string, newName: string): Promise<boolean> => {
+      const trimmed = newName.trim();
+      if (!trimmed) {
+        toast.error(t('aiConfig.copyConfigNameRequired'));
+        return false;
+      }
+      if (trimmed === sourceName) {
+        toast.error(t('aiConfig.copyConfigSameName'));
+        return false;
+      }
+      if (trimmed.includes('+')) {
+        toast.error(t('aiConfig.copyConfigNamePlus'));
+        return false;
+      }
+      try {
+        await providerConfigApi.copyConfig(sourceProvider, sourceName, trimmed);
+        toast.success(t('aiConfig.copyConfigSuccess', { name: trimmed }));
+        await fetchAllConfigs();
+        return true;
+      } catch (error) {
+        console.error('Failed to copy config:', error);
+        toast.error(getApiErrorMessage(error, t('aiConfig.copyConfigFailed')));
+        return false;
+      }
+    },
+    [t, fetchAllConfigs],
+  );
 
   const openDeleteDialog = useCallback((configName: string, provider: string) => {
     setEditingConfigName(configName);
@@ -695,17 +753,14 @@ export function useProviderConfig(): UseProviderConfigReturn {
     setEditConfigFetchedModels([]);
   }, []);
 
-  const setOpenaiConfigDataField = useCallback(
-    (field: keyof OpenAIConfigData, value: unknown) => {
-      // 由于 `max_concurrency` 是 number、模型名称是 string、model_support 是 string[]，
-      // 这里统一放宽到 unknown：调用方按字段类型传值即可。
-      setOpenaiConfigData((prev) => {
-        if (!prev) return prev;
-        return { ...prev, [field]: value } as OpenAIConfigData;
-      });
-    },
-    [],
-  );
+  const setOpenaiConfigDataField = useCallback((field: keyof OpenAIConfigData, value: unknown) => {
+    // 由于 `max_concurrency` 是 number、模型名称是 string、model_support 是 string[]，
+    // 这里统一放宽到 unknown：调用方按字段类型传值即可。
+    setOpenaiConfigData((prev) => {
+      if (!prev) return prev;
+      return { ...prev, [field]: value } as OpenAIConfigData;
+    });
+  }, []);
 
   // ============================================================================
   // 派生
@@ -759,6 +814,11 @@ export function useProviderConfig(): UseProviderConfigReturn {
     newConfigSendBackThinking,
     newConfigForwardEndUserId,
     newConfigEndUserIdSalt,
+    newConfigVideoInputFormat,
+    newConfigVideoFps,
+    newConfigVideoPartExtra,
+    newConfigVideoInlineMaxMb,
+    newConfigVideoUrlPassthrough,
     newConfigFetchedModels,
     isFetchingNewConfigModels,
 
@@ -790,6 +850,11 @@ export function useProviderConfig(): UseProviderConfigReturn {
     setNewConfigSendBackThinking,
     setNewConfigForwardEndUserId,
     setNewConfigEndUserIdSalt,
+    setNewConfigVideoInputFormat,
+    setNewConfigVideoFps,
+    setNewConfigVideoPartExtra,
+    setNewConfigVideoInlineMaxMb,
+    setNewConfigVideoUrlPassthrough,
     resetNewConfigForm,
     setIsCreateDialogOpen,
     setIsEditDialogOpen,
@@ -808,6 +873,7 @@ export function useProviderConfig(): UseProviderConfigReturn {
     handleCreateOpenaiConfig,
     handleSaveOpenaiConfig,
     handleDeleteConfig,
+    handleCopyConfig,
 
     // dialog openers
     openEditDialog,

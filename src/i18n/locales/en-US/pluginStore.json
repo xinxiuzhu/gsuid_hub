@@ -2,12 +2,12 @@
   "title": "Plugin Store",
   "description": "Browse, install and manage system plugins",
   "refresh": "Refresh",
-  "searchPlugin": "Search plugin name, description or tags...",
-  "allPlugins": "All Plugins",
+  "searchPlugin": "Search name, description or tags...",
+  "allPlugins": "All",
   "installed": "Installed",
   "updates": "Updates",
-  "funPlugins": "Fun Plugins",
-  "toolPlugins": "Tool Plugins",
+  "funPlugins": "Fun",
+  "toolPlugins": "Tools",
   "noMatchedPlugins": "No matching plugins found",
   "noInstalledPlugins": "No plugins installed yet",
   "allPluginsUpdated": "All plugins are up to date",
@@ -54,8 +54,5 @@
   "urlProtocolInvalid": "Only http(s) / ssh / git@ URLs are supported",
   "urlRequired": "Please provide a repository URL",
   "cancel": "Cancel",
-  "installing": "Installing...",
-  "statTotal": "Total",
-  "statInstalled": "Installed",
-  "statUpdates": "Updates"
+  "installing": "Installing..."
 }

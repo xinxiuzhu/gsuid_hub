@@ -136,12 +136,12 @@ export default {
   				'70%': { transform: 'translateX(-1px)' },
   			},
 			'sheet-slide-in-right': {
-				from: { transform: 'translateX(100%)' },
-				to: { transform: 'translateX(0)' },
+				from: { opacity: '0' },
+				to: { opacity: '1' },
 			},
 			'sheet-slide-out-right': {
-				from: { transform: 'translateX(0)' },
-				to: { transform: 'translateX(100%)' },
+				from: { opacity: '1' },
+				to: { opacity: '0' },
 			},
 			'sheet-overlay-in': {
 				from: { opacity: '0' },
@@ -191,6 +191,7 @@ export default {
   		transitionTimingFunction: {
   			'out-soft': 'cubic-bezier(0.4, 0, 0.2, 1)',
   			'in-out-soft': 'cubic-bezier(0.45, 0, 0.55, 1)',
+        spring: 'cubic-bezier(0.34, 1.4, 0.64, 1)',
   		},
   	}
   },
